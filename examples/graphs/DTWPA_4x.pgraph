@@ -1,0 +1,1061 @@
+{
+  "version": "2.0",
+  "format": "pgraph",
+  "metadata": {
+    "created": "2025-11-14T23:20:47.904486",
+    "modified": "2025-11-14T23:20:47.904493"
+  },
+  "view": {
+    "grid_type": "square",
+    "grid_rotation": 0,
+    "zoom_level": 0.7561436672967865,
+    "xlim": [
+      -14.049479760584331,
+      2.0494797605843313
+    ],
+    "ylim": [
+      -3.8675842281935395,
+      23.86758422819354
+    ],
+    "use_latex": false
+  },
+  "nodes": [
+    {
+      "node_id": 0,
+      "label": "0",
+      "pos": [
+        -9.0,
+        15.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 1,
+      "label": "1",
+      "pos": [
+        -4.0,
+        15.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.09,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 2,
+      "label": "2",
+      "pos": [
+        -9.0,
+        10.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 3,
+      "label": "3",
+      "pos": [
+        -4.0,
+        10.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from_node_id": 0,
+      "to_node_id": 1,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 3,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 3,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 1,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 1,
+      "to_node_id": 3,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 0,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 180,
+      "selfloopscale": 1.152,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        -0.048,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 2,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 180,
+      "selfloopscale": 1.2,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 1,
+      "to_node_id": 1,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 0,
+      "selfloopscale": 1.2,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.024
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 3,
+      "to_node_id": 3,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.44,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 0,
+      "selfloopscale": 1.152,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    }
+  ],
+  "node_properties": {
+    "0": {},
+    "1": {},
+    "2": {},
+    "3": {}
+  },
+  "edge_properties": {
+    "0_1": {},
+    "2_3": {},
+    "0_3": {},
+    "2_1": {},
+    "1_3": {},
+    "0_0": {},
+    "2_2": {},
+    "1_1": {},
+    "3_3": {}
+  },
+  "code_properties": {
+    "imports": [],
+    "node_code": {
+      "0": {},
+      "1": {},
+      "2": {},
+      "3": {}
+    },
+    "edge_code": {
+      "0_1": {},
+      "2_3": {},
+      "0_3": {},
+      "2_1": {},
+      "1_3": {},
+      "0_0": {},
+      "2_2": {},
+      "1_1": {},
+      "3_3": {}
+    },
+    "global_code": {}
+  },
+  "kron_reduction": {
+    "original_graph": {
+      "nodes": [
+        {
+          "node_id": 0,
+          "label": "0",
+          "pos": [
+            -9.0,
+            15.0
+          ],
+          "color": "cornflowerblue",
+          "color_key": "BLUE",
+          "node_size_mult": 1.0,
+          "label_size_mult": 1.4,
+          "conj": false,
+          "nodelabelnudge": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "node_id": 1,
+          "label": "1",
+          "pos": [
+            -4.0,
+            15.0
+          ],
+          "color": "cornflowerblue",
+          "color_key": "BLUE",
+          "node_size_mult": 1.0,
+          "label_size_mult": 1.4,
+          "conj": false,
+          "nodelabelnudge": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "node_id": 2,
+          "label": "2",
+          "pos": [
+            -9.0,
+            10.0
+          ],
+          "color": "cornflowerblue",
+          "color_key": "BLUE",
+          "node_size_mult": 1.0,
+          "label_size_mult": 1.4,
+          "conj": true,
+          "nodelabelnudge": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "node_id": 3,
+          "label": "3",
+          "pos": [
+            -4.0,
+            10.0
+          ],
+          "color": "cornflowerblue",
+          "color_key": "BLUE",
+          "node_size_mult": 1.0,
+          "label_size_mult": 1.4,
+          "conj": true,
+          "nodelabelnudge": [
+            0.0,
+            0.0
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "from_node": {
+            "node_id": 0,
+            "label": "0",
+            "pos": [
+              -9.0,
+              15.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": false,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "to_node": {
+            "node_id": 1,
+            "label": "1",
+            "pos": [
+              -4.0,
+              15.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.09,
+            "label_size_mult": 1.4,
+            "conj": false,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "from_node_id": 0,
+          "to_node_id": 1,
+          "label1": "",
+          "label2": "",
+          "linewidth_mult": 1.5,
+          "label_size_mult": 1.0,
+          "label_offset_mult": 1.0,
+          "style": "single",
+          "direction": "both",
+          "flip_labels": false,
+          "label_rotation_offset": 0,
+          "looptheta": 30,
+          "is_self_loop": false
+        },
+        {
+          "from_node": {
+            "node_id": 2,
+            "label": "2",
+            "pos": [
+              -9.0,
+              10.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": true,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "to_node": {
+            "node_id": 3,
+            "label": "3",
+            "pos": [
+              -4.0,
+              10.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": true,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "from_node_id": 2,
+          "to_node_id": 3,
+          "label1": "",
+          "label2": "",
+          "linewidth_mult": 1.5,
+          "label_size_mult": 1.0,
+          "label_offset_mult": 1.0,
+          "style": "single",
+          "direction": "both",
+          "flip_labels": false,
+          "label_rotation_offset": 0,
+          "looptheta": 30,
+          "is_self_loop": false
+        },
+        {
+          "from_node": {
+            "node_id": 0,
+            "label": "0",
+            "pos": [
+              -9.0,
+              15.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": false,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "to_node": {
+            "node_id": 3,
+            "label": "3",
+            "pos": [
+              -4.0,
+              10.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": true,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "from_node_id": 0,
+          "to_node_id": 3,
+          "label1": "",
+          "label2": "",
+          "linewidth_mult": 1.5,
+          "label_size_mult": 1.0,
+          "label_offset_mult": 1.0,
+          "style": "double",
+          "direction": "both",
+          "flip_labels": false,
+          "label_rotation_offset": 0,
+          "looptheta": 30,
+          "is_self_loop": false
+        },
+        {
+          "from_node": {
+            "node_id": 2,
+            "label": "2",
+            "pos": [
+              -9.0,
+              10.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": true,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "to_node": {
+            "node_id": 1,
+            "label": "1",
+            "pos": [
+              -4.0,
+              15.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.09,
+            "label_size_mult": 1.4,
+            "conj": false,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "from_node_id": 2,
+          "to_node_id": 1,
+          "label1": "",
+          "label2": "",
+          "linewidth_mult": 1.5,
+          "label_size_mult": 1.0,
+          "label_offset_mult": 1.0,
+          "style": "double",
+          "direction": "both",
+          "flip_labels": false,
+          "label_rotation_offset": 0,
+          "looptheta": 30,
+          "is_self_loop": false
+        },
+        {
+          "from_node": {
+            "node_id": 1,
+            "label": "1",
+            "pos": [
+              -4.0,
+              15.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.09,
+            "label_size_mult": 1.4,
+            "conj": false,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "to_node": {
+            "node_id": 3,
+            "label": "3",
+            "pos": [
+              -4.0,
+              10.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": true,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "from_node_id": 1,
+          "to_node_id": 3,
+          "label1": "",
+          "label2": "",
+          "linewidth_mult": 1.5,
+          "label_size_mult": 1.0,
+          "label_offset_mult": 1.0,
+          "style": "double",
+          "direction": "both",
+          "flip_labels": false,
+          "label_rotation_offset": 0,
+          "looptheta": 30,
+          "is_self_loop": false
+        },
+        {
+          "from_node": {
+            "node_id": 0,
+            "label": "0",
+            "pos": [
+              -9.0,
+              15.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": false,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "to_node": {
+            "node_id": 0,
+            "label": "0",
+            "pos": [
+              -9.0,
+              15.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": false,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "from_node_id": 0,
+          "to_node_id": 0,
+          "label1": "",
+          "label2": "",
+          "linewidth_mult": 1.5,
+          "label_size_mult": 1.0,
+          "label_offset_mult": 1.0,
+          "style": "single",
+          "direction": "both",
+          "flip_labels": false,
+          "looptheta": 30,
+          "is_self_loop": true,
+          "selfloopangle": 180,
+          "selfloopscale": 1.152,
+          "arrowlengthsc": 1.0,
+          "flip": false,
+          "selflooplabelnudge": [
+            -0.048,
+            0.0
+          ]
+        },
+        {
+          "from_node": {
+            "node_id": 2,
+            "label": "2",
+            "pos": [
+              -9.0,
+              10.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": true,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "to_node": {
+            "node_id": 2,
+            "label": "2",
+            "pos": [
+              -9.0,
+              10.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": true,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "from_node_id": 2,
+          "to_node_id": 2,
+          "label1": "",
+          "label2": "",
+          "linewidth_mult": 1.5,
+          "label_size_mult": 1.0,
+          "label_offset_mult": 1.0,
+          "style": "single",
+          "direction": "both",
+          "flip_labels": false,
+          "looptheta": 30,
+          "is_self_loop": true,
+          "selfloopangle": 180,
+          "selfloopscale": 1.2,
+          "arrowlengthsc": 1.0,
+          "flip": false
+        },
+        {
+          "from_node": {
+            "node_id": 1,
+            "label": "1",
+            "pos": [
+              -4.0,
+              15.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.09,
+            "label_size_mult": 1.4,
+            "conj": false,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "to_node": {
+            "node_id": 1,
+            "label": "1",
+            "pos": [
+              -4.0,
+              15.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.09,
+            "label_size_mult": 1.4,
+            "conj": false,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "from_node_id": 1,
+          "to_node_id": 1,
+          "label1": "",
+          "label2": "",
+          "linewidth_mult": 1.5,
+          "label_size_mult": 1.0,
+          "label_offset_mult": 1.0,
+          "style": "single",
+          "direction": "both",
+          "flip_labels": false,
+          "looptheta": 30,
+          "is_self_loop": true,
+          "selfloopangle": 0,
+          "selfloopscale": 1.2,
+          "arrowlengthsc": 1.0,
+          "flip": false,
+          "selflooplabelnudge": [
+            0.0,
+            0.024
+          ]
+        },
+        {
+          "from_node": {
+            "node_id": 3,
+            "label": "3",
+            "pos": [
+              -4.0,
+              10.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": true,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "to_node": {
+            "node_id": 3,
+            "label": "3",
+            "pos": [
+              -4.0,
+              10.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": true,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ]
+          },
+          "from_node_id": 3,
+          "to_node_id": 3,
+          "label1": "",
+          "label2": "",
+          "linewidth_mult": 1.44,
+          "label_size_mult": 1.0,
+          "label_offset_mult": 1.0,
+          "style": "single",
+          "direction": "both",
+          "flip_labels": false,
+          "looptheta": 30,
+          "is_self_loop": true,
+          "selfloopangle": 0,
+          "selfloopscale": 1.152,
+          "arrowlengthsc": 1.0,
+          "flip": false
+        }
+      ]
+    },
+    "kron_graph": {
+      "nodes": [
+        {
+          "node_id": 0,
+          "label": "0",
+          "pos": [
+            -9.0,
+            15.0
+          ],
+          "color": "cornflowerblue",
+          "color_key": "BLUE",
+          "node_size_mult": 1.0,
+          "label_size_mult": 1.4,
+          "conj": false,
+          "nodelabelnudge": [
+            0.0,
+            0.0
+          ],
+          "edgecolor": "slategray"
+        },
+        {
+          "node_id": 1,
+          "label": "1",
+          "pos": [
+            -4.0,
+            15.0
+          ],
+          "color": "cornflowerblue",
+          "color_key": "BLUE",
+          "node_size_mult": 1.0,
+          "label_size_mult": 1.4,
+          "conj": false,
+          "nodelabelnudge": [
+            0.0,
+            0.0
+          ],
+          "edgecolor": "slategray"
+        }
+      ],
+      "edges": [
+        {
+          "from_node": {
+            "node_id": 0,
+            "label": "0",
+            "pos": [
+              -9.0,
+              15.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": false,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ],
+            "edgecolor": "slategray"
+          },
+          "to_node": {
+            "node_id": 1,
+            "label": "1",
+            "pos": [
+              -4.0,
+              15.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": false,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ],
+            "edgecolor": "slategray"
+          },
+          "double_line": false,
+          "color": "darkseagreen",
+          "linewidth": 1.5,
+          "linewidth_mult": 1.5,
+          "label_size_mult": 1.0,
+          "is_self_loop": false,
+          "style": "single",
+          "direction": "both",
+          "flip_labels": false,
+          "looptheta": 30
+        },
+        {
+          "from_node": {
+            "node_id": 0,
+            "label": "0",
+            "pos": [
+              -9.0,
+              15.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": false,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ],
+            "edgecolor": "slategray"
+          },
+          "to_node": {
+            "node_id": 0,
+            "label": "0",
+            "pos": [
+              -9.0,
+              15.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": false,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ],
+            "edgecolor": "slategray"
+          },
+          "from_node_id": 13735364544,
+          "to_node_id": 13735364544,
+          "label1": "",
+          "label2": "",
+          "linewidth_mult": 1.5,
+          "label_size_mult": 1.0,
+          "label_offset_mult": 1.0,
+          "style": "single",
+          "direction": "both",
+          "flip_labels": false,
+          "looptheta": 30,
+          "is_self_loop": true,
+          "selfloopangle": 180,
+          "selfloopscale": 1.152,
+          "arrowlengthsc": 1.0,
+          "flip": false,
+          "selflooplabelnudge": [
+            -0.048,
+            0.0
+          ]
+        },
+        {
+          "from_node": {
+            "node_id": 1,
+            "label": "1",
+            "pos": [
+              -4.0,
+              15.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": false,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ],
+            "edgecolor": "slategray"
+          },
+          "to_node": {
+            "node_id": 1,
+            "label": "1",
+            "pos": [
+              -4.0,
+              15.0
+            ],
+            "color": "cornflowerblue",
+            "color_key": "BLUE",
+            "node_size_mult": 1.0,
+            "label_size_mult": 1.4,
+            "conj": false,
+            "nodelabelnudge": [
+              0.0,
+              0.0
+            ],
+            "edgecolor": "slategray"
+          },
+          "from_node_id": 13736167040,
+          "to_node_id": 13736167040,
+          "label1": "",
+          "label2": "",
+          "linewidth_mult": 1.5,
+          "label_size_mult": 1.0,
+          "label_offset_mult": 1.0,
+          "style": "single",
+          "direction": "both",
+          "flip_labels": false,
+          "looptheta": 30,
+          "is_self_loop": true,
+          "selfloopangle": 0,
+          "selfloopscale": 1.2,
+          "arrowlengthsc": 1.0,
+          "flip": false,
+          "selflooplabelnudge": [
+            0.0,
+            0.024
+          ]
+        }
+      ]
+    },
+    "kron_selected_node_ids": [],
+    "kron_affected_node_ids": [],
+    "kron_new_edges": [],
+    "kron_modified_edges": [],
+    "kron_original_base_xlim": [
+      -12.086563145999495,
+      0.0865631459994951
+    ],
+    "kron_original_base_ylim": [
+      3.913436854000505,
+      16.086563145999495
+    ],
+    "kron_reduced_matrix_repr": "ImmutableDenseMatrix([[Mul(Pow(Add(Mul(Symbol('beta_23', complex=True), conjugate(Symbol('beta_23', complex=True))), Mul(Integer(-1), conjugate(Symbol('Delta_2', complex=True)), conjugate(Symbol('Delta_3', complex=True)))), Integer(-1)), Add(Mul(Symbol('Delta_0', complex=True), Symbol('beta_23', complex=True), conjugate(Symbol('beta_23', complex=True))), Mul(Integer(-1), Symbol('Delta_0', complex=True), conjugate(Symbol('Delta_2', complex=True)), conjugate(Symbol('Delta_3', complex=True))), Mul(Symbol('beta_03', complex=True), conjugate(Symbol('Delta_2', complex=True)), conjugate(Symbol('beta_03', complex=True))))), Mul(Pow(Add(Mul(Symbol('beta_23', complex=True), conjugate(Symbol('beta_23', complex=True))), Mul(Integer(-1), conjugate(Symbol('Delta_2', complex=True)), conjugate(Symbol('Delta_3', complex=True)))), Integer(-1)), Add(Mul(Symbol('beta_01', complex=True), Symbol('beta_23', complex=True), conjugate(Symbol('beta_23', complex=True))), Mul(Integer(-1), Symbol('beta_01', complex=True), conjugate(Symbol('Delta_2', complex=True)), conjugate(Symbol('Delta_3', complex=True))), Mul(Symbol('beta_03', complex=True), conjugate(Symbol('Delta_2', complex=True)), conjugate(Symbol('beta_13', complex=True))), Mul(Symbol('beta_03', complex=True), conjugate(Symbol('beta_12', complex=True)), conjugate(Symbol('beta_23', complex=True)))))], [Mul(Pow(Add(Mul(Symbol('beta_23', complex=True), conjugate(Symbol('beta_23', complex=True))), Mul(Integer(-1), conjugate(Symbol('Delta_2', complex=True)), conjugate(Symbol('Delta_3', complex=True)))), Integer(-1)), Add(Mul(Symbol('beta_12', complex=True), Symbol('beta_23', complex=True), conjugate(Symbol('beta_03', complex=True))), Mul(Symbol('beta_13', complex=True), conjugate(Symbol('Delta_2', complex=True)), conjugate(Symbol('beta_03', complex=True))), Mul(Symbol('beta_23', complex=True), conjugate(Symbol('beta_01', complex=True)), conjugate(Symbol('beta_23', complex=True))), Mul(Integer(-1), conjugate(Symbol('Delta_2', complex=True)), conjugate(Symbol('Delta_3', complex=True)), conjugate(Symbol('beta_01', complex=True))))), Mul(Pow(Add(Mul(Symbol('beta_23', complex=True), conjugate(Symbol('beta_23', complex=True))), Mul(Integer(-1), conjugate(Symbol('Delta_2', complex=True)), conjugate(Symbol('Delta_3', complex=True)))), Integer(-1)), Add(Mul(Symbol('Delta_1', complex=True), Symbol('beta_23', complex=True), conjugate(Symbol('beta_23', complex=True))), Mul(Integer(-1), Symbol('Delta_1', complex=True), conjugate(Symbol('Delta_2', complex=True)), conjugate(Symbol('Delta_3', complex=True))), Mul(Symbol('beta_12', complex=True), Symbol('beta_23', complex=True), conjugate(Symbol('beta_13', complex=True))), Mul(Symbol('beta_12', complex=True), conjugate(Symbol('Delta_3', complex=True)), conjugate(Symbol('beta_12', complex=True))), Mul(Symbol('beta_13', complex=True), conjugate(Symbol('Delta_2', complex=True)), conjugate(Symbol('beta_13', complex=True))), Mul(Symbol('beta_13', complex=True), conjugate(Symbol('beta_12', complex=True)), conjugate(Symbol('beta_23', complex=True)))))]])",
+    "kron_reduced_matrix_latex": "\\left[\\begin{matrix}\\frac{\\Delta_{0} \\left|\\beta_{23}\\right|^{2} - \\Delta_{0} \\Delta_{2}^{*} \\Delta_{3}^{*} + \\Delta_{2}^{*} \\left|\\beta_{03}\\right|^{2}}{\\left|\\beta_{23}\\right|^{2} - \\Delta_{2}^{*} \\Delta_{3}^{*}} & \\frac{\\beta_{01} \\left|\\beta_{23}\\right|^{2} - \\beta_{01} \\Delta_{2}^{*} \\Delta_{3}^{*} + \\beta_{03} \\Delta_{2}^{*} \\beta_{13}^{*} + \\beta_{03} \\beta_{12}^{*} \\beta_{23}^{*}}{\\left|\\beta_{23}\\right|^{2} - \\Delta_{2}^{*} \\Delta_{3}^{*}}\\\\\\frac{\\beta_{12} \\beta_{23} \\beta_{03}^{*} + \\beta_{13} \\Delta_{2}^{*} \\beta_{03}^{*} + \\beta_{01}^{*} \\left|\\beta_{23}\\right|^{2} - \\Delta_{2}^{*} \\Delta_{3}^{*} \\beta_{01}^{*}}{\\left|\\beta_{23}\\right|^{2} - \\Delta_{2}^{*} \\Delta_{3}^{*}} & \\frac{\\Delta_{1} \\left|\\beta_{23}\\right|^{2} - \\Delta_{1} \\Delta_{2}^{*} \\Delta_{3}^{*} + \\beta_{12} \\beta_{23} \\beta_{13}^{*} + \\Delta_{3}^{*} \\left|\\beta_{12}\\right|^{2} + \\Delta_{2}^{*} \\left|\\beta_{13}\\right|^{2} + \\beta_{13} \\beta_{12}^{*} \\beta_{23}^{*}}{\\left|\\beta_{23}\\right|^{2} - \\Delta_{2}^{*} \\Delta_{3}^{*}}\\end{matrix}\\right]"
+  }
+}

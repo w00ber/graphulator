@@ -1,0 +1,184 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "created": "2025-10-17T12:13:12.167471",
+    "modified": "2025-10-17T12:13:12.167479"
+  },
+  "view": {
+    "grid_type": "triangular",
+    "grid_rotation": 0,
+    "zoom_level": 0.6575162324319881,
+    "xlim": [
+      -21.079129955581884,
+      5.079129955581884
+    ],
+    "ylim": [
+      6.843247526222756,
+      30.107169701913293
+    ],
+    "use_latex": false
+  },
+  "nodes": [
+    {
+      "node_id": 0,
+      "label": "A",
+      "pos": [
+        -13.0,
+        15.588457268119894
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.4,
+      "label_size_mult": 2.3999999999999995,
+      "conj": false,
+      "nodelabelnudge": [
+        0.024,
+        0.0
+      ]
+    },
+    {
+      "node_id": 2,
+      "label": "C",
+      "pos": [
+        -8.0,
+        24.24871130596428
+      ],
+      "color": "darkseagreen",
+      "color_key": "GREEN",
+      "node_size_mult": 1.4,
+      "label_size_mult": 2.1999999999999997,
+      "conj": false,
+      "nodelabelnudge": [
+        -0.004799999999999995,
+        -0.048
+      ]
+    },
+    {
+      "node_id": 3,
+      "label": "B",
+      "pos": [
+        -3.0,
+        15.588457268119894
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.4,
+      "label_size_mult": 2.6,
+      "conj": false,
+      "nodelabelnudge": [
+        -0.0336,
+        -0.0504
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from_node_id": 0,
+      "to_node_id": 0,
+      "label1": "\\Delta_\\mathrm{A}",
+      "label2": "",
+      "linewidth_mult": 1.0,
+      "label_size_mult": 3.0,
+      "label_offset_mult": 0.8,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 210,
+      "selfloopscale": 1.0,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.1344,
+        0.2688
+      ]
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 2,
+      "label1": "\\beta_{CA}",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.8,
+      "label_offset_mult": 0.4,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 2,
+      "label1": "\\Delta_\\mathrm{C}",
+      "label2": "",
+      "linewidth_mult": 1.0,
+      "label_size_mult": 2.5,
+      "label_offset_mult": 0.5,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 90,
+      "selfloopscale": 1.3,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.1008,
+        -0.336
+      ]
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 3,
+      "label1": "\\beta_{BC}",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.8,
+      "label_offset_mult": 0.34999999999999987,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 3,
+      "label1": "\\beta_{BA}",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.8,
+      "label_offset_mult": 0.39999999999999986,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0
+    },
+    {
+      "from_node_id": 3,
+      "to_node_id": 3,
+      "label1": "\\Delta_\\mathrm{B}",
+      "label2": "",
+      "linewidth_mult": 1.0,
+      "label_size_mult": 3.0,
+      "label_offset_mult": 0.8,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 330,
+      "selfloopscale": 1.0,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        -0.5040000000000001,
+        0.36960000000000004
+      ]
+    }
+  ]
+}

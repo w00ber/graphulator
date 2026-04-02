@@ -1,0 +1,225 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "created": "2025-10-10T10:41:34.974652",
+    "modified": "2025-10-10T10:41:34.974673"
+  },
+  "view": {
+    "grid_type": "triangular",
+    "grid_rotation": 0,
+    "zoom_level": 1.0,
+    "xlim": [
+      -9.0889262291624,
+      8.0889262291624
+    ],
+    "ylim": [
+      -7.7229008253779625,
+      9.454951632946837
+    ],
+    "use_latex": false
+  },
+  "nodes": [
+    {
+      "node_id": 0,
+      "label": "A",
+      "pos": [
+        -3.0,
+        6.928203230275509
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 1,
+      "label": "B",
+      "pos": [
+        2.0,
+        6.928203230275509
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 2,
+      "label": "C",
+      "pos": [
+        -0.5,
+        2.598076211353316
+      ],
+      "color": "darkseagreen",
+      "color_key": "GREEN",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 3,
+      "label": "C",
+      "pos": [
+        -0.5,
+        -0.8660254037844386
+      ],
+      "color": "darkseagreen",
+      "color_key": "GREEN",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 4,
+      "label": "A",
+      "pos": [
+        -3.0,
+        -5.196152422706632
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 5,
+      "label": "B",
+      "pos": [
+        2.0,
+        -5.196152422706632
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from_node_id": 0,
+      "to_node_id": 1,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.0,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.8,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 2,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.0,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.8,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 1,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.0,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.8,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0
+    },
+    {
+      "from_node_id": 4,
+      "to_node_id": 3,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.0,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.8,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0
+    },
+    {
+      "from_node_id": 3,
+      "to_node_id": 5,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.0,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.8,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0
+    },
+    {
+      "from_node_id": 5,
+      "to_node_id": 4,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.0,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.8,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 3,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.0,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.8,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0
+    }
+  ]
+}

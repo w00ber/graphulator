@@ -1,0 +1,392 @@
+{
+  "version": "2.0",
+  "format": "pgraph",
+  "metadata": {
+    "created": "2025-12-17T17:30:39.239099",
+    "modified": "2025-12-17T17:30:39.239099"
+  },
+  "view": {
+    "grid_type": "square",
+    "grid_rotation": 0,
+    "zoom_level": 1.0,
+    "xlim": [
+      -5.897368421052633,
+      5.897368421052633
+    ],
+    "ylim": [
+      -3.4000000000000004,
+      7.4
+    ],
+    "use_latex": false
+  },
+  "nodes": [
+    {
+      "node_id": 0,
+      "label": "1",
+      "pos": [
+        -5.0,
+        0.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color_key": "BLACK",
+      "outline_color": "black",
+      "outline_width": 4.0,
+      "outline_alpha": 0.5,
+      "freq": 6.0,
+      "B_int": 0.0,
+      "B_ext": 0.1
+    },
+    {
+      "node_id": 1,
+      "label": "2",
+      "pos": [
+        -1.0,
+        -0.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color_key": "BLACK",
+      "outline_color": "black",
+      "outline_width": 4.0,
+      "outline_alpha": 0.5,
+      "freq": 6.0,
+      "B_int": 0.0
+    },
+    {
+      "node_id": 2,
+      "label": "3",
+      "pos": [
+        3.0,
+        0.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color_key": "BLACK",
+      "outline_color": "black",
+      "outline_width": 4.0,
+      "outline_alpha": 0.5,
+      "freq": 6.0,
+      "B_int": 0.0
+    },
+    {
+      "node_id": 3,
+      "label": "4",
+      "pos": [
+        7.0,
+        0.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color_key": "BLACK",
+      "outline_color": "black",
+      "outline_width": 4.0,
+      "outline_alpha": 0.5,
+      "freq": 6.0,
+      "B_int": 0.0
+    },
+    {
+      "node_id": 4,
+      "label": "5",
+      "pos": [
+        11.0,
+        0.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color_key": "BLACK",
+      "outline_color": "black",
+      "outline_width": 4.0,
+      "outline_alpha": 0.5,
+      "freq": 6.0,
+      "B_int": 0.0,
+      "B_ext": 0.1
+    }
+  ],
+  "edges": [
+    {
+      "from_node_id": 0,
+      "to_node_id": 0,
+      "from_to": "1 (self-loop)",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 180,
+      "selfloopscale": 1.0,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 4,
+      "to_node_id": 4,
+      "from_to": "5 (self-loop)",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 0,
+      "selfloopscale": 1.0,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 1,
+      "from_to": "1 <-> 2",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 0.0,
+      "rate": 0.078,
+      "phase": 0.0
+    },
+    {
+      "from_node_id": 1,
+      "to_node_id": 2,
+      "from_to": "2 <-> 3",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 0.0,
+      "rate": 0.055,
+      "phase": 0.0
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 3,
+      "from_to": "3 <-> 4",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 0.0,
+      "rate": 0.055,
+      "phase": 0.0
+    },
+    {
+      "from_node_id": 3,
+      "to_node_id": 4,
+      "from_to": "4 <-> 5",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 0.0,
+      "rate": 0.078,
+      "phase": 0.0
+    }
+  ],
+  "node_properties": {
+    "0": {},
+    "1": {},
+    "2": {},
+    "3": {},
+    "4": {}
+  },
+  "edge_properties": {
+    "0_0": {},
+    "4_4": {},
+    "0_1": {},
+    "1_2": {},
+    "2_3": {},
+    "3_4": {}
+  },
+  "code_properties": {
+    "imports": [],
+    "node_code": {
+      "0": {},
+      "1": {},
+      "2": {},
+      "3": {},
+      "4": {}
+    },
+    "edge_code": {
+      "0_0": {},
+      "4_4": {},
+      "0_1": {},
+      "1_2": {},
+      "2_3": {},
+      "3_4": {}
+    },
+    "global_code": {}
+  },
+  "scattering": {
+    "tree_edges": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        3,
+        4
+      ]
+    ],
+    "chord_edges": [],
+    "injection_node_id": 0,
+    "frequency": {
+      "center": 6.0,
+      "span": 0.6,
+      "points": 801
+    },
+    "sparams_plot": {
+      "xlim": [
+        5.7,
+        6.3
+      ],
+      "ylim": [
+        -25.0,
+        15.65
+      ],
+      "x_autoscale": true,
+      "y_autoscale": false,
+      "conjugate_freqs": false,
+      "plot_mode": "both",
+      "phase_autoscale": true,
+      "phase_ylim": [
+        -511.6,
+        720.0
+      ],
+      "phase_unwrap": true,
+      "selected": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0
+        ]
+      ]
+    },
+    "constraint_groups": {
+      "1": {
+        "param_name": "rate",
+        "obj_type": "edge",
+        "members": [
+          "1\u21922",
+          "4\u21925"
+        ],
+        "value": 78.0
+      },
+      "2": {
+        "param_name": "rate",
+        "obj_type": "edge",
+        "members": [
+          "2\u21923",
+          "3\u21924"
+        ],
+        "value": 55.0
+      }
+    },
+    "next_constraint_group_id": 3
+  },
+  "notes": "# 5-mode Cauer topology filter\nThis realizes a simple in-line topology for a filter.\n\nHere there is no internal loss in the interior modes (2$\\rightarrow$4). The only loss available is from the outer modes (0 and 5) and scattering ports are indicated by the self-loops (using the convention in Naaman & Aumentado, PRXQ (2022)). \n\n## Thing to try\n### add interior loss\nIn the Scattering tab assign some internal loss (`B_int`) to any of the interior modes. \n\nWhat does this do to the maximum transmission? Can you still achieve good input return loss ($S_{11}$, $S_{55}$)?\n\n### add a dangling mode \nAdd a resonantly-coupled mode ($f_p = 0$ in the connecting edge) attached to any of the modes and adjust its frequency around resonance with respect to the other modes. ",
+  "svg": "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"no\"?>\n<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\"\n  \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n<svg xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"731.52pt\" height=\"671.04pt\" viewBox=\"0 0 731.52 671.04\" xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\">\n <metadata>\n  <rdf:RDF xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:cc=\"http://creativecommons.org/ns#\" xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n   <cc:Work>\n    <dc:type rdf:resource=\"http://purl.org/dc/dcmitype/StillImage\"/>\n    <dc:date>2025-12-17T17:30:39.323826</dc:date>\n    <dc:format>image/svg+xml</dc:format>\n    <dc:creator>\n     <cc:Agent>\n      <dc:title>Matplotlib v3.8.4, https://matplotlib.org/</dc:title>\n     </cc:Agent>\n    </dc:creator>\n   </cc:Work>\n  </rdf:RDF>\n </metadata>\n <defs>\n  <style type=\"text/css\">*{stroke-linejoin: round; stroke-linecap: butt}</style>\n </defs>\n <g id=\"figure_1\">\n  <g id=\"patch_1\">\n   <path d=\"M 0 671.04 \nL 731.52 671.04 \nL 731.52 0 \nL 0 0 \nz\n\" style=\"fill: #ffffff\"/>\n  </g>\n  <g id=\"axes_1\">\n   <g id=\"patch_2\">\n    <path d=\"M 146.958719 325.272881 \nC 108.978773 299.655084 108.978773 371.384916 146.958719 345.767119 \n\" clip-path=\"url(#pb6c6d1da55)\" style=\"fill: none; stroke: #000000; stroke-width: 1.775663; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_3\">\n    <path d=\"M 584.561281 345.767119 \nC 622.541227 371.384916 622.541227 299.655084 584.561281 325.272881 \n\" clip-path=\"url(#pb6c6d1da55)\" style=\"fill: none; stroke: #000000; stroke-width: 1.775663; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_4\">\n    <path d=\"M 183.784186 335.52 \nC 183.784186 335.52 242.32186 335.52 242.32186 335.52 \n\" clip-path=\"url(#pb6c6d1da55)\" style=\"fill: none; stroke: #000000; stroke-width: 5.326988; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_5\">\n    <path d=\"M 285.588837 335.52 \nC 285.588837 335.52 344.126512 335.52 344.126512 335.52 \n\" clip-path=\"url(#pb6c6d1da55)\" style=\"fill: none; stroke: #000000; stroke-width: 5.326988; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_6\">\n    <path d=\"M 387.393488 335.52 \nC 387.393488 335.52 445.931163 335.52 445.931163 335.52 \n\" clip-path=\"url(#pb6c6d1da55)\" style=\"fill: none; stroke: #000000; stroke-width: 5.326988; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_7\">\n    <path d=\"M 489.19814 335.52 \nC 489.19814 335.52 547.735814 335.52 547.735814 335.52 \n\" clip-path=\"url(#pb6c6d1da55)\" style=\"fill: none; stroke: #000000; stroke-width: 5.326988; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"line2d_1\">\n    <path d=\"M 142.011495 346.113063 \nL 146.958719 345.767119 \nL 144.784703 350.224512 \n\" clip-path=\"url(#pb6c6d1da55)\" style=\"fill: none; stroke: #000000; stroke-width: 1.42053; stroke-linecap: square\"/>\n   </g>\n   <g id=\"line2d_2\">\n    <path d=\"M 589.508505 324.926937 \nL 584.561281 325.272881 \nL 586.735297 320.815488 \n\" clip-path=\"url(#pb6c6d1da55)\" style=\"fill: none; stroke: #000000; stroke-width: 1.42053; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_8\">\n    <path d=\"M 162.150698 350.790698 \nC 166.200534 350.790698 170.085045 349.181681 172.948712 346.318014 \nC 175.812378 343.454347 177.421395 339.569836 177.421395 335.52 \nC 177.421395 331.470164 175.812378 327.585653 172.948712 324.721986 \nC 170.085045 321.858319 166.200534 320.249302 162.150698 320.249302 \nC 158.100861 320.249302 154.216351 321.858319 151.352684 324.721986 \nC 148.489017 327.585653 146.88 331.470164 146.88 335.52 \nC 146.88 339.569836 148.489017 343.454347 151.352684 346.318014 \nC 154.216351 349.181681 158.100861 350.790698 162.150698 350.790698 \nz\n\" clip-path=\"url(#pb6c6d1da55)\" style=\"fill: #6495ed\"/>\n   </g>\n   <g id=\"patch_9\">\n    <path d=\"M 263.955349 350.790698 \nC 268.005185 350.790698 271.889696 349.181681 274.753363 346.318014 \nC 277.617029 343.454347 279.226047 339.569836 279.226047 335.52 \nC 279.226047 331.470164 277.617029 327.585653 274.753363 324.721986 \nC 271.889696 321.858319 268.005185 320.249302 263.955349 320.249302 \nC 259.905512 320.249302 256.021002 321.858319 253.157335 324.721986 \nC 250.293668 327.585653 248.684651 331.470164 248.684651 335.52 \nC 248.684651 339.569836 250.293668 343.454347 253.157335 346.318014 \nC 256.021002 349.181681 259.905512 350.790698 263.955349 350.790698 \nz\n\" clip-path=\"url(#pb6c6d1da55)\" style=\"fill: #6495ed\"/>\n   </g>\n   <g id=\"patch_10\">\n    <path d=\"M 365.76 350.790698 \nC 369.809836 350.790698 373.694347 349.181681 376.558014 346.318014 \nC 379.421681 343.454347 381.030698 339.569836 381.030698 335.52 \nC 381.030698 331.470164 379.421681 327.585653 376.558014 324.721986 \nC 373.694347 321.858319 369.809836 320.249302 365.76 320.249302 \nC 361.710164 320.249302 357.825653 321.858319 354.961986 324.721986 \nC 352.098319 327.585653 350.489302 331.470164 350.489302 335.52 \nC 350.489302 339.569836 352.098319 343.454347 354.961986 346.318014 \nC 357.825653 349.181681 361.710164 350.790698 365.76 350.790698 \nz\n\" clip-path=\"url(#pb6c6d1da55)\" style=\"fill: #6495ed\"/>\n   </g>\n   <g id=\"patch_11\">\n    <path d=\"M 467.564651 350.790698 \nC 471.614488 350.790698 475.498998 349.181681 478.362665 346.318014 \nC 481.226332 343.454347 482.835349 339.569836 482.835349 335.52 \nC 482.835349 331.470164 481.226332 327.585653 478.362665 324.721986 \nC 475.498998 321.858319 471.614488 320.249302 467.564651 320.249302 \nC 463.514815 320.249302 459.630304 321.858319 456.766637 324.721986 \nC 453.902971 327.585653 452.293953 331.470164 452.293953 335.52 \nC 452.293953 339.569836 453.902971 343.454347 456.766637 346.318014 \nC 459.630304 349.181681 463.514815 350.790698 467.564651 350.790698 \nz\n\" clip-path=\"url(#pb6c6d1da55)\" style=\"fill: #6495ed\"/>\n   </g>\n   <g id=\"patch_12\">\n    <path d=\"M 569.369302 350.790698 \nC 573.419139 350.790698 577.303649 349.181681 580.167316 346.318014 \nC 583.030983 343.454347 584.64 339.569836 584.64 335.52 \nC 584.64 331.470164 583.030983 327.585653 580.167316 324.721986 \nC 577.303649 321.858319 573.419139 320.249302 569.369302 320.249302 \nC 565.319466 320.249302 561.434955 321.858319 558.571288 324.721986 \nC 555.707622 327.585653 554.098605 331.470164 554.098605 335.52 \nC 554.098605 339.569836 555.707622 343.454347 558.571288 346.318014 \nC 561.434955 349.181681 565.319466 350.790698 569.369302 350.790698 \nz\n\" clip-path=\"url(#pb6c6d1da55)\" style=\"fill: #6495ed\"/>\n   </g>\n   <g id=\"text_1\">\n    <!-- $\\mathbf{\\mathsf{1}}$ -->\n    <g style=\"fill: #ffffff\" transform=\"translate(158.409377 339.754708) scale(0.149653 -0.149653)\">\n     <defs>\n      <path id=\"STIXGeneral-Bold-1d7ed\" d=\"M 2138 0 \nL 1370 0 \nL 1370 3469 \nL 525 3149 \nL 525 3725 \nL 2016 4403 \nL 2138 4403 \nL 2138 0 \nz\n\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#STIXGeneral-Bold-1d7ed\" transform=\"translate(0 0.203125)\"/>\n    </g>\n   </g>\n   <g id=\"text_2\">\n    <!-- $\\mathbf{\\mathsf{2}}$ -->\n    <g style=\"fill: #ffffff\" transform=\"translate(260.214028 339.754708) scale(0.149653 -0.149653)\">\n     <defs>\n      <path id=\"STIXGeneral-Bold-1d7ee\" d=\"M 3034 608 \nL 2822 0 \nL 128 0 \nL 128 147 \nL 1677 2067 \nQ 2118 2611 2118 3136 \nQ 2118 3398 1955 3596 \nQ 1792 3795 1517 3795 \nQ 1280 3795 1088 3622 \nQ 896 3450 813 3085 \nL 205 3085 \nQ 320 3693 691 4048 \nQ 1062 4403 1632 4403 \nQ 2208 4403 2547 4051 \nQ 2886 3699 2886 3187 \nQ 2886 2797 2748 2505 \nQ 2611 2214 2221 1747 \nL 1280 608 \nL 3034 608 \nz\n\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#STIXGeneral-Bold-1d7ee\" transform=\"translate(0 0.203125)\"/>\n    </g>\n   </g>\n   <g id=\"text_3\">\n    <!-- $\\mathbf{\\mathsf{3}}$ -->\n    <g style=\"fill: #ffffff\" transform=\"translate(362.018679 339.754708) scale(0.149653 -0.149653)\">\n     <defs>\n      <path id=\"STIXGeneral-Bold-1d7ef\" d=\"M 2432 2400 \nL 2432 2387 \nQ 2701 2259 2883 1993 \nQ 3066 1728 3066 1402 \nQ 3066 915 2813 566 \nQ 2560 218 2138 45 \nQ 1811 -83 1331 -83 \nQ 557 -83 115 384 \nL 486 877 \nQ 800 525 1376 525 \nQ 1850 525 2080 730 \nQ 2298 928 2298 1267 \nQ 2298 1594 1990 1805 \nQ 1677 2016 1056 2016 \nL 1056 2118 \nL 1434 2624 \nQ 1734 2624 1945 2809 \nQ 2157 2995 2157 3232 \nQ 2157 3507 1993 3651 \nQ 1830 3795 1562 3795 \nQ 1338 3795 1152 3651 \nQ 966 3507 883 3194 \nL 307 3392 \nQ 480 3859 832 4131 \nQ 1184 4403 1677 4403 \nQ 2182 4403 2537 4102 \nQ 2893 3802 2893 3322 \nQ 2893 3066 2771 2803 \nQ 2650 2541 2432 2400 \nz\n\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#STIXGeneral-Bold-1d7ef\" transform=\"translate(0 0.203125)\"/>\n    </g>\n   </g>\n   <g id=\"text_4\">\n    <!-- $\\mathbf{\\mathsf{4}}$ -->\n    <g style=\"fill: #ffffff\" transform=\"translate(463.82333 339.754708) scale(0.149653 -0.149653)\">\n     <defs>\n      <path id=\"STIXGeneral-Bold-1d7f0\" d=\"M 3098 1536 \nL 2957 928 \nL 2637 928 \nL 2637 0 \nL 1869 0 \nL 1869 928 \nL 122 928 \nL 122 1645 \nL 2125 4403 \nL 2637 4403 \nL 2637 1536 \nL 3098 1536 \nz\nM 1869 1536 \nL 1869 3034 \nL 781 1536 \nL 1869 1536 \nz\n\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#STIXGeneral-Bold-1d7f0\" transform=\"translate(0 0.203125)\"/>\n    </g>\n   </g>\n   <g id=\"text_5\">\n    <!-- $\\mathbf{\\mathsf{5}}$ -->\n    <g style=\"fill: #ffffff\" transform=\"translate(565.627981 339.754708) scale(0.149653 -0.149653)\">\n     <defs>\n      <path id=\"STIXGeneral-Bold-1d7f1\" d=\"M 3091 4326 \nL 2848 3654 \nL 1408 3654 \nL 1178 2912 \nQ 1869 2874 2259 2656 \nQ 2950 2266 2950 1485 \nQ 2950 1018 2720 646 \nQ 2490 275 2112 83 \nQ 1779 -83 1306 -83 \nQ 525 -83 83 384 \nL 454 877 \nQ 813 525 1325 525 \nQ 1683 525 1916 749 \nQ 2150 973 2150 1299 \nQ 2150 1549 2051 1702 \nQ 1952 1856 1709 1978 \nQ 1389 2144 486 2144 \nL 390 2214 \nL 986 4326 \nL 3091 4326 \nz\n\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#STIXGeneral-Bold-1d7f1\" transform=\"translate(0 0.40625)\"/>\n    </g>\n   </g>\n  </g>\n </g>\n <defs>\n  <clipPath id=\"pb6c6d1da55\">\n   <rect x=\"7.2\" y=\"7.2\" width=\"717.12\" height=\"656.64\"/>\n  </clipPath>\n </defs>\n</svg>\n"
+}

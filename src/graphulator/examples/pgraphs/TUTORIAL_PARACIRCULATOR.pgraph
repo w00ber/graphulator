@@ -1,0 +1,281 @@
+{
+  "version": "2.0",
+  "format": "pgraph",
+  "metadata": {
+    "created": "2025-12-22T13:54:40.875076",
+    "modified": "2025-12-22T13:54:40.875089"
+  },
+  "view": {
+    "grid_type": "triangular",
+    "grid_rotation": 0,
+    "zoom_level": 1.0,
+    "xlim": [
+      -5.864101615137755,
+      2.8641016151377547
+    ],
+    "ylim": [
+      -3.0484342638982964,
+      5.9351856098464255
+    ],
+    "use_latex": false
+  },
+  "nodes": [
+    {
+      "node_id": 1,
+      "label": "A",
+      "pos": [
+        -3.5,
+        2.598076211353316
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color_key": "PURPLE",
+      "outline_color": "mediumpurple",
+      "outline_width": 4.0,
+      "outline_alpha": 0.5,
+      "freq": 6.0,
+      "B_int": 0.0,
+      "B_ext": 0.1
+    },
+    {
+      "node_id": 2,
+      "label": "B",
+      "pos": [
+        0.5,
+        2.598076211353316
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color_key": "PURPLE",
+      "outline_color": "mediumpurple",
+      "outline_width": 4.0,
+      "outline_alpha": 0.5,
+      "freq": 7.0,
+      "B_int": 0.0,
+      "B_ext": 0.1
+    },
+    {
+      "node_id": 3,
+      "label": "C",
+      "pos": [
+        -1.5,
+        -0.8660254037844386
+      ],
+      "color": "darkseagreen",
+      "color_key": "GREEN",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color_key": "PURPLE",
+      "outline_color": "mediumpurple",
+      "outline_width": 4.0,
+      "outline_alpha": 0.5,
+      "freq": 4.2,
+      "B_int": 0.1
+    }
+  ],
+  "edges": [
+    {
+      "from_node_id": 1,
+      "to_node_id": 1,
+      "from_to": "A (self-loop)",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 135,
+      "selfloopscale": 1.2,
+      "arrowlengthsc": 1.4,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 2,
+      "from_to": "B (self-loop)",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 45,
+      "selfloopscale": 1.2,
+      "arrowlengthsc": 1.4,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 1,
+      "to_node_id": 2,
+      "from_to": "A <-> B",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "rate": 0.1,
+      "phase": 0.0
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 3,
+      "from_to": "B <-> C",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 2.8,
+      "rate": 0.1,
+      "phase": 0.0
+    },
+    {
+      "from_node_id": 3,
+      "to_node_id": 1,
+      "from_to": "C <-> A",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 1.8,
+      "rate": 0.1,
+      "phase": 90.0
+    }
+  ],
+  "node_properties": {
+    "1": {},
+    "2": {},
+    "3": {}
+  },
+  "edge_properties": {
+    "1_1": {},
+    "2_2": {},
+    "1_2": {},
+    "2_3": {},
+    "3_1": {}
+  },
+  "code_properties": {
+    "imports": [],
+    "node_code": {
+      "1": {},
+      "2": {},
+      "3": {}
+    },
+    "edge_code": {
+      "1_1": {},
+      "2_2": {},
+      "1_2": {},
+      "2_3": {},
+      "3_1": {}
+    },
+    "global_code": {}
+  },
+  "scattering": {
+    "tree_edges": [
+      [
+        2,
+        3
+      ],
+      [
+        1,
+        3
+      ]
+    ],
+    "chord_edges": [
+      [
+        1,
+        2
+      ]
+    ],
+    "injection_node_id": 1,
+    "frequency": {
+      "center": 6.0,
+      "span": 0.8,
+      "points": 801
+    },
+    "sparams_plot": {
+      "xlim": [
+        0.0,
+        1.0
+      ],
+      "ylim": [
+        0.0,
+        1.0
+      ],
+      "x_autoscale": true,
+      "y_autoscale": true,
+      "conjugate_freqs": false,
+      "plot_mode": "dB",
+      "phase_autoscale": true,
+      "phase_ylim": [
+        -180.0,
+        180.0
+      ],
+      "phase_unwrap": false
+    }
+  },
+  "notes": "# TUTORIAL EXAMPLE: The Parametric Circulator\n\nThis example sets up three driven modes within three separate resonances. They are parametrically coupled via frequency conversion and, when the total of the three coupling phases is an odd multiple of $\\pi/2$, the transmission symmetry between ports is completely broken. The total of the pump phases is sometimes called a *loop phase* and is technically a realization of a so-called *synthetic gauge flux*.\n\n- See the *Help/Tutorial* to learn to set up this problem on your own.",
+  "svg": "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"no\"?>\n<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\"\n  \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n<svg xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"727.92pt\" height=\"748.8pt\" viewBox=\"0 0 727.92 748.8\" xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\">\n <metadata>\n  <rdf:RDF xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:cc=\"http://creativecommons.org/ns#\" xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n   <cc:Work>\n    <dc:type rdf:resource=\"http://purl.org/dc/dcmitype/StillImage\"/>\n    <dc:date>2025-12-22T13:54:40.904927</dc:date>\n    <dc:format>image/svg+xml</dc:format>\n    <dc:creator>\n     <cc:Agent>\n      <dc:title>Matplotlib v3.10.6, https://matplotlib.org/</dc:title>\n     </cc:Agent>\n    </dc:creator>\n   </cc:Work>\n  </rdf:RDF>\n </metadata>\n <defs>\n  <style type=\"text/css\">*{stroke-linejoin: round; stroke-linecap: butt}</style>\n </defs>\n <g id=\"figure_1\">\n  <g id=\"patch_1\">\n   <path d=\"M 0 748.8 \nL 727.92 748.8 \nL 727.92 0 \nL 0 0 \nz\n\" style=\"fill: #ffffff\"/>\n  </g>\n  <g id=\"axes_1\">\n   <g id=\"patch_2\">\n    <path d=\"M 189.231582 222.226919 \nC 155.539031 48.893769 -30.648434 235.081234 142.684716 268.773785 \n\" clip-path=\"url(#pc73316338b)\" style=\"fill: none; stroke: #000000; stroke-width: 5.703404; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_3\">\n    <path d=\"M 585.235284 268.773785 \nC 758.568434 235.081234 572.380969 48.893769 538.688418 222.226919 \n\" clip-path=\"url(#pc73316338b)\" style=\"fill: none; stroke: #000000; stroke-width: 5.703404; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_4\">\n    <path d=\"M 269.948898 280.004635 \nC 269.948898 280.004635 457.971102 280.004635 457.971102 280.004635 \n\" clip-path=\"url(#pc73316338b)\" style=\"fill: none; stroke: #000000; stroke-width: 17.110211; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_5\">\n    <path d=\"M 492.714335 340.18168 \nC 492.714335 340.18168 398.703233 503.013685 398.703233 503.013685 \n\" clip-path=\"url(#pc73316338b)\" style=\"fill: none; stroke: #000000; stroke-width: 17.110211; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_6\">\n    <path d=\"M 329.216767 503.013685 \nC 329.216767 503.013685 235.205665 340.18168 235.205665 340.18168 \n\" clip-path=\"url(#pc73316338b)\" style=\"fill: none; stroke: #000000; stroke-width: 17.110211; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"line2d_1\">\n    <path d=\"M 125.854009 254.143075 \nL 142.684716 268.773785 \nL 121.598796 276.034249 \n\" clip-path=\"url(#pc73316338b)\" style=\"fill: none; stroke: #000000; stroke-width: 4.562723; stroke-linecap: square\"/>\n   </g>\n   <g id=\"line2d_2\">\n    <path d=\"M 553.319128 205.396212 \nL 538.688418 222.226919 \nL 531.427954 201.140999 \n\" clip-path=\"url(#pc73316338b)\" style=\"fill: none; stroke: #000000; stroke-width: 4.562723; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_7\">\n    <path d=\"M 200.462432 329.053906 \nC 213.470451 329.053906 225.947446 323.885765 235.145504 314.687707 \nC 244.343562 305.489649 249.511702 293.012654 249.511702 280.004635 \nC 249.511702 266.996617 244.343562 254.519622 235.145504 245.321563 \nC 225.947446 236.123505 213.470451 230.955365 200.462432 230.955365 \nC 187.454414 230.955365 174.977419 236.123505 165.77936 245.321563 \nC 156.581302 254.519622 151.413162 266.996617 151.413162 280.004635 \nC 151.413162 293.012654 156.581302 305.489649 165.77936 314.687707 \nC 174.977419 323.885765 187.454414 329.053906 200.462432 329.053906 \nz\n\" clip-path=\"url(#pc73316338b)\" style=\"fill: #cd5c5c\"/>\n   </g>\n   <g id=\"patch_8\">\n    <path d=\"M 527.457568 329.053906 \nC 540.465586 329.053906 552.942581 323.885765 562.14064 314.687707 \nC 571.338698 305.489649 576.506838 293.012654 576.506838 280.004635 \nC 576.506838 266.996617 571.338698 254.519622 562.14064 245.321563 \nC 552.942581 236.123505 540.465586 230.955365 527.457568 230.955365 \nC 514.449549 230.955365 501.972554 236.123505 492.774496 245.321563 \nC 483.576438 254.519622 478.408298 266.996617 478.408298 280.004635 \nC 478.408298 293.012654 483.576438 305.489649 492.774496 314.687707 \nC 501.972554 323.885765 514.449549 329.053906 527.457568 329.053906 \nz\n\" clip-path=\"url(#pc73316338b)\" style=\"fill: #6495ed\"/>\n   </g>\n   <g id=\"patch_9\">\n    <path d=\"M 363.96 612.24 \nC 376.968019 612.24 389.445014 607.071859 398.643072 597.873801 \nC 407.84113 588.675743 413.00927 576.198748 413.00927 563.19073 \nC 413.00927 550.182711 407.84113 537.705716 398.643072 528.507658 \nC 389.445014 519.3096 376.968019 514.141459 363.96 514.141459 \nC 350.951981 514.141459 338.474986 519.3096 329.276928 528.507658 \nC 320.07887 537.705716 314.91073 550.182711 314.91073 563.19073 \nC 314.91073 576.198748 320.07887 588.675743 329.276928 597.873801 \nC 338.474986 607.071859 350.951981 612.24 363.96 612.24 \nz\n\" clip-path=\"url(#pc73316338b)\" style=\"fill: #8fbc8f\"/>\n   </g>\n   <g id=\"text_1\">\n    <!-- $\\mathbf{\\mathsf{A}}$ -->\n    <g style=\"fill: #ffffff\" transform=\"translate(183.878874 293.606458) scale(0.480683 -0.480683)\">\n     <defs>\n      <path id=\"STIXGeneral-Bold-1d5d4\" d=\"M 4256 0 \nL 3424 0 \nL 3002 1037 \nL 1414 1037 \nL 992 0 \nL 160 0 \nL 2118 4416 \nL 2298 4416 \nL 4256 0 \nz\nM 2739 1690 \nL 2208 2995 \nL 1677 1690 \nL 2739 1690 \nz\n\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#STIXGeneral-Bold-1d5d4\"/>\n    </g>\n   </g>\n   <g id=\"text_2\">\n    <!-- $\\mathbf{\\mathsf{B}}$ -->\n    <g style=\"fill: #ffffff\" transform=\"translate(512.075717 293.606458) scale(0.480683 -0.480683)\">\n     <defs>\n      <path id=\"STIXGeneral-Bold-1d5d5\" d=\"M 2963 2387 \nL 2970 2362 \nQ 3450 2131 3626 1852 \nQ 3802 1574 3802 1203 \nQ 3802 685 3334 342 \nQ 2867 0 2176 0 \nL 512 0 \nL 512 4326 \nL 2029 4326 \nQ 2784 4326 3181 4051 \nQ 3578 3776 3578 3251 \nQ 3578 2989 3418 2755 \nQ 3258 2522 2963 2387 \nz\nM 1331 2643 \nL 1792 2643 \nQ 2694 2643 2694 3213 \nQ 2694 3450 2547 3562 \nQ 2400 3674 2054 3674 \nL 1331 3674 \nL 1331 2643 \nz\nM 1331 653 \nL 1990 653 \nQ 2502 653 2697 838 \nQ 2893 1024 2893 1350 \nQ 2893 1683 2576 1836 \nQ 2259 1990 1811 1990 \nL 1331 1990 \nL 1331 653 \nz\n\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#STIXGeneral-Bold-1d5d5\" transform=\"translate(0 0.40625)\"/>\n    </g>\n   </g>\n   <g id=\"text_3\">\n    <!-- $\\mathbf{\\mathsf{C}}$ -->\n    <g style=\"fill: #ffffff\" transform=\"translate(346.415076 576.792552) scale(0.480683 -0.480683)\">\n     <defs>\n      <path id=\"STIXGeneral-Bold-1d5d6\" d=\"M 3962 1235 \nL 4403 800 \nQ 3667 -122 2579 -122 \nQ 1530 -122 922 521 \nQ 314 1165 314 2176 \nQ 314 3149 938 3785 \nQ 1562 4422 2573 4422 \nQ 3085 4422 3472 4294 \nQ 3859 4166 4154 3821 \nL 4154 2867 \nL 4083 2867 \nQ 3622 3770 2688 3770 \nQ 2042 3770 1619 3344 \nQ 1197 2918 1197 2189 \nQ 1197 1517 1558 1024 \nQ 1920 531 2592 531 \nQ 2995 531 3305 694 \nQ 3616 858 3962 1235 \nz\n\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#STIXGeneral-Bold-1d5d6\" transform=\"translate(0 0.90625)\"/>\n    </g>\n   </g>\n  </g>\n </g>\n <defs>\n  <clipPath id=\"pc73316338b\">\n   <rect x=\"7.2\" y=\"7.2\" width=\"713.52\" height=\"734.4\"/>\n  </clipPath>\n </defs>\n</svg>\n"
+}

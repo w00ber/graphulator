@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graphulator"
+version = "0.5.0"
+description = "Interactive graph drawing tools for graph coupled mode theory, including frequency converters, amplifiers, and filters."
+readme = "README.md"
+authors = [
+    {name = "J. Aumentado", email = "jose.aumentado@gmail.com"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+keywords = ["graph", "visualization", "quantum", "circuit", "coupled-mode-theory"]
+requires-python = ">=3.9"
+dependencies = [
+    "PySide6>=6.4.0,<6.9.0",  # 6.9+ has DLL issues on Windows
+    "matplotlib>=3.6.0",
+    "numpy>=1.23.0",
+    "sympy>=1.11.0",
+    "seaborn>=0.12.0",
+    "more-itertools>=9.0.0",
+    "ipywidgets>=7.6.0",
+    "ipykernel>=6.0.0",
+    "pyobjc-framework-Cocoa>=9.0; sys_platform == 'darwin'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "jupyter>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/w00ber/graphulator"
+Documentation = "https://github.com/w00ber/graphulator#readme"
+Repository = "https://github.com/w00ber/graphulator"
+Issues = "https://github.com/w00ber/graphulator/issues"
+
+[project.scripts]
+graphulator = "graphulator.cli:main"
+paragraphulator = "graphulator.graphulator_para:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+graphulator = [
+    "help_para.md",
+    "tutorial.md",
+    "tutorial_images/*",
+    "examples/graphs/*.graph",
+    "examples/pgraphs/*.pgraph",
+    "katex/*.js",
+    "katex/*.css",
+    "katex/fonts/*",
+    "katex/contrib/*.js",
+]
