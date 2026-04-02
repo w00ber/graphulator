@@ -12765,7 +12765,7 @@ class Graphulator(QMainWindow):
 
             # Format label with bold sans-serif, handling subscripts/superscripts
             # Split on _ and ^ while keeping the delimiters
-                parts = re.split(r'([_^])', label_text)
+            parts = re.split(r'([_^])', label_text)
 
             # Choose font command based on rendering mode
             if self.use_latex:
