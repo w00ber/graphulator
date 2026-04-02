@@ -4,21 +4,15 @@ Advanced GUI for creating coupled mode theory graphs using PySide6. Modified fro
 
 """
 
-import base64
-import copy
 import html as html_module
-import io
 import json
 import logging
 import os
 import re
-import subprocess
 import sys
-import tempfile
 import time
 import traceback
 import warnings
-from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -2669,6 +2663,8 @@ class PropertiesPanel(QWidget):
 
     def _render_tutorial_markdown(self, markdown_text, images_dir):
         """Render markdown for tutorial with image support"""
+        import base64
+
         text = markdown_text
 
         # Get the script directory for absolute paths
@@ -8055,6 +8051,7 @@ class Graphulator(QMainWindow):
         - nodes: Copies of selected nodes with original styling preserved
         - edges: NEW edges determined by non-zero off-diagonal elements in reduced matrix
         """
+        import copy
 
         # Get the reduced matrix (already computed and stored)
         M_reduced = self.kron_reduced_matrix
@@ -12790,7 +12787,7 @@ class Graphulator(QMainWindow):
 
             # Format label with bold sans-serif, handling subscripts/superscripts
             # Split on _ and ^ while keeping the delimiters
-            parts = re.split(r'([_^])', label_text)
+                parts = re.split(r'([_^])', label_text)
 
             # Choose font command based on rendering mode
             if self.use_latex:
@@ -13502,7 +13499,7 @@ class Graphulator(QMainWindow):
                         return r'\mathbf{\mathsf{' + text + '}}'
 
                 # Handle subscripts/superscripts
-                parts = re.split(r'([_^])', label_text)
+                        parts = re.split(r'([_^])', label_text)
 
                 formatted_parts = []
                 i = 0
@@ -13639,7 +13636,7 @@ class Graphulator(QMainWindow):
                     return r'\mathbf{\mathsf{' + text + '}}'
 
             # Handle subscripts/superscripts (same logic as _draw_nodes)
-            parts = re.split(r'([_^])', label_text)
+                parts = re.split(r'([_^])', label_text)
 
             formatted_parts = []
             i = 0
