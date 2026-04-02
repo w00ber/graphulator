@@ -13499,7 +13499,7 @@ class Graphulator(QMainWindow):
                         return r'\mathbf{\mathsf{' + text + '}}'
 
                 # Handle subscripts/superscripts
-                        parts = re.split(r'([_^])', label_text)
+                parts = re.split(r'([_^])', label_text)
 
                 formatted_parts = []
                 i = 0
@@ -13636,7 +13636,7 @@ class Graphulator(QMainWindow):
                     return r'\mathbf{\mathsf{' + text + '}}'
 
             # Handle subscripts/superscripts (same logic as _draw_nodes)
-                parts = re.split(r'([_^])', label_text)
+            parts = re.split(r'([_^])', label_text)
 
             formatted_parts = []
             i = 0
