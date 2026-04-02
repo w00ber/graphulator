@@ -1,15 +1,27 @@
 """
-Graphulator Para - Interactive Graph Drawing Tool 
+Graphulator Para - Interactive Graph Drawing Tool
 Advanced GUI for creating coupled mode theory graphs using PySide6. Modified from Graphulator (graphulator_qt.py) to focus on parametric graphs and associated Kron reduction and scattering calculations.
 
 """
 
-import sys
-import time
+import base64
+import copy
+import html as html_module
+import io
 import json
+import logging
 import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+import traceback
+import warnings
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+
 import numpy as np
 import seaborn as sns
 
@@ -19,8 +31,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QSplitter, QGroupBox, QSlider, QSpinBox, QDoubleSpinBox,
                                QFormLayout, QColorDialog, QMenu, QTextEdit, QFileDialog,
                                QMessageBox, QMenuBar, QTabWidget, QScrollArea, QRadioButton,
-                               QPlainTextEdit)
-from PySide6.QtCore import Qt, Signal, QTimer, QThread, QSize, QRect
+                               QPlainTextEdit, QButtonGroup, QFrame)
+from PySide6.QtCore import Qt, Signal, QTimer, QThread, QSize, QRect, QUrl, QEvent
 from PySide6.QtGui import (QKeySequence, QShortcut, QColor, QCursor, QAction,
                            QFont, QPainter, QTextFormat, QIcon)
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -33,12 +45,18 @@ matplotlib.rcParams['mathtext.fontset'] = 'stix'  # STIX fonts look similar to L
 matplotlib.rcParams['font.family'] = 'STIXGeneral'
 
 # Suppress matplotlib warnings about adjusting limits for aspect ratio
-import warnings
 warnings.filterwarnings('ignore', message='.*fixed.*limits.*aspect.*', category=UserWarning)
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas, NavigationToolbar2QT
 from matplotlib.figure import Figure
 import matplotlib.patches as patches
+
+import sympy as sp
+from sympy import Symbol, Matrix, simplify, latex, Abs, conjugate, Mul, Add, Pow, cancel
+from sympy import fraction, expand, factor_terms
+from sympy.printing.latex import LatexPrinter
+from sympy.core.mul import Mul as MulType
+from sympy.functions.elementary.complexes import conjugate as Conjugate
 
 # Import modules (relative imports for package)
 from . import graph_primitives as gp
@@ -53,16 +71,21 @@ from .para_features.sympy_utils import (
     CustomLaTeXPrinter, latex_custom, latex_matrix_factored, normalize_matrix_latex
 )
 from .para_rendering.latex_render import MatrixRenderWorker
+from .para_rendering.katex_templates import (
+    render_matrix_html, render_basis_html, render_placeholder_html
+)
 from .para_ui.dialogs import NodeInputDialog, EdgeInputDialog
 from .para_ui.canvas import MplCanvas
 from .para_ui.web_views import ZoomableWebView
 from .para_ui.shortcut_manager import ShortcutManager
 from .para_ui.doc_template import CachedDocumentationProcessor
+from .para_core.settings_manager import (
+    SettingsManager, get_settings_manager,
+    USER_SETTINGS_DIR, USER_SETTINGS_FILE
+)
+from .para_core.interaction_state import InteractionMode, PlacementMode
 
-# SymPy imports still needed for type checking
-from sympy.printing.latex import LatexPrinter
-from sympy.core.mul import Mul
-from sympy.functions.elementary.complexes import conjugate as Conjugate
+logger = logging.getLogger(__name__)
 
 EXPORT_RESCALE_DEFAULTS = {
     'NODELABELSCALE': 1.000,
@@ -82,10 +105,6 @@ EXPORT_RESCALE_DEFAULTS = {
 # =============================================================================
 # SETTINGS DIALOG PARAMETER DEFINITIONS
 # =============================================================================
-
-# User settings directory
-USER_SETTINGS_DIR = Path.home() / '.graphulator'
-USER_SETTINGS_FILE = USER_SETTINGS_DIR / 'settings.json'
 
 # Settings parameter definitions for the Settings Dialog
 # Format: {tab_name: [(config_attr, display_name, type, min, max, step), ...]}
@@ -144,56 +163,22 @@ SETTINGS_PARAMS = {
 
 def _get_original_config_value(param_name):
     """Get the original value from the config module (as defined in code)."""
-    # For export rescale params, check the defaults dict in config
-    if param_name in config.EXPORT_RESCALE_DEFAULTS:
-        return config.EXPORT_RESCALE_DEFAULTS[param_name]
-    # Otherwise get directly from config module
-    return getattr(config, param_name, None)
+    return get_settings_manager().get_original_config_value(param_name)
 
 
 def load_user_settings():
     """Load user settings from ~/.graphulator/settings.json and apply to config module."""
-    if not USER_SETTINGS_FILE.exists():
-        return {}
-
-    try:
-        with open(USER_SETTINGS_FILE, 'r') as f:
-            settings = json.load(f)
-
-        # Apply settings to config module
-        for param_name, value in settings.items():
-            if hasattr(config, param_name):
-                setattr(config, param_name, value)
-
-        return settings
-    except Exception as e:
-        print(f"Warning: Could not load user settings: {e}")
-        return {}
+    return get_settings_manager().load()
 
 
 def save_user_settings(settings_dict):
     """Save settings to ~/.graphulator/settings.json."""
-    try:
-        # Create directory if needed
-        USER_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
-
-        with open(USER_SETTINGS_FILE, 'w') as f:
-            json.dump(settings_dict, f, indent=2)
-        return True
-    except Exception as e:
-        print(f"Warning: Could not save user settings: {e}")
-        return False
+    return get_settings_manager().save(settings_dict)
 
 
 def delete_user_settings():
     """Delete the user settings file to reset to defaults."""
-    try:
-        if USER_SETTINGS_FILE.exists():
-            USER_SETTINGS_FILE.unlink()
-        return True
-    except Exception as e:
-        print(f"Warning: Could not delete user settings: {e}")
-        return False
+    return get_settings_manager().delete()
 
 
 def sync_dialog_defaults_from_config():
@@ -243,7 +228,6 @@ class PropertiesPanel(QWidget):
 
         # Debounce timer for scattering parameter updates
         # This allows spinbox hold-to-repeat to work by not blocking the event loop
-        from PySide6.QtCore import QTimer
         self._scattering_update_timer = QTimer(self)
         self._scattering_update_timer.setSingleShot(True)
         self._scattering_update_timer.timeout.connect(self._do_scattering_update)
@@ -299,7 +283,6 @@ class PropertiesPanel(QWidget):
 
     def _create_console_tab(self):
         """Create the console output tab"""
-        from PySide6.QtGui import QFont
 
         console_tab = QWidget()
         console_layout = QVBoxLayout()
@@ -333,10 +316,6 @@ class PropertiesPanel(QWidget):
         if hasattr(self, '_katex_dir_cached'):
             return self._katex_dir_cached
 
-        import os
-        import sys
-        from pathlib import Path
-
         # Try to find KaTeX directory
         is_frozen = getattr(sys, 'frozen', False)
 
@@ -360,7 +339,6 @@ class PropertiesPanel(QWidget):
 
     def _get_katex_base_qurl(self):
         """Get the base QUrl for KaTeX files (for use with setHtml baseUrl)."""
-        from PySide6.QtCore import QUrl
         katex_dir = self._get_katex_dir()
         if katex_dir:
             return QUrl.fromLocalFile(str(katex_dir) + '/')
@@ -621,8 +599,6 @@ class PropertiesPanel(QWidget):
 
     def _render_notes_preview(self):
         """Render markdown notes with KaTeX LaTeX support (fast, offline-capable)"""
-        import html as html_module
-        import re
 
         markdown_text = self.notes_editor.toPlainText()
 
@@ -855,22 +831,10 @@ class PropertiesPanel(QWidget):
         self.basis_display.setMinimumHeight(150)
         basis_layout.addWidget(self.basis_display, stretch=1)
 
-        # Connect zoom buttons with debug wrappers
-        def debug_basis_zoom_in():
-            print("[DEBUG] Basis zoom IN button clicked")
-            self.basis_display.zoom_in()
-
-        def debug_basis_zoom_out():
-            print("[DEBUG] Basis zoom OUT button clicked")
-            self.basis_display.zoom_out()
-
-        def debug_basis_zoom_reset():
-            print("[DEBUG] Basis zoom RESET button clicked")
-            self.basis_display.reset_zoom()
-
-        zoom_in_basis_btn.clicked.connect(debug_basis_zoom_in)
-        zoom_out_basis_btn.clicked.connect(debug_basis_zoom_out)
-        zoom_reset_basis_btn.clicked.connect(debug_basis_zoom_reset)
+        # Connect zoom buttons directly
+        zoom_in_basis_btn.clicked.connect(self.basis_display.zoom_in)
+        zoom_out_basis_btn.clicked.connect(self.basis_display.zoom_out)
+        zoom_reset_basis_btn.clicked.connect(self.basis_display.reset_zoom)
 
         # Button to enter basis ordering mode
         self.enter_basis_btn = QPushButton("Enter Basis Ordering Mode")
@@ -913,8 +877,6 @@ class PropertiesPanel(QWidget):
         sympy_layout.addWidget(title)
 
         # Code display using QTextEdit with monospace font
-        from PySide6.QtWidgets import QTextEdit
-        from PySide6.QtGui import QFont
         self.sympy_code_display = QTextEdit()
         self.sympy_code_display.setReadOnly(True)
         self.sympy_code_display.setFont(QFont("Courier", 10))
@@ -934,8 +896,6 @@ class PropertiesPanel(QWidget):
 
     def _create_scattering_tab(self):
         """Create the Scattering parameter assignment tab"""
-        from PySide6.QtWidgets import QDoubleSpinBox, QScrollArea, QGridLayout, QFrame, QSplitter
-        from PySide6.QtCore import Qt
 
         scattering_tab = QWidget()
         scattering_layout = QVBoxLayout()
@@ -1142,8 +1102,6 @@ class PropertiesPanel(QWidget):
 
     def _create_matrix_tab(self):
         """Create the matrix display tab with Original/Kron subtabs"""
-        from PySide6.QtWebEngineWidgets import QWebEngineView
-        from PySide6.QtCore import QTimer
 
         matrix_tab = QWidget()
         matrix_layout = QVBoxLayout()
@@ -1212,22 +1170,10 @@ class PropertiesPanel(QWidget):
         self.matrix_display.setMinimumHeight(200)
         original_layout.addWidget(self.matrix_display, stretch=1)
 
-        # Connect zoom buttons with debug wrappers
-        def debug_matrix_zoom_in():
-            print("[DEBUG] Matrix zoom IN button clicked")
-            self.matrix_display.zoom_in()
-
-        def debug_matrix_zoom_out():
-            print("[DEBUG] Matrix zoom OUT button clicked")
-            self.matrix_display.zoom_out()
-
-        def debug_matrix_zoom_reset():
-            print("[DEBUG] Matrix zoom RESET button clicked")
-            self.matrix_display.reset_zoom()
-
-        zoom_in_matrix_btn.clicked.connect(debug_matrix_zoom_in)
-        zoom_out_matrix_btn.clicked.connect(debug_matrix_zoom_out)
-        zoom_reset_matrix_btn.clicked.connect(debug_matrix_zoom_reset)
+        # Connect zoom buttons directly
+        zoom_in_matrix_btn.clicked.connect(self.matrix_display.zoom_in)
+        zoom_out_matrix_btn.clicked.connect(self.matrix_display.zoom_out)
+        zoom_reset_matrix_btn.clicked.connect(self.matrix_display.reset_zoom)
 
         # Install event filter to detect resize events
         self.matrix_display.installEventFilter(self)
@@ -1291,22 +1237,10 @@ class PropertiesPanel(QWidget):
         self.kron_matrix_display.setMinimumHeight(200)
         kron_layout.addWidget(self.kron_matrix_display, stretch=1)
 
-        # Connect zoom buttons with debug wrappers
-        def debug_kron_zoom_in():
-            print("[DEBUG] Kron Matrix zoom IN button clicked")
-            self.kron_matrix_display.zoom_in()
-
-        def debug_kron_zoom_out():
-            print("[DEBUG] Kron Matrix zoom OUT button clicked")
-            self.kron_matrix_display.zoom_out()
-
-        def debug_kron_zoom_reset():
-            print("[DEBUG] Kron Matrix zoom RESET button clicked")
-            self.kron_matrix_display.reset_zoom()
-
-        zoom_in_kron_btn.clicked.connect(debug_kron_zoom_in)
-        zoom_out_kron_btn.clicked.connect(debug_kron_zoom_out)
-        zoom_reset_kron_btn.clicked.connect(debug_kron_zoom_reset)
+        # Connect zoom buttons directly
+        zoom_in_kron_btn.clicked.connect(self.kron_matrix_display.zoom_in)
+        zoom_out_kron_btn.clicked.connect(self.kron_matrix_display.zoom_out)
+        zoom_reset_kron_btn.clicked.connect(self.kron_matrix_display.reset_zoom)
 
         # Install event filter for kron display too
         self.kron_matrix_display.installEventFilter(self)
@@ -1335,30 +1269,7 @@ class PropertiesPanel(QWidget):
             self.cancel_basis_btn.setEnabled(False)
 
         if not self.graphulator.nodes:
-            # Show "No nodes yet" message
-            html = """
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <style>
-                    body {
-                        margin: 0;
-                        padding: 20px;
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                        min-height: 100vh;
-                        font-family: sans-serif;
-                        color: #666;
-                    }
-                </style>
-            </head>
-            <body>
-                <div>No nodes yet</div>
-            </body>
-            </html>
-            """
-            self.basis_display.setHtml(html)
+            self.basis_display.setHtml(render_placeholder_html("No nodes yet"))
             return
 
         # Build basis labels based on mode
@@ -1432,56 +1343,12 @@ class PropertiesPanel(QWidget):
         # Store for export
         self.graphulator.symbolic_basis_latex = latex_str
 
-        # Get KaTeX header and context menu JS
-        katex_header = self._get_katex_html_header()
-        context_menu_js = self._get_latex_context_menu_js()
-
-        # Escape LaTeX for HTML attribute (escape quotes and special chars)
-        import html as html_module
-        latex_for_attr = html_module.escape(latex_str, quote=True)
-
-        # Create HTML with KaTeX (much faster than MathJax)
-        html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            {katex_header}
-            {context_menu_js}
-            <style>
-                html, body {{
-                    margin: 0;
-                    padding: 0;
-                    width: 100%;
-                    height: 100%;
-                    overflow: auto;
-                }}
-                body {{
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    padding: 20px;
-                    box-sizing: border-box;
-                    font-size: 16px;
-                }}
-                #basis-content {{
-                    margin: auto;
-                }}
-            </style>
-        </head>
-        <body>
-            <div id="basis-content" data-latex="{latex_for_attr}">${latex_str}$</div>
-            <script>
-                renderMathInElement(document.body, {{
-                    delimiters: [
-                        {{left: "$$", right: "$$", display: true}},
-                        {{left: "$", right: "$", display: false}}
-                    ],
-                    throwOnError: false
-                }});
-            </script>
-        </body>
-        </html>
-        """
+        # Render using consolidated template
+        html = render_basis_html(
+            latex_str,
+            self._get_katex_html_header(),
+            self._get_latex_context_menu_js()
+        )
 
         self.basis_display.setHtml(html, self._get_katex_base_qurl())
         self.basis_display.setLatexContent(latex_str)
@@ -1636,7 +1503,6 @@ class PropertiesPanel(QWidget):
 
     def _export_sympy_code(self):
         """Export SymPy code to clipboard"""
-        from PySide6.QtWidgets import QApplication
         code_text = self.sympy_code_display.toPlainText()
         if code_text and code_text.strip():
             clipboard = QApplication.clipboard()
@@ -1649,7 +1515,6 @@ class PropertiesPanel(QWidget):
         """Get clean label for SymPy (remove LaTeX formatting, flatten subscripts)"""
         label = node['label']
         # Remove LaTeX subscript formatting: A_{0} -> A0
-        import re
         label = re.sub(r'_\{([^}]+)\}', r'\1', label)
         # Remove simple subscript: A_0 -> A0
         label = re.sub(r'_(.)', r'\1', label)
@@ -1658,7 +1523,6 @@ class PropertiesPanel(QWidget):
 
     def _generate_symbolic_matrix(self):
         """Generate symbolic matrix with Δ and β notation using SymPy"""
-        import sympy as sp
 
         n = len(self.graphulator.nodes)
 
@@ -1830,157 +1694,55 @@ class PropertiesPanel(QWidget):
         return matrix_latex
 
     def _update_matrix_display(self):
-        """Update the matrix display with MathJax-rendered LaTeX (instant, no blocking)"""
+        """Update the matrix display with KaTeX-rendered LaTeX (instant, no blocking)"""
         # Check if graphulator and nodes exist
         if not hasattr(self, 'graphulator') or self.graphulator is None:
-            html = """
-            <!DOCTYPE html>
-            <html><body style='margin:0; padding:20px; text-align:center; font-family:sans-serif;'>
-            Initializing...
-            </body></html>
-            """
-            self.matrix_display.setHtml(html)
+            self.matrix_display.setHtml(render_placeholder_html("Initializing..."))
             return
 
         if not self.graphulator.nodes:
-            html = """
-            <!DOCTYPE html>
-            <html><body style='margin:0; padding:20px; text-align:center; font-family:sans-serif;'>
-            No nodes in graph
-            </body></html>
-            """
-            self.matrix_display.setHtml(html)
+            self.matrix_display.setHtml(render_placeholder_html("No nodes in graph"))
             return
 
         # Check for invalid duplicate labels (excludes valid conjugate pairs)
         duplicate_nodes = self.graphulator._get_nodes_with_duplicate_labels()
         if duplicate_nodes:
             dup_labels = sorted(set(n['label'] for n in duplicate_nodes))
-            html = f"""
-            <!DOCTYPE html>
-            <html><body style='margin:0; padding:20px; text-align:center; font-family:sans-serif; color:red;'>
-            Error: Duplicate node labels: {', '.join(dup_labels)}<br>
-            Matrix requires unique labels (conjugate pairs allowed).
-            </body></html>
-            """
-            self.matrix_display.setHtml(html)
+            self.matrix_display.setHtml(render_placeholder_html(
+                f"Error: Duplicate node labels: {', '.join(dup_labels)}<br>"
+                "Matrix requires unique labels (conjugate pairs allowed).",
+                color="red"
+            ))
             return
 
         # Generate LaTeX string based on selected method (Original tab)
         if self.orig_latex_radio_manual.isChecked():
-            # Manual method: use custom-built LaTeX string
             latex_str = self._generate_latex_matrix_string()
         elif self.orig_latex_radio_custom.isChecked():
-            # Custom latex with conjugate handling
             matrix = self._build_symbolic_matrix()
             latex_str = normalize_matrix_latex(latex_custom(matrix))
         elif self.orig_latex_radio_factored.isChecked():
-            # Factored matrix latex
             matrix = self._build_symbolic_matrix()
             latex_str = latex_matrix_factored(matrix)
         else:
-            # Fallback to manual
             latex_str = self._generate_latex_matrix_string()
 
         # Store for export
         self.graphulator.symbolic_matrix_latex = latex_str
 
-        # Get KaTeX header and context menu JS
-        katex_header = self._get_katex_html_header()
-        context_menu_js = self._get_latex_context_menu_js()
-
-        # Escape LaTeX for HTML attribute (escape quotes and special chars)
-        import html as html_module
-        latex_for_attr = html_module.escape(latex_str, quote=True)
-
-        # Create HTML with KaTeX (much faster than MathJax)
-        html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            {katex_header}
-            {context_menu_js}
-            <script>
-            // Arrow key panning
-            document.addEventListener('keydown', (e) => {{
-              const container = document.getElementById('matrix-container');
-              if (!container) return;
-
-              const step = 50; // pixels to scroll per keypress
-
-              switch(e.key) {{
-                case 'ArrowUp':
-                  container.scrollTop -= step;
-                  e.preventDefault();
-                  break;
-                case 'ArrowDown':
-                  container.scrollTop += step;
-                  e.preventDefault();
-                  break;
-                case 'ArrowLeft':
-                  container.scrollLeft -= step;
-                  e.preventDefault();
-                  break;
-                case 'ArrowRight':
-                  container.scrollLeft += step;
-                  e.preventDefault();
-                  break;
-              }}
-            }});
-            </script>
-            <style>
-                html, body {{
-                    margin: 0;
-                    padding: 0;
-                    width: 100%;
-                    height: 100%;
-                    overflow: hidden;
-                }}
-                body {{
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    padding: 10px;
-                    box-sizing: border-box;
-                }}
-                #matrix-container {{
-                    width: 100%;
-                    height: 100%;
-                    overflow: auto;
-                    display: flex;
-                    justify-content: flex-start;
-                    align-items: flex-start;
-                    padding: 10px;
-                }}
-                #matrix-content {{
-                    /* Content will be positioned at top-left, allowing proper scrolling */
-                    margin: auto;  /* Center when smaller than container */
-                }}
-            </style>
-        </head>
-        <body>
-            <div id="matrix-container">
-                <div id="matrix-content" data-latex="{latex_for_attr}">$M = \\\\\\\\ {latex_str}$</div>
-            </div>
-            <script>
-                renderMathInElement(document.body, {{
-                    delimiters: [
-                        {{left: "$$", right: "$$", display: true}},
-                        {{left: "$", right: "$", display: false}}
-                    ],
-                    throwOnError: false
-                }});
-            </script>
-        </body>
-        </html>
-        """
+        # Render using consolidated template
+        html = render_matrix_html(
+            latex_str,
+            self._get_katex_html_header(),
+            self._get_latex_context_menu_js(),
+            label_prefix="M"
+        )
 
         self.matrix_display.setHtml(html, self._get_katex_base_qurl())
         self.matrix_display.setLatexContent(r'\mathbf{M} = ' + latex_str)
 
     def eventFilter(self, obj, event):
         """Event filter to detect resize events on matrix display"""
-        from PySide6.QtCore import QEvent
         if obj == self.matrix_display and event.type() == QEvent.Type.Resize:
             # Use timer to debounce resize events
             self._matrix_resize_timer.start(150)  # 150ms delay
@@ -2001,177 +1763,58 @@ class PropertiesPanel(QWidget):
 
     def _update_kron_matrix_display(self):
         """Update the Kron-reduced matrix display during selection"""
-        # Check if we're in Kron mode and have selected nodes
         if not hasattr(self, 'graphulator') or self.graphulator is None:
-            html = """
-            <!DOCTYPE html>
-            <html><body style='margin:0; padding:20px; text-align:center; font-family:sans-serif;'>
-            Initializing...
-            </body></html>
-            """
-            self.kron_matrix_display.setHtml(html)
+            self.kron_matrix_display.setHtml(render_placeholder_html("Initializing..."))
             return
 
-        # Check if we're in Kron mode (live selection) or viewing committed reduction
-        # A committed reduction has original_graph set AND is not in active kron_mode
+        # Check if viewing committed reduction (original_graph set, not in active kron_mode)
         if (hasattr(self.graphulator, 'original_graph') and
             self.graphulator.original_graph is not None and
             not self.graphulator.kron_mode):
             # Committed reduction - regenerate LaTeX from stored matrix with current method
             M_reduced = self.graphulator.kron_reduced_matrix
-            from sympy import latex
             if self.kron_latex_radio_latex.isChecked():
                 latex_str = normalize_matrix_latex(latex(M_reduced))
             elif self.kron_latex_radio_custom.isChecked():
                 latex_str = normalize_matrix_latex(latex_custom(M_reduced))
             elif self.kron_latex_radio_factored.isChecked():
-                latex_str = latex_matrix_factored(M_reduced)  # Already normalized internally
+                latex_str = latex_matrix_factored(M_reduced)
             else:
                 latex_str = normalize_matrix_latex(latex_custom(M_reduced))
         elif not self.graphulator.kron_mode:
-            html = """
-            <!DOCTYPE html>
-            <html><body style='margin:0; padding:20px; text-align:center; font-family:sans-serif;'>
-            Enter Kron reduction mode (Ctrl+K) to see reduced matrix
-            </body></html>
-            """
-            self.kron_matrix_display.setHtml(html)
+            self.kron_matrix_display.setHtml(render_placeholder_html(
+                "Enter Kron reduction mode (Ctrl+K) to see reduced matrix"
+            ))
             return
         elif not self.graphulator.kron_selected_nodes:
-            html = """
-            <!DOCTYPE html>
-            <html><body style='margin:0; padding:20px; text-align:center; font-family:sans-serif;'>
-            Select nodes to keep (click nodes to toggle selection)<br>
-            Selected nodes will show green rings
-            </body></html>
-            """
-            self.kron_matrix_display.setHtml(html)
+            self.kron_matrix_display.setHtml(render_placeholder_html(
+                "Select nodes to keep (click nodes to toggle selection)<br>"
+                "Selected nodes will show green rings"
+            ))
             return
         else:
-            # Compute Kron reduction (Schur complement) during selection
             try:
                 latex_str = self._compute_kron_reduced_matrix_latex()
             except Exception as e:
-                # Log full error details to console
-                print("=" * 70)
-                print("ERROR in _update_kron_matrix_display()")
-                print("=" * 70)
-                print(f"Exception type: {type(e).__name__}")
-                print(f"Exception message: {e}")
-                print(f"Exception repr: {repr(e)}")
-                print("\nFull traceback:")
-                import traceback
-                traceback.print_exc()
-                print("=" * 70)
-
-                # Show error in GUI
-                html = f"""
-                <!DOCTYPE html>
-                <html><body style='margin:0; padding:20px; text-align:center; font-family:sans-serif; color:red;'>
-                Error computing Kron reduction:<br>{type(e).__name__}: {str(e)}
-                </body></html>
-                """
-                self.kron_matrix_display.setHtml(html)
+                logger.error("Error in _update_kron_matrix_display(): %s", e, exc_info=True)
+                self.kron_matrix_display.setHtml(render_placeholder_html(
+                    f"Error computing Kron reduction:<br>{type(e).__name__}: {str(e)}",
+                    color="red"
+                ))
                 return
 
-        # Render the HTML with the LaTeX (either from committed or during selection)
-        katex_header = self._get_katex_html_header()
-        context_menu_js = self._get_latex_context_menu_js()
-
-        # Escape LaTeX for HTML attribute (escape quotes and special chars)
-        import html as html_module
-        latex_for_attr = html_module.escape(latex_str, quote=True)
-
-        html = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                {katex_header}
-                {context_menu_js}
-                <script>
-                // Arrow key panning
-                document.addEventListener('keydown', (e) => {{
-                  const container = document.getElementById('matrix-container');
-                  if (!container) return;
-
-                  const step = 50; // pixels to scroll per keypress
-
-                  switch(e.key) {{
-                    case 'ArrowUp':
-                      container.scrollTop -= step;
-                      e.preventDefault();
-                      break;
-                    case 'ArrowDown':
-                      container.scrollTop += step;
-                      e.preventDefault();
-                      break;
-                    case 'ArrowLeft':
-                      container.scrollLeft -= step;
-                      e.preventDefault();
-                      break;
-                    case 'ArrowRight':
-                      container.scrollLeft += step;
-                      e.preventDefault();
-                      break;
-                  }}
-                }});
-                </script>
-                <style>
-                    html, body {{
-                        margin: 0;
-                        padding: 0;
-                        width: 100%;
-                        height: 100%;
-                        overflow: hidden;
-                    }}
-                    body {{
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                        padding: 10px;
-                        box-sizing: border-box;
-                    }}
-                    #matrix-container {{
-                        width: 100%;
-                        height: 100%;
-                        overflow: auto;
-                        display: flex;
-                        justify-content: flex-start;
-                        align-items: flex-start;
-                        padding: 10px;
-                    }}
-                    #matrix-content {{
-                        /* Content will be positioned at top-left, allowing proper scrolling */
-                        margin: auto;  /* Center when smaller than container */
-                    }}
-                </style>
-            </head>
-            <body>
-                <div id="matrix-container">
-                    <div id="matrix-content" data-latex="{latex_for_attr}">$M_{{\\text{{Kron}}}} = \\\\ {latex_str}$</div>
-                </div>
-                <script>
-                    document.addEventListener("DOMContentLoaded", function() {{
-                        renderMathInElement(document.body, {{
-                            delimiters: [
-                                {{left: "$$", right: "$$", display: true}},
-                                {{left: "$", right: "$", display: false}},
-                                {{left: "\\\\(", right: "\\\\)", display: false}},
-                                {{left: "\\\\[", right: "\\\\]", display: true}}
-                            ],
-                            throwOnError: false
-                        }});
-                    }});
-                </script>
-            </body>
-            </html>
-            """
+        # Render using consolidated template
+        html = render_matrix_html(
+            latex_str,
+            self._get_katex_html_header(),
+            self._get_latex_context_menu_js(),
+            label_prefix=r"M_{\text{Kron}}"
+        )
         self.kron_matrix_display.setHtml(html, self._get_katex_base_qurl())
         self.kron_matrix_display.setLatexContent(r'\mathbf{M}_{\text{Kron}} = ' + latex_str)
 
     def _compute_kron_reduced_matrix_latex(self):
         """Compute the Schur complement (Kron-reduced matrix) and return LaTeX string"""
-        from sympy import simplify, latex
 
         # Get all nodes and selected nodes
         all_nodes = self.graphulator.nodes
@@ -2228,7 +1871,6 @@ class PropertiesPanel(QWidget):
 
     def _build_symbolic_matrix(self):
         """Build the full symbolic matrix as a SymPy Matrix"""
-        from sympy import symbols, Matrix, I
 
         nodes = self.graphulator.nodes
         n = len(nodes)
@@ -2240,7 +1882,6 @@ class PropertiesPanel(QWidget):
         node_to_idx = {id(node): i for i, node in enumerate(nodes)}
 
         # Diagonal elements
-        from sympy import Symbol
         for i, node in enumerate(nodes):
             label = self._get_symbol_label(node)
             node_label = node['label']
@@ -2261,7 +1902,7 @@ class PropertiesPanel(QWidget):
             from_id = id(from_node)
             to_id = id(to_node)
             if from_id not in node_to_idx or to_id not in node_to_idx:
-                print(f"WARNING: Edge references node not in current node list, skipping")
+                logger.warning("Edge references node not in current node list, skipping")
                 continue
 
             i = node_to_idx[from_id]
@@ -2280,11 +1921,9 @@ class PropertiesPanel(QWidget):
             # Forward direction (i < j in basis order)
             # Use Symbol with subscript notation for proper LaTeX rendering
             if i < j:
-                from sympy import Symbol
                 # Create with underscore so latex() renders as \beta_{subscript}
                 beta_symbol = Symbol(f'beta_{label1}{label2}', complex=True)
             else:
-                from sympy import Symbol
                 beta_symbol = Symbol(f'beta_{label2}{label1}', complex=True)
 
             # Apply conjugation rules
@@ -2317,7 +1956,6 @@ class PropertiesPanel(QWidget):
 
     def _simplify_with_magnitude_squared(self, matrix):
         """Simplify matrix with custom rule: x * conjugate(x) -> |x|^2"""
-        from sympy import simplify, Abs, conjugate, Mul, Add, Pow, cancel
 
         # First do standard simplification
         matrix = simplify(matrix)
@@ -2325,7 +1963,6 @@ class PropertiesPanel(QWidget):
         # Apply element-wise replacement for x * conjugate(x) -> |x|^2
         def replace_conj_products(expr):
             """Recursively replace x * conjugate(x) with |x|^2"""
-            from sympy import conjugate as conj_func
 
             # Recursively process Add expressions
             if isinstance(expr, Add):
@@ -2346,7 +1983,7 @@ class PropertiesPanel(QWidget):
                         if i != j:
                             # Check if args[i] and args[j] form a conjugate pair
                             # Case 1: args[i] is conjugate(x) and args[j] is x
-                            if hasattr(args[i], 'func') and args[i].func == conj_func:
+                            if hasattr(args[i], 'func') and args[i].func == conjugate:
                                 if len(args[i].args) > 0 and args[i].args[0] == args[j]:
                                     # Found conjugate(x) * x, replace with |x|^2
                                     remaining_args = [args[k] for k in range(len(args)) if k != i and k != j]
@@ -2356,7 +1993,7 @@ class PropertiesPanel(QWidget):
                                         return Abs(args[j])**2
 
                             # Case 2: args[j] is conjugate(x) and args[i] is x
-                            if hasattr(args[j], 'func') and args[j].func == conj_func:
+                            if hasattr(args[j], 'func') and args[j].func == conjugate:
                                 if len(args[j].args) > 0 and args[j].args[0] == args[i]:
                                     # Found x * conjugate(x), replace with |x|^2
                                     remaining_args = [args[k] for k in range(len(args)) if k != i and k != j]
@@ -2372,7 +2009,6 @@ class PropertiesPanel(QWidget):
 
         def cancel_and_split(expr):
             """Cancel common factors and attempt to split fractions"""
-            from sympy import cancel, fraction, Add, expand, symbols, Wild, factor_terms
 
             # First cancel
             expr = cancel(expr)
@@ -2426,7 +2062,6 @@ class PropertiesPanel(QWidget):
 
     def _post_process_latex(self, latex_str):
         """Post-process LaTeX string to use asterisk notation and fix beta subscripts"""
-        import re
 
         # Helper function to replace \overline{...} with {...}^{*}
         def replace_overlines(s):
@@ -2557,7 +2192,6 @@ class PropertiesPanel(QWidget):
         """Generate LaTeX matrix string for a subset of nodes"""
         # This is a simplified version for when no reduction is needed
         # Just show the submatrix for selected nodes
-        from sympy import latex
 
         n = len(nodes)
         M_full = self._build_symbolic_matrix()
@@ -2591,21 +2225,6 @@ class PropertiesPanel(QWidget):
 
     def _reset_scaling_params(self):
         """Reset all scaling parameters to defaults"""
-        # defaults = {
-        #     'NODELABELSCALE': 0.55,
-        #     'SLCC': 0.65,
-        #     'SELFLOOP_LABELSCALE': 0.65,
-        #     'SLLW': 1.2,
-        #     'SLSC': 1.0,
-        #     'SLLNOFFSET': (0.0, 0.0),
-        #     'SELFLOOP_LABELNUDGE_SCALE': 1.0,
-        #     'EDGEFONTSCALE': 1.8,
-        #     'EDGELWSCALE': 2.6,
-        #     'EDGELABELOFFSET': 1.05,
-        #     'GUI_SELFLOOP_LABEL_SCALE': 1.5,
-        #     'EXPORT_SELFLOOP_LABEL_DISTANCE': 1.0,
-        # }
-
         defaults = EXPORT_RESCALE_DEFAULTS
 
         for key, value in defaults.items():
@@ -2745,8 +2364,6 @@ class PropertiesPanel(QWidget):
 
     def _show_help_dialog(self):
         """Show help dialog"""
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton
-        import os
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Graphulator Help")
@@ -2792,7 +2409,7 @@ class PropertiesPanel(QWidget):
                     # markdown library not available, use simple conversion
                     help_content = self._simple_markdown_to_html(markdown_content)
         except Exception as e:
-            print(f"Warning: Could not load help_para.md: {e}")
+            logger.warning("Could not load help_para.md: %s", e)
 
         # Fall back to hardcoded content if loading failed
         if help_content is None:
@@ -2852,7 +2469,6 @@ class PropertiesPanel(QWidget):
 
     def _simple_markdown_to_html(self, markdown_text):
         """Simple markdown to HTML conversion for basic formatting"""
-        import re
 
         html = markdown_text
 
@@ -2909,9 +2525,6 @@ class PropertiesPanel(QWidget):
 
     def _show_tutorial_dialog(self):
         """Show tutorial in a non-modal window with markdown and image support"""
-        import os
-        import re
-        from PySide6.QtCore import QUrl
 
         # Close existing tutorial window if open
         if hasattr(self, 'tutorial_dialog') and self.tutorial_dialog is not None:
@@ -2939,7 +2552,6 @@ class PropertiesPanel(QWidget):
         layout.addWidget(close_button)
 
         # Try to load tutorial.md - handle both development and PyInstaller bundle
-        import tempfile
         diagnostic_info = []
         is_frozen = getattr(sys, 'frozen', False)
         diagnostic_info.append(f"Frozen app: {is_frozen}")
@@ -2986,7 +2598,6 @@ class PropertiesPanel(QWidget):
                 tutorial_content = self._render_tutorial_markdown(markdown_text, tutorial_images_dir)
                 diagnostic_info.append(f"HTML rendered: {len(tutorial_content)} chars")
             except Exception as e:
-                import traceback
                 load_error = f"{e}\n{traceback.format_exc()}"
                 diagnostic_info.append(f"Load error: {load_error}")
 
@@ -3058,11 +2669,6 @@ class PropertiesPanel(QWidget):
 
     def _render_tutorial_markdown(self, markdown_text, images_dir):
         """Render markdown for tutorial with image support"""
-        import re
-        import os
-        import base64
-        import html as html_module
-
         text = markdown_text
 
         # Get the script directory for absolute paths
@@ -3883,7 +3489,6 @@ class PropertiesPanel(QWidget):
 
     def _scroll_to_node_row(self, node):
         """Scroll to and highlight a node's row in the parameter table"""
-        from PySide6.QtCore import QTimer
 
         # Check if scattering tab is visible
         if not self.graphulator.scattering_mode:
@@ -3926,7 +3531,6 @@ class PropertiesPanel(QWidget):
 
     def _scroll_to_edge_row(self, edge):
         """Scroll to and highlight an edge's row in the parameter table"""
-        from PySide6.QtCore import QTimer
 
         # Check if scattering tab is visible
         if not self.graphulator.scattering_mode:
@@ -3979,8 +3583,6 @@ class PropertiesPanel(QWidget):
 
     def _update_scattering_node_table(self):
         """Update the node parameter table in the Scattering tab based on current graph"""
-        from PySide6.QtWidgets import QDoubleSpinBox
-        from PySide6.QtCore import Qt
 
         # Clear existing widgets
         while self.nodes_param_layout.count():
@@ -4193,7 +3795,6 @@ class PropertiesPanel(QWidget):
 
     def _do_scattering_update(self):
         """Execute the debounced scattering update."""
-        from PySide6.QtWidgets import QApplication
 
         # Save focused widget before operations that may steal focus
         # This is critical for PyInstaller builds where focus management can differ
@@ -4459,13 +4060,10 @@ class PropertiesPanel(QWidget):
 
         except Exception as e:
             print(f"Error computing chord frequencies: {e}")
-            import traceback
             traceback.print_exc()
 
     def _update_scattering_edge_table(self):
         """Update the edge parameter table in the Scattering tab based on current graph"""
-        from PySide6.QtWidgets import QDoubleSpinBox
-        from PySide6.QtCore import Qt
 
         # Clear existing widgets
         while self.edges_param_layout.count():
@@ -4758,8 +4356,6 @@ class PropertiesPanel(QWidget):
 
     def _show_constraint_context_menu(self, pos):
         """Show context menu for constraint operations on a spinbox."""
-        from PySide6.QtWidgets import QMenu
-        from PySide6.QtGui import QAction
 
         widget = self.sender()
         if not widget:
@@ -5056,7 +4652,6 @@ class PropertiesPanel(QWidget):
             if not validation_ok:
                 # Validation failed - uncheck button and show error
                 self.show_s_button.setChecked(False)
-                from PySide6.QtWidgets import QMessageBox
                 QMessageBox.warning(self.graphulator, "Incomplete Parameters", error_msg)
                 return
 
@@ -5070,7 +4665,6 @@ class PropertiesPanel(QWidget):
 
     def _on_export_py_clicked(self):
         """Handle Export to .py button click - export scattering calculation code to file"""
-        from PySide6.QtWidgets import QFileDialog, QMessageBox
 
         code = self._generate_scattering_calculation_code()
         if not code:
@@ -5100,7 +4694,6 @@ class PropertiesPanel(QWidget):
 
     def _on_export_buffer_clicked(self):
         """Handle Export to Paste Buffer button click - copy code to clipboard"""
-        from PySide6.QtWidgets import QApplication, QMessageBox
 
         code = self._generate_scattering_calculation_code()
         if not code:
@@ -5625,7 +5218,6 @@ class LabelPatternAnalyzer:
             tuple: (pattern_type, prefix, number) where prefix is the letter part
                    and number is the numeric value for sequencing.
         """
-        import re
 
         # Pattern: Letter(s) + underscore + number (e.g., 'A_1', 'Mode_12')
         match = re.match(r'^([A-Za-z]+)_(\d+)$', label)
@@ -5682,7 +5274,6 @@ class LabelPatternAnalyzer:
         Returns:
             dict: Mapping of (pattern_type, prefix) -> {'max': int, 'labels': list}
         """
-        from collections import defaultdict
         series = defaultdict(lambda: {'max': -1, 'labels': []})
 
         for label in labels:
@@ -5799,37 +5390,6 @@ class Graphulator(QMainWindow):
         # Edge label rotation mode
         self.edge_rotation_mode = False  # True when adjusting edge label rotation
 
-        # Export scaling parameters (tunable via UI)
-        # self.export_rescale = {
-        #     'NODELABELSCALE': 0.55,
-        #     'SLCC': 0.65,  # Self-loop color correction (legacy)
-        #     'SELFLOOP_LABELSCALE': 0.65,  # Self-loop label size scale
-        #     'SLLW': 1.2,  # Self-loop linewidth
-        #     'SLSC': 1.0,  # Self-loop scale
-        #     'SLLNOFFSET': (0.0, 0.0),  # Self-loop label nudge offset
-        #     'SELFLOOP_LABELNUDGE_SCALE': 1.0,  # Self-loop label nudge multiplier
-        #     'EDGEFONTSCALE': 1.8,  # Edge label font scale
-        #     'EDGELWSCALE': 2.6,  # Edge linewidth scale
-        #     'EDGELABELOFFSET': 1.05,  # Edge label offset
-        #     'GUI_SELFLOOP_LABEL_SCALE': 1.5,  # GUI self-loop label distance scale
-        #     'EXPORT_SELFLOOP_LABEL_DISTANCE': 1.0,  # Export self-loop label distance scale
-        # }
-        
-        # self.export_rescale = {
-        #     'NODELABELSCALE': 1.000,
-        #     'SLCC': 0.650,
-        #     'SELFLOOP_LABELSCALE': 0.132,
-        #     'SLLW': 6.700,
-        #     'SLSC': 1.000,
-        #     'SLLNOFFSET': (0.0, 0.0),
-        #     'SELFLOOP_LABELNUDGE_SCALE': 1.100,
-        #     'EDGEFONTSCALE': 1.100,
-        #     'EDGELWSCALE': 2.700,
-        #     'EDGELABELOFFSET': 1.000,
-        #     'GUI_SELFLOOP_LABEL_SCALE': 1.300,
-        #     'EXPORT_SELFLOOP_LABEL_DISTANCE': 1.200,
-        # }
-
         # Initialize export_rescale with defaults, then merge any saved user settings
         self.export_rescale = EXPORT_RESCALE_DEFAULTS.copy()
         # Update with any saved export rescale settings
@@ -5868,8 +5428,8 @@ class Graphulator(QMainWindow):
         self.global_imports = []  # List of import statements
         self.global_code = {}  # Global code snippets {name: code_string}
 
-        # Placement mode
-        self.placement_mode = None  # None, 'single', 'continuous', 'continuous_duplicate', 'conjugation', 'edge', or 'edge_continuous'
+        # Placement mode (internally stored as PlacementMode enum)
+        self._placement_mode = PlacementMode.NONE
 
         # Last placed node properties for duplication
         self.last_node_props = None
@@ -5909,13 +5469,15 @@ class Graphulator(QMainWindow):
         self.selection_window_rect = None
         self.clipboard = {'nodes': [], 'edges': []}  # Copied nodes and edges
 
+        # Interaction mode (internally stored as InteractionMode enum)
+        # Access via self.basis_ordering_mode, self.kron_mode, self.scattering_mode properties
+        self._interaction_mode = InteractionMode.NORMAL
+
         # Basis ordering mode state
-        self.basis_ordering_mode = False  # True when in basis ordering mode
         self.basis_order = []  # List of nodes in the order they were selected for basis
         self.basis_order_undo_stack = []  # Stack for undo/redo in basis ordering mode
 
         # Kron reduction mode state
-        self.kron_mode = False  # True when in Kron reduction mode
         self.kron_selected_nodes = []  # Nodes selected to keep (not eliminate)
         self.kron_reduced_matrix = None  # The Kron-reduced matrix
         self.kron_reduced_matrix_latex = None  # LaTeX string of the committed Kron-reduced matrix
@@ -5928,7 +5490,6 @@ class Graphulator(QMainWindow):
         self.viewing_original = False  # True when viewing original graph (after reduction committed)
 
         # Scattering mode state
-        self.scattering_mode = False  # True when in scattering mode
         self.scattering_graph = None  # Copy of original graph for scattering
         self.scattering_canvas = None  # Canvas for scattering graph
         self.scattering_tree_edges = set()  # Edge tuples in spanning tree
@@ -5989,6 +5550,72 @@ class Graphulator(QMainWindow):
 
         # Print instructions
         self._print_instructions()
+
+    # --- Interaction mode properties (backward-compatible with boolean flags) ---
+
+    @property
+    def interaction_mode(self):
+        """Current interaction mode as an InteractionMode enum."""
+        return self._interaction_mode
+
+    @interaction_mode.setter
+    def interaction_mode(self, value):
+        self._interaction_mode = value
+
+    @property
+    def basis_ordering_mode(self):
+        """True when in basis ordering mode."""
+        return self._interaction_mode == InteractionMode.BASIS_ORDERING
+
+    @basis_ordering_mode.setter
+    def basis_ordering_mode(self, value):
+        if value:
+            self._interaction_mode = InteractionMode.BASIS_ORDERING
+        elif self._interaction_mode == InteractionMode.BASIS_ORDERING:
+            self._interaction_mode = InteractionMode.NORMAL
+
+    @property
+    def kron_mode(self):
+        """True when in Kron reduction mode."""
+        return self._interaction_mode == InteractionMode.KRON_REDUCTION
+
+    @kron_mode.setter
+    def kron_mode(self, value):
+        if value:
+            self._interaction_mode = InteractionMode.KRON_REDUCTION
+        elif self._interaction_mode == InteractionMode.KRON_REDUCTION:
+            self._interaction_mode = InteractionMode.NORMAL
+
+    @property
+    def scattering_mode(self):
+        """True when in scattering mode."""
+        return self._interaction_mode == InteractionMode.SCATTERING
+
+    @scattering_mode.setter
+    def scattering_mode(self, value):
+        if value:
+            self._interaction_mode = InteractionMode.SCATTERING
+        elif self._interaction_mode == InteractionMode.SCATTERING:
+            self._interaction_mode = InteractionMode.NORMAL
+
+    # --- Placement mode properties (backward-compatible with string values) ---
+
+    @property
+    def placement_mode(self):
+        """Current placement mode as a legacy string (None, 'single', etc.)."""
+        return self._placement_mode.to_string()
+
+    @placement_mode.setter
+    def placement_mode(self, value):
+        if isinstance(value, PlacementMode):
+            self._placement_mode = value
+        else:
+            self._placement_mode = PlacementMode.from_string(value)
+
+    @property
+    def placement_mode_enum(self):
+        """Current placement mode as a PlacementMode enum."""
+        return self._placement_mode
 
     def _clear_all_previews(self):
         """Clear all preview patches and texts"""
@@ -6168,7 +5795,6 @@ class Graphulator(QMainWindow):
         axis_controls_layout = QGridLayout()
 
         # Row 0: Plot mode selector (3-way toggle: dB / Phase / Both)
-        from PySide6.QtWidgets import QButtonGroup, QRadioButton
         plot_mode_label = QLabel("<b>Plot:</b>")
         axis_controls_layout.addWidget(plot_mode_label, 0, 0)
 
@@ -6344,7 +5970,6 @@ class Graphulator(QMainWindow):
         More robust than just checking focusWidget() type, as it also checks
         parent widgets for spinboxes (whose internal QLineEdit gets focus).
         """
-        from PySide6.QtWidgets import QApplication, QDoubleSpinBox, QSpinBox, QLineEdit, QTextEdit, QPlainTextEdit
 
         focused = QApplication.focusWidget()
         if focused is None:
@@ -6369,7 +5994,6 @@ class Graphulator(QMainWindow):
         Handles both direct spinbox focus and internal line edit focus.
         Returns the spinbox widget or None.
         """
-        from PySide6.QtWidgets import QApplication, QDoubleSpinBox, QSpinBox, QLineEdit
 
         focused = QApplication.focusWidget()
         if focused is None:
@@ -6860,12 +6484,24 @@ class Graphulator(QMainWindow):
         if self.last_directory and Path(self.last_directory).is_dir():
             return self.last_directory
 
-        # Fallback to examples/pgraphs directory from package resources
+        examples_dir = self._get_examples_dir()
+        if examples_dir:
+            return examples_dir
+
+        # Final fallback to home directory
+        return str(Path.home())
+
+    @staticmethod
+    def _get_examples_dir():
+        """Find the examples/pgraphs directory from package resources or dev layout.
+
+        Returns the path as a string, or None if not found.
+        """
+        # Try package resources
         try:
             from importlib import resources
             if hasattr(resources, 'files'):  # Python 3.9+
                 examples_path = resources.files('graphulator').joinpath('examples/pgraphs')
-                # Convert to actual path if possible
                 if hasattr(examples_path, '__fspath__'):
                     examples_str = str(examples_path)
                     if Path(examples_str).is_dir():
@@ -6878,7 +6514,7 @@ class Graphulator(QMainWindow):
         except Exception:
             pass
 
-        # Fallback: check project root examples/pgraphs (for development mode)
+        # Fallback: check project root (for development mode)
         try:
             this_file = Path(__file__).resolve()
             project_root = this_file.parent.parent.parent
@@ -6888,47 +6524,20 @@ class Graphulator(QMainWindow):
         except Exception:
             pass
 
-        # Final fallback to home directory
-        return str(Path.home())
+        return None
 
     def _populate_examples_menu(self):
         """Populate the Examples submenu with example graphs from package resources"""
         self.examples_menu.clear()
 
         example_files = []
-
-        # Try to find examples in package resources
-        try:
-            from importlib import resources
-            if hasattr(resources, 'files'):  # Python 3.9+
-                examples_path = resources.files('graphulator').joinpath('examples/pgraphs')
-            else:  # Fallback for older Python
-                import pkg_resources
-                examples_path = Path(pkg_resources.resource_filename('graphulator', 'examples/pgraphs'))
-
-            # Find all .pgraph files
-            if hasattr(examples_path, 'iterdir'):
-                try:
-                    example_files = sorted([f for f in examples_path.iterdir() if f.name.endswith('.pgraph')])
-                except (FileNotFoundError, OSError):
-                    example_files = []
-            else:
-                example_files = sorted([Path(f) for f in examples_path.glob('*.pgraph')])
-        except Exception as e:
-            print(f"Could not load examples from package: {e}")
-
-        # Fallback: check project root examples/pgraphs (for development mode)
-        if not example_files:
+        examples_dir = self._get_examples_dir()
+        if examples_dir:
             try:
-                # Find project root by going up from this file's location
-                this_file = Path(__file__).resolve()
-                # Go up: graphulator_para.py -> graphulator -> src -> project_root
-                project_root = this_file.parent.parent.parent
-                dev_examples = project_root / 'examples' / 'pgraphs'
-                if dev_examples.is_dir():
-                    example_files = sorted([f for f in dev_examples.iterdir() if f.name.endswith('.pgraph')])
-            except Exception as e:
-                print(f"Could not load examples from project root: {e}")
+                examples_path = Path(examples_dir)
+                example_files = sorted([f for f in examples_path.iterdir() if f.name.endswith('.pgraph')])
+            except (FileNotFoundError, OSError) as e:
+                logger.warning(f"Could not list examples from {examples_dir}: {e}")
 
         if not example_files:
             no_examples = QAction("(No examples available)", self)
@@ -6954,7 +6563,6 @@ class Graphulator(QMainWindow):
                     content = f.read()
 
             # Parse and load the example
-            import json
             data = json.loads(content)
             self._deserialize_graph(data)
 
@@ -7123,7 +6731,7 @@ class Graphulator(QMainWindow):
                     from sympy import srepr
                     data["kron_reduction"]["kron_reduced_matrix_repr"] = srepr(self.kron_reduced_matrix)
                 except Exception as e:
-                    print(f"Warning: Could not serialize Kron reduced matrix: {e}")
+                    logger.warning("Could not serialize Kron reduced matrix: %s", e)
                     data["kron_reduction"]["kron_reduced_matrix_repr"] = None
 
             # Save the LaTeX representation
@@ -7409,7 +7017,7 @@ class Graphulator(QMainWindow):
                     self.kron_reduced_matrix = sympify(matrix_repr)
                     print("Restored Kron reduced matrix from saved representation")
                 except Exception as e:
-                    print(f"Warning: Could not restore Kron reduced matrix: {e}")
+                    logger.warning("Could not restore Kron reduced matrix: %s", e)
                     self.kron_reduced_matrix = None
             else:
                 self.kron_reduced_matrix = None
@@ -7714,8 +7322,6 @@ class Graphulator(QMainWindow):
 
     def _show_settings_file_location(self):
         """Open the file manager at the settings file location"""
-        import subprocess
-
         # Ensure the settings directory exists
         USER_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -7948,8 +7554,6 @@ class Graphulator(QMainWindow):
         str
             The SVG content as a string, or empty string if generation fails.
         """
-        import io
-
         if not self.nodes:
             return ""
 
@@ -7981,7 +7585,7 @@ class Graphulator(QMainWindow):
             return svg_string
 
         except Exception as e:
-            print(f"Warning: Could not generate SVG string: {e}")
+            logger.warning("Could not generate SVG string: %s", e)
             return ""
 
     def _export_pdf(self):
@@ -8039,7 +7643,6 @@ class Graphulator(QMainWindow):
                         try:
                             import cairosvg
                             cairosvg.svg2pdf(url=svg_filepath, write_to=filepath)
-                            import os
                             os.remove(svg_filepath)  # Clean up temp file
                             print(f"Exported PDF with outlined text to {filepath}")
                         except ImportError:
@@ -8047,7 +7650,6 @@ class Graphulator(QMainWindow):
                             print("Install with: pip install cairosvg")
                             print("Or use the SVG export which already has text as paths.")
                             # Fall back to regular PDF export
-                            import matplotlib
                             original_fonttype = matplotlib.rcParams.get('pdf.fonttype', 42)
                             matplotlib.rcParams['pdf.fonttype'] = 42
                             self.canvas.fig.savefig(filepath, format='pdf', bbox_inches='tight', dpi=300)
@@ -8055,7 +7657,6 @@ class Graphulator(QMainWindow):
                             print(f"Exported PDF (fonts embedded) to {filepath}")
                     else:
                         # Non-LaTeX mode: standard PDF export
-                        import matplotlib
                         original_fonttype = matplotlib.rcParams.get('pdf.fonttype', 42)
                         matplotlib.rcParams['pdf.fonttype'] = 42
                         self.canvas.fig.savefig(filepath, format='pdf', bbox_inches='tight', dpi=300)
@@ -8159,7 +7760,6 @@ class Graphulator(QMainWindow):
         - 'A0' -> 'A1', 'B9' -> 'B10'
         - '1' -> '2', '99' -> '100'
         """
-        import re
 
         # Pattern 1: Letter with underscore and number (e.g., 'A_1', 'B_12')
         match = re.match(r'^([A-Za-z]+)_(\d+)$', label)
@@ -8420,8 +8020,6 @@ class Graphulator(QMainWindow):
         self.selected_nodes.clear()
         self.selected_edges.clear()
         self.placement_mode = None
-        self.edge_placement_mode = False
-        self.edge_placement_start_node = None
 
         # Switch to Matrix tab (inside Symbolic tab), then Kron subtab
         self.properties_panel.tabs.setCurrentIndex(2)  # Symbolic tab
@@ -8457,8 +8055,6 @@ class Graphulator(QMainWindow):
         - nodes: Copies of selected nodes with original styling preserved
         - edges: NEW edges determined by non-zero off-diagonal elements in reduced matrix
         """
-        from sympy import simplify, Symbol, Matrix
-        import copy
 
         # Get the reduced matrix (already computed and stored)
         M_reduced = self.kron_reduced_matrix
@@ -8700,7 +8296,6 @@ class Graphulator(QMainWindow):
             print(f"Exception message: {e}")
             print(f"Exception repr: {repr(e)}")
             print("\nFull traceback:")
-            import traceback
             traceback.print_exc()
             print("=" * 70)
             return
@@ -9283,7 +8878,7 @@ class Graphulator(QMainWindow):
                     root_node_id = current_component['nodes'][0]['node_id'] if current_component['nodes'] else None
 
         if root_node_id is None:
-            print(f"Warning: No valid root node found for {component_name}")
+            logger.warning("No valid root node found for %s", component_name)
             return set(), set()
 
         # Use GraphExtractor to compute spanning tree
@@ -9351,8 +8946,6 @@ class Graphulator(QMainWindow):
         self.selected_nodes.clear()
         self.selected_edges.clear()
         self.placement_mode = None
-        self.edge_placement_mode = False
-        self.edge_placement_start_node = None
 
         # Update component dropdown (finds connected components)
         self._update_component_dropdown()
@@ -9921,7 +9514,6 @@ class Graphulator(QMainWindow):
         For disconnected graphs with multiple components, computes S-parameters
         for each component separately and plots them together.
         """
-        import numpy as np
         from graphulator.autograph import GraphExtractor, GraphScatteringMatrix
 
         try:
@@ -9987,7 +9579,6 @@ class Graphulator(QMainWindow):
 
         except Exception as e:
             print(f"Error computing S-parameters: {e}")
-            import traceback
             traceback.print_exc()
             # Show error on plot
             self._show_sparams_error(str(e))
@@ -10003,7 +9594,6 @@ class Graphulator(QMainWindow):
         Returns:
             dict with S-parameter results, or None if computation fails
         """
-        import numpy as np
         from graphulator.autograph import GraphExtractor, GraphScatteringMatrix
 
         # Determine which nodes/edges to use
@@ -10151,7 +9741,6 @@ class Graphulator(QMainWindow):
 
         except Exception as e:
             print(f"  {comp_name}: Error computing S-parameters: {e}")
-            import traceback
             traceback.print_exc()
             return None
 
@@ -10161,7 +9750,6 @@ class Graphulator(QMainWindow):
         For multi-component graphs, creates checkboxes for ALL components' ports
         with component labels (e.g., "C1: S_ab", "C2: S_cd").
         """
-        from PySide6.QtWidgets import QCheckBox, QLabel
 
         # Check if sparams_data exists and is valid
         if not hasattr(self, 'sparams_data') or self.sparams_data is None:
@@ -10435,12 +10023,9 @@ class Graphulator(QMainWindow):
         if conjugate_mode:
             frequencies = -frequencies[::-1]
 
-        # Use rc_context to set mathtext font for subscripts (sans-serif)
-        import matplotlib as mpl
-
         # Apply sans-serif mathtext settings for entire plot
         # Use stixsans which is explicitly sans-serif
-        with mpl.rc_context({'mathtext.fontset': 'stixsans',
+        with matplotlib.rc_context({'mathtext.fontset': 'stixsans',
                             'mathtext.default': 'regular'}):
 
             # Plot each selected S-parameter with fixed colors based on matrix position
@@ -10542,7 +10127,7 @@ class Graphulator(QMainWindow):
 
                     except (IndexError, StopIteration, KeyError) as e:
                         # Stale checkbox or data mismatch, skip this S-parameter
-                        print(f"Warning: Skipping S-parameter plot for key {key}: {e}")
+                        logger.warning("Skipping S-parameter plot for key %s: %s", key, e)
                         continue
 
             # Set y-labels and styling
@@ -10651,8 +10236,6 @@ class Graphulator(QMainWindow):
 
             # Group ports by unique drive_signals arrays
             if displayed_ports:
-                from collections import defaultdict
-
                 # Map from tuple(drive_signals) -> list of (port_id, port_label)
                 freq_groups = defaultdict(list)
 
@@ -11314,68 +10897,52 @@ class Graphulator(QMainWindow):
             # Viewing original canvas
             self._update_plot()
 
+    def _apply_zoom_action(self, action):
+        """Apply a zoom action to the currently visible display in the properties panel.
+
+        Args:
+            action: One of 'in', 'out', or 'reset'.
+        """
+        pp = self.properties_panel
+        current_tab = pp.tabs.currentIndex()
+        if current_tab == 1:  # Notes tab
+            notes_subtab = pp.notes_subtabs.currentIndex()
+            method = 'reset_zoom' if action == 'reset' else f'zoom_{action}'
+            if notes_subtab == 0:  # Edit subtab
+                if action == 'reset':
+                    font = pp.notes_editor.font()
+                    font.setPointSize(12)
+                    pp.notes_editor.setFont(font)
+                else:
+                    getattr(pp.notes_editor, method)()
+            elif notes_subtab == 1:  # Preview subtab
+                getattr(pp.notes_preview, method)()
+        elif current_tab == 2:  # Symbolic tab
+            method = 'reset_zoom' if action == 'reset' else f'zoom_{action}'
+            symbolic_subtab = pp.symbolic_subtabs.currentIndex()
+            display = None
+            if symbolic_subtab == 0:  # Matrix subtab
+                matrix_subtab = pp.matrix_subtabs.currentIndex()
+                if matrix_subtab == 0:
+                    display = pp.matrix_display
+                elif matrix_subtab == 1:
+                    display = pp.kron_matrix_display
+            elif symbolic_subtab == 1:  # Basis subtab
+                display = pp.basis_display
+            if display:
+                getattr(display, method)()
+
     def _zoom_matrix_display_in(self):
         """Zoom in Matrix/Basis/Notes display (Ctrl+Plus)"""
-        # Get the currently visible display in the properties panel
-        current_tab = self.properties_panel.tabs.currentIndex()
-        if current_tab == 1:  # Notes tab
-            notes_subtab = self.properties_panel.notes_subtabs.currentIndex()
-            if notes_subtab == 0:  # Edit subtab - zoom font
-                self.properties_panel.notes_editor.zoom_in()
-            elif notes_subtab == 1:  # Preview subtab - zoom web view
-                self.properties_panel.notes_preview.zoom_in()
-        elif current_tab == 2:  # Symbolic tab
-            symbolic_subtab = self.properties_panel.symbolic_subtabs.currentIndex()
-            if symbolic_subtab == 0:  # Matrix subtab
-                matrix_subtab = self.properties_panel.matrix_subtabs.currentIndex()
-                if matrix_subtab == 0:  # Original matrix
-                    self.properties_panel.matrix_display.zoom_in()
-                elif matrix_subtab == 1:  # Kron matrix
-                    self.properties_panel.kron_matrix_display.zoom_in()
-            elif symbolic_subtab == 1:  # Basis subtab
-                self.properties_panel.basis_display.zoom_in()
+        self._apply_zoom_action('in')
 
     def _zoom_matrix_display_out(self):
         """Zoom out Matrix/Basis/Notes display (Ctrl+Minus)"""
-        current_tab = self.properties_panel.tabs.currentIndex()
-        if current_tab == 1:  # Notes tab
-            notes_subtab = self.properties_panel.notes_subtabs.currentIndex()
-            if notes_subtab == 0:  # Edit subtab - zoom font
-                self.properties_panel.notes_editor.zoom_out()
-            elif notes_subtab == 1:  # Preview subtab - zoom web view
-                self.properties_panel.notes_preview.zoom_out()
-        elif current_tab == 2:  # Symbolic tab
-            symbolic_subtab = self.properties_panel.symbolic_subtabs.currentIndex()
-            if symbolic_subtab == 0:  # Matrix subtab
-                matrix_subtab = self.properties_panel.matrix_subtabs.currentIndex()
-                if matrix_subtab == 0:  # Original matrix
-                    self.properties_panel.matrix_display.zoom_out()
-                elif matrix_subtab == 1:  # Kron matrix
-                    self.properties_panel.kron_matrix_display.zoom_out()
-            elif symbolic_subtab == 1:  # Basis subtab
-                self.properties_panel.basis_display.zoom_out()
+        self._apply_zoom_action('out')
 
     def _zoom_matrix_display_reset(self):
         """Reset zoom for Matrix/Basis/Notes display (Ctrl+0)"""
-        current_tab = self.properties_panel.tabs.currentIndex()
-        if current_tab == 1:  # Notes tab
-            notes_subtab = self.properties_panel.notes_subtabs.currentIndex()
-            if notes_subtab == 0:  # Edit subtab - reset font to default
-                font = self.properties_panel.notes_editor.font()
-                font.setPointSize(12)  # Default size
-                self.properties_panel.notes_editor.setFont(font)
-            elif notes_subtab == 1:  # Preview subtab - reset web view zoom
-                self.properties_panel.notes_preview.reset_zoom()
-        elif current_tab == 2:  # Symbolic tab
-            symbolic_subtab = self.properties_panel.symbolic_subtabs.currentIndex()
-            if symbolic_subtab == 0:  # Matrix subtab
-                matrix_subtab = self.properties_panel.matrix_subtabs.currentIndex()
-                if matrix_subtab == 0:  # Original matrix
-                    self.properties_panel.matrix_display.reset_zoom()
-                elif matrix_subtab == 1:  # Kron matrix
-                    self.properties_panel.kron_matrix_display.reset_zoom()
-            elif symbolic_subtab == 1:  # Basis subtab
-                self.properties_panel.basis_display.reset_zoom()
+        self._apply_zoom_action('reset')
 
     def _pan_matrix_display(self, direction):
         """Pan Matrix/Basis display using JavaScript (Alt+Arrow keys)"""
@@ -11435,7 +11002,6 @@ class Graphulator(QMainWindow):
 
     def _pan_arrow(self, direction):
         """Pan view using arrow keys, or adjust node/edge properties if selected"""
-        from PySide6.QtWidgets import QApplication
 
         # If any input widget has focus, don't intercept arrow keys
         # This allows spinboxes, line edits, etc. to handle their own navigation
@@ -11758,7 +11324,6 @@ class Graphulator(QMainWindow):
     def _nudge_label(self, direction):
         """Nudge node label position for selected nodes, or edge label offset for edges"""
         # If a spinbox has focus, use Shift+Arrow for fine control instead
-        from PySide6.QtWidgets import QApplication, QDoubleSpinBox, QSpinBox
         focused_widget = QApplication.focusWidget()
         if isinstance(focused_widget, (QDoubleSpinBox, QSpinBox)) and direction in ('up', 'down'):
             # Shift+Up/Down: finer control (1/10 step)
@@ -11871,7 +11436,6 @@ class Graphulator(QMainWindow):
 
     def _arrow_key_action(self, direction):
         """Handle Up/Down arrow keys - adjust self-loop linewidth if self-loop selected, otherwise pan"""
-        from PySide6.QtWidgets import QApplication
 
         # If any input widget has focus, handle spinbox increment or let widget handle it
         if self._is_input_widget_focused():
@@ -12335,8 +11899,6 @@ class Graphulator(QMainWindow):
         Returns a dict with the properties that the ghost preview should display,
         based on the current placement mode and dialog/node defaults.
         """
-        from .para_ui.dialogs import NodeInputDialog
-
         # For continuous_duplicate mode, use last_node_props with auto-incremented label
         if self.placement_mode == 'continuous_duplicate' and self.last_node_props:
             current_label = self.last_node_props['label']
@@ -12899,8 +12461,6 @@ class Graphulator(QMainWindow):
 
     def _edit_scattering_node_parameters(self, node):
         """Edit scattering parameters for a node via dialog"""
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QDoubleSpinBox, QPushButton, QDialogButtonBox
-        from PySide6.QtCore import Qt
 
         # Find the original node for assignment storage
         original_node = None
@@ -13008,8 +12568,6 @@ class Graphulator(QMainWindow):
 
     def _edit_scattering_edge_parameters(self, edge):
         """Edit scattering parameters for an edge via dialog"""
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QDoubleSpinBox, QPushButton, QDialogButtonBox
-        from PySide6.QtCore import Qt
 
         # Find the original edge for assignment storage
         original_edge = None
@@ -13224,7 +12782,6 @@ class Graphulator(QMainWindow):
 
             # Format label with bold sans-serif, handling subscripts/superscripts
             # Split on _ and ^ while keeping the delimiters
-            import re
             parts = re.split(r'([_^])', label_text)
 
             # Choose font command based on rendering mode
@@ -13343,15 +12900,11 @@ class Graphulator(QMainWindow):
 
     def _draw_edges(self):
         """Draw all edges and self-loops"""
-        import numpy as np
-
         # Debug: verify this is being called
-        # print(f"[DEBUG _draw_edges] Drawing {len(self.edges)} edges")
         # for i, edge in enumerate(self.edges):
         #     from_label = edge['from_node'].get('label', '?')
         #     to_label = edge['to_node'].get('label', '?')
         #     is_selfloop = edge['is_self_loop']
-        #     print(f"  Edge {i}: {from_label} -> {to_label}, self_loop={is_selfloop}")
 
         # Calculate scaling factor for edges (same as nodes)
         fig = self.canvas.fig
@@ -13543,7 +13096,6 @@ class Graphulator(QMainWindow):
                 # Debug: print edge positions
                 # from_label = from_node.get('label', '?')
                 # to_label = to_node.get('label', '?')
-                # print(f"  Edge {from_label}→{to_label}: from={from_pos}, to={to_pos}, angle={labeltheta:.1f}°, flip={flip}")
 
                 # Scale linewidth proportionally to zoom (base 5.5 at reference zoom)
                 base_lw = 2.0
@@ -13558,7 +13110,6 @@ class Graphulator(QMainWindow):
                 # NOTE: DO NOT scale by points_per_data_unit here - graph_primitives does this internally!
 
                 # Debug: print edge properties (comment out later)
-                # print(f"Drawing edge: lw_mult={linewidth_mult}, label_mult={label_size_mult}, style={edge.get('style')}")
 
                 # Scale label offset (base 2.3 at reference zoom)
                 base_labeloffset = 2.3
@@ -13943,7 +13494,6 @@ class Graphulator(QMainWindow):
                         return r'\mathbf{\mathsf{' + text + '}}'
 
                 # Handle subscripts/superscripts
-                import re
                 parts = re.split(r'([_^])', label_text)
 
                 formatted_parts = []
@@ -14081,7 +13631,6 @@ class Graphulator(QMainWindow):
                     return r'\mathbf{\mathsf{' + text + '}}'
 
             # Handle subscripts/superscripts (same logic as _draw_nodes)
-            import re
             parts = re.split(r'([_^])', label_text)
 
             formatted_parts = []
@@ -15452,6 +15001,58 @@ class Graphulator(QMainWindow):
         print(f"Selected all: {len(self.selected_nodes)} node(s) and {len(self.selected_edges)} edge(s)")
         self._update_plot()
 
+    def _create_node_copy_dict(self, node):
+        """Create a serializable copy of a node for clipboard operations."""
+        node_copy = {
+            'node_id': node['node_id'],
+            'label': node['label'],
+            'pos': node['pos'],
+            'color': node['color'],
+            'color_key': node['color_key'],
+            'node_size_mult': node.get('node_size_mult', 1.0),
+            'label_size_mult': node.get('label_size_mult', 1.0),
+            'conj': node.get('conj', False),
+            'nodelabelnudge': node.get('nodelabelnudge', (0.0, 0.0))
+        }
+        node_obj_id = id(node)
+        if node_obj_id in self.scattering_assignments:
+            node_copy['scattering_params'] = dict(self.scattering_assignments[node_obj_id])
+        else:
+            node_copy['scattering_params'] = None
+        return node_copy
+
+    def _create_edge_copy_dict(self, edge):
+        """Create a serializable copy of an edge for clipboard operations."""
+        edge_copy = {
+            'from_node_id': edge['from_node_id'],
+            'to_node_id': edge['to_node_id'],
+            'label1': edge.get('label1', ''),
+            'label2': edge.get('label2', ''),
+            'linewidth_mult': edge['linewidth_mult'],
+            'label_size_mult': edge['label_size_mult'],
+            'label_offset_mult': edge.get('label_offset_mult', 1.0),
+            'style': edge['style'],
+            'direction': edge['direction'],
+            'looptheta': edge.get('looptheta', 30),
+            'is_self_loop': edge['is_self_loop']
+        }
+        if edge['is_self_loop']:
+            edge_copy['selfloopangle'] = edge.get('selfloopangle', 0)
+            edge_copy['selfloopscale'] = edge.get('selfloopscale', 1.0)
+            edge_copy['arrowlengthsc'] = edge.get('arrowlengthsc', 1.0)
+            edge_copy['flip'] = edge.get('flip', False)
+            edge_copy['selflooplabelnudge'] = edge.get('selflooplabelnudge', (0.0, 0.0))
+            edge_copy['label_bgcolor'] = edge.get('label_bgcolor', None)
+        else:
+            edge_copy['label1_bgcolor'] = edge.get('label1_bgcolor', None)
+            edge_copy['label2_bgcolor'] = edge.get('label2_bgcolor', None)
+        edge_obj_id = id(edge)
+        if edge_obj_id in self.scattering_assignments:
+            edge_copy['scattering_params'] = dict(self.scattering_assignments[edge_obj_id])
+        else:
+            edge_copy['scattering_params'] = None
+        return edge_copy
+
     def _copy_nodes(self):
         """Copy selected nodes and edges to clipboard"""
         if not self.selected_nodes and not self.selected_edges:
@@ -15467,60 +15068,12 @@ class Graphulator(QMainWindow):
 
         # Copy nodes
         for node in self.selected_nodes:
-            node_copy = {
-                'node_id': node['node_id'],
-                'label': node['label'],
-                'pos': node['pos'],
-                'color': node['color'],
-                'color_key': node['color_key'],
-                'node_size_mult': node.get('node_size_mult', 1.0),
-                'label_size_mult': node.get('label_size_mult', 1.0),
-                'conj': node.get('conj', False),
-                'nodelabelnudge': node.get('nodelabelnudge', (0.0, 0.0))
-            }
-            # Copy scattering parameters if assigned
-            node_obj_id = id(node)
-            if node_obj_id in self.scattering_assignments:
-                node_copy['scattering_params'] = dict(self.scattering_assignments[node_obj_id])
-            else:
-                node_copy['scattering_params'] = None
-            self.clipboard['nodes'].append(node_copy)
+            self.clipboard['nodes'].append(self._create_node_copy_dict(node))
 
         # Copy edges where BOTH endpoints are in selected nodes
-        # (This includes edges between selected nodes, even if not explicitly selected)
         for edge in self.edges:
             if edge['from_node'] in self.selected_nodes and edge['to_node'] in self.selected_nodes:
-                edge_copy = {
-                    'from_node_id': edge['from_node_id'],
-                    'to_node_id': edge['to_node_id'],
-                    'label1': edge.get('label1', ''),
-                    'label2': edge.get('label2', ''),
-                    'linewidth_mult': edge['linewidth_mult'],
-                    'label_size_mult': edge['label_size_mult'],
-                    'label_offset_mult': edge.get('label_offset_mult', 1.0),
-                    'style': edge['style'],
-                    'direction': edge['direction'],
-                    'looptheta': edge.get('looptheta', 30),
-                    'is_self_loop': edge['is_self_loop']
-                }
-                # Copy self-loop specific parameters
-                if edge['is_self_loop']:
-                    edge_copy['selfloopangle'] = edge.get('selfloopangle', 0)
-                    edge_copy['selfloopscale'] = edge.get('selfloopscale', 1.0)
-                    edge_copy['arrowlengthsc'] = edge.get('arrowlengthsc', 1.0)
-                    edge_copy['flip'] = edge.get('flip', False)
-                    edge_copy['selflooplabelnudge'] = edge.get('selflooplabelnudge', (0.0, 0.0))
-                    edge_copy['label_bgcolor'] = edge.get('label_bgcolor', None)
-                else:
-                    edge_copy['label1_bgcolor'] = edge.get('label1_bgcolor', None)
-                    edge_copy['label2_bgcolor'] = edge.get('label2_bgcolor', None)
-                # Copy scattering parameters if assigned
-                edge_obj_id = id(edge)
-                if edge_obj_id in self.scattering_assignments:
-                    edge_copy['scattering_params'] = dict(self.scattering_assignments[edge_obj_id])
-                else:
-                    edge_copy['scattering_params'] = None
-                self.clipboard['edges'].append(edge_copy)
+                self.clipboard['edges'].append(self._create_edge_copy_dict(edge))
 
         # Copy constraint groups that involve copied nodes/edges
         self.clipboard['constraint_groups'] = []
@@ -15585,24 +15138,7 @@ class Graphulator(QMainWindow):
 
         # Copy and remove nodes
         for node in nodes_to_remove:
-            node_copy = {
-                'node_id': node['node_id'],
-                'label': node['label'],
-                'pos': node['pos'],
-                'color': node['color'],
-                'color_key': node['color_key'],
-                'node_size_mult': node.get('node_size_mult', 1.0),
-                'label_size_mult': node.get('label_size_mult', 1.0),
-                'conj': node.get('conj', False),
-                'nodelabelnudge': node.get('nodelabelnudge', (0.0, 0.0))
-            }
-            # Copy scattering parameters if assigned
-            node_obj_id = id(node)
-            if node_obj_id in self.scattering_assignments:
-                node_copy['scattering_params'] = dict(self.scattering_assignments[node_obj_id])
-            else:
-                node_copy['scattering_params'] = None
-            self.clipboard['nodes'].append(node_copy)
+            self.clipboard['nodes'].append(self._create_node_copy_dict(node))
             self.nodes.remove(node)
 
             # Find all edges connected to this node
@@ -15615,37 +15151,7 @@ class Graphulator(QMainWindow):
         # (This includes edges between selected nodes, even if not explicitly selected)
         for edge in edges_to_remove:
             if edge['from_node'] in nodes_to_remove and edge['to_node'] in nodes_to_remove:
-                edge_copy = {
-                    'from_node_id': edge['from_node_id'],
-                    'to_node_id': edge['to_node_id'],
-                    'label1': edge.get('label1', ''),
-                    'label2': edge.get('label2', ''),
-                    'linewidth_mult': edge['linewidth_mult'],
-                    'label_size_mult': edge['label_size_mult'],
-                    'label_offset_mult': edge.get('label_offset_mult', 1.0),
-                    'style': edge['style'],
-                    'direction': edge['direction'],
-                    'looptheta': edge.get('looptheta', 30),
-                    'is_self_loop': edge['is_self_loop']
-                }
-                # Copy self-loop specific parameters
-                if edge['is_self_loop']:
-                    edge_copy['selfloopangle'] = edge.get('selfloopangle', 0)
-                    edge_copy['selfloopscale'] = edge.get('selfloopscale', 1.0)
-                    edge_copy['arrowlengthsc'] = edge.get('arrowlengthsc', 1.0)
-                    edge_copy['flip'] = edge.get('flip', False)
-                    edge_copy['selflooplabelnudge'] = edge.get('selflooplabelnudge', (0.0, 0.0))
-                    edge_copy['label_bgcolor'] = edge.get('label_bgcolor', None)
-                else:
-                    edge_copy['label1_bgcolor'] = edge.get('label1_bgcolor', None)
-                    edge_copy['label2_bgcolor'] = edge.get('label2_bgcolor', None)
-                # Copy scattering parameters if assigned
-                edge_obj_id = id(edge)
-                if edge_obj_id in self.scattering_assignments:
-                    edge_copy['scattering_params'] = dict(self.scattering_assignments[edge_obj_id])
-                else:
-                    edge_copy['scattering_params'] = None
-                self.clipboard['edges'].append(edge_copy)
+                self.clipboard['edges'].append(self._create_edge_copy_dict(edge))
 
         # Copy constraint groups that involve cut nodes/edges (before removing)
         self.clipboard['constraint_groups'] = []
@@ -16174,7 +15680,6 @@ class Graphulator(QMainWindow):
 
     def _parse_prettynode_label(self, label):
         """Parse label into mode and subscript for prettynode, or return None if not applicable"""
-        import re
         # Check if label matches pattern: single letter (A-F) optionally followed by subscript
         match = re.match(r'^([A-F])(.*)$', label)
         if match:
@@ -16207,7 +15712,6 @@ class Graphulator(QMainWindow):
             latex_str = self.properties_panel.graphulator.symbolic_matrix_latex
             if latex_str:
                 # Copy to clipboard - latex_str is already normalized and complete
-                from PySide6.QtWidgets import QApplication
                 clipboard = QApplication.clipboard()
                 full_latex = f"$M = {latex_str}$"
                 clipboard.setText(full_latex)
@@ -16222,7 +15726,6 @@ class Graphulator(QMainWindow):
         if not self.nodes:
             return 0, 0, 0, 0
 
-        import numpy as np
         xlims = []
         ylims = []
 
@@ -16295,7 +15798,6 @@ class Graphulator(QMainWindow):
 
             # Calculate full graph extents including all objects first
             # This will be used for both scaling calculations and final plot limits
-            import numpy as np
             extent_x_min, extent_x_max, extent_y_min, extent_y_max = self._calculate_graph_extents()
     
             # Calculate graph center - we'll shift all coordinates to center at origin
@@ -16659,7 +16161,7 @@ class Graphulator(QMainWindow):
                 edge_str = f", {len(self.edges)} edge(s)" if self.edges else ""
                 print(f"✓ Exported code for {len(self.nodes)} node(s){edge_str} to clipboard")
             except Exception as clipboard_error:
-                print(f"Warning: Could not copy to clipboard: {clipboard_error}")
+                logger.warning("Could not copy to clipboard: %s", clipboard_error)
                 print(f"✓ Generated code for {len(self.nodes)} node(s)")
         except Exception as e:
             print(f"Code export (clipboard failed: {e}, printing to console):")
@@ -16880,9 +16382,6 @@ class Graphulator(QMainWindow):
         self.canvas.ax.clear()
 
 
-        # print("DEBUG: CHECKING HOW PLOT FILLS CANVAS AREA")
-        # print(f"DEBUG: {self._get_xlim()}")
-        # print(f"DEBUG: {self._get_ylim()}")
 
         # Set limits and aspect FIRST before drawing
         self.canvas.ax.set_xlim(*self._get_xlim())
