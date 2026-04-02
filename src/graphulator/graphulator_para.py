@@ -5426,8 +5426,8 @@ class Graphulator(QMainWindow):
         self.global_imports = []  # List of import statements
         self.global_code = {}  # Global code snippets {name: code_string}
 
-        # Placement mode
-        self.placement_mode = None  # None, 'single', 'continuous', 'continuous_duplicate', 'conjugation', 'edge', or 'edge_continuous'
+        # Placement mode (internally stored as PlacementMode enum)
+        self._placement_mode = PlacementMode.NONE
 
         # Last placed node properties for duplication
         self.last_node_props = None
@@ -5467,13 +5467,15 @@ class Graphulator(QMainWindow):
         self.selection_window_rect = None
         self.clipboard = {'nodes': [], 'edges': []}  # Copied nodes and edges
 
+        # Interaction mode (internally stored as InteractionMode enum)
+        # Access via self.basis_ordering_mode, self.kron_mode, self.scattering_mode properties
+        self._interaction_mode = InteractionMode.NORMAL
+
         # Basis ordering mode state
-        self.basis_ordering_mode = False  # True when in basis ordering mode
         self.basis_order = []  # List of nodes in the order they were selected for basis
         self.basis_order_undo_stack = []  # Stack for undo/redo in basis ordering mode
 
         # Kron reduction mode state
-        self.kron_mode = False  # True when in Kron reduction mode
         self.kron_selected_nodes = []  # Nodes selected to keep (not eliminate)
         self.kron_reduced_matrix = None  # The Kron-reduced matrix
         self.kron_reduced_matrix_latex = None  # LaTeX string of the committed Kron-reduced matrix
@@ -5486,7 +5488,6 @@ class Graphulator(QMainWindow):
         self.viewing_original = False  # True when viewing original graph (after reduction committed)
 
         # Scattering mode state
-        self.scattering_mode = False  # True when in scattering mode
         self.scattering_graph = None  # Copy of original graph for scattering
         self.scattering_canvas = None  # Canvas for scattering graph
         self.scattering_tree_edges = set()  # Edge tuples in spanning tree
@@ -5547,6 +5548,72 @@ class Graphulator(QMainWindow):
 
         # Print instructions
         self._print_instructions()
+
+    # --- Interaction mode properties (backward-compatible with boolean flags) ---
+
+    @property
+    def interaction_mode(self):
+        """Current interaction mode as an InteractionMode enum."""
+        return self._interaction_mode
+
+    @interaction_mode.setter
+    def interaction_mode(self, value):
+        self._interaction_mode = value
+
+    @property
+    def basis_ordering_mode(self):
+        """True when in basis ordering mode."""
+        return self._interaction_mode == InteractionMode.BASIS_ORDERING
+
+    @basis_ordering_mode.setter
+    def basis_ordering_mode(self, value):
+        if value:
+            self._interaction_mode = InteractionMode.BASIS_ORDERING
+        elif self._interaction_mode == InteractionMode.BASIS_ORDERING:
+            self._interaction_mode = InteractionMode.NORMAL
+
+    @property
+    def kron_mode(self):
+        """True when in Kron reduction mode."""
+        return self._interaction_mode == InteractionMode.KRON_REDUCTION
+
+    @kron_mode.setter
+    def kron_mode(self, value):
+        if value:
+            self._interaction_mode = InteractionMode.KRON_REDUCTION
+        elif self._interaction_mode == InteractionMode.KRON_REDUCTION:
+            self._interaction_mode = InteractionMode.NORMAL
+
+    @property
+    def scattering_mode(self):
+        """True when in scattering mode."""
+        return self._interaction_mode == InteractionMode.SCATTERING
+
+    @scattering_mode.setter
+    def scattering_mode(self, value):
+        if value:
+            self._interaction_mode = InteractionMode.SCATTERING
+        elif self._interaction_mode == InteractionMode.SCATTERING:
+            self._interaction_mode = InteractionMode.NORMAL
+
+    # --- Placement mode properties (backward-compatible with string values) ---
+
+    @property
+    def placement_mode(self):
+        """Current placement mode as a legacy string (None, 'single', etc.)."""
+        return self._placement_mode.to_string()
+
+    @placement_mode.setter
+    def placement_mode(self, value):
+        if isinstance(value, PlacementMode):
+            self._placement_mode = value
+        else:
+            self._placement_mode = PlacementMode.from_string(value)
+
+    @property
+    def placement_mode_enum(self):
+        """Current placement mode as a PlacementMode enum."""
+        return self._placement_mode
 
     def _clear_all_previews(self):
         """Clear all preview patches and texts"""
@@ -7973,8 +8040,6 @@ class Graphulator(QMainWindow):
         self.selected_nodes.clear()
         self.selected_edges.clear()
         self.placement_mode = None
-        self.edge_placement_mode = False
-        self.edge_placement_start_node = None
 
         # Switch to Matrix tab (inside Symbolic tab), then Kron subtab
         self.properties_panel.tabs.setCurrentIndex(2)  # Symbolic tab
@@ -8902,8 +8967,6 @@ class Graphulator(QMainWindow):
         self.selected_nodes.clear()
         self.selected_edges.clear()
         self.placement_mode = None
-        self.edge_placement_mode = False
-        self.edge_placement_start_node = None
 
         # Update component dropdown (finds connected components)
         self._update_component_dropdown()
@@ -10862,68 +10925,52 @@ class Graphulator(QMainWindow):
             # Viewing original canvas
             self._update_plot()
 
+    def _apply_zoom_action(self, action):
+        """Apply a zoom action to the currently visible display in the properties panel.
+
+        Args:
+            action: One of 'in', 'out', or 'reset'.
+        """
+        pp = self.properties_panel
+        current_tab = pp.tabs.currentIndex()
+        if current_tab == 1:  # Notes tab
+            notes_subtab = pp.notes_subtabs.currentIndex()
+            method = 'reset_zoom' if action == 'reset' else f'zoom_{action}'
+            if notes_subtab == 0:  # Edit subtab
+                if action == 'reset':
+                    font = pp.notes_editor.font()
+                    font.setPointSize(12)
+                    pp.notes_editor.setFont(font)
+                else:
+                    getattr(pp.notes_editor, method)()
+            elif notes_subtab == 1:  # Preview subtab
+                getattr(pp.notes_preview, method)()
+        elif current_tab == 2:  # Symbolic tab
+            method = 'reset_zoom' if action == 'reset' else f'zoom_{action}'
+            symbolic_subtab = pp.symbolic_subtabs.currentIndex()
+            display = None
+            if symbolic_subtab == 0:  # Matrix subtab
+                matrix_subtab = pp.matrix_subtabs.currentIndex()
+                if matrix_subtab == 0:
+                    display = pp.matrix_display
+                elif matrix_subtab == 1:
+                    display = pp.kron_matrix_display
+            elif symbolic_subtab == 1:  # Basis subtab
+                display = pp.basis_display
+            if display:
+                getattr(display, method)()
+
     def _zoom_matrix_display_in(self):
         """Zoom in Matrix/Basis/Notes display (Ctrl+Plus)"""
-        # Get the currently visible display in the properties panel
-        current_tab = self.properties_panel.tabs.currentIndex()
-        if current_tab == 1:  # Notes tab
-            notes_subtab = self.properties_panel.notes_subtabs.currentIndex()
-            if notes_subtab == 0:  # Edit subtab - zoom font
-                self.properties_panel.notes_editor.zoom_in()
-            elif notes_subtab == 1:  # Preview subtab - zoom web view
-                self.properties_panel.notes_preview.zoom_in()
-        elif current_tab == 2:  # Symbolic tab
-            symbolic_subtab = self.properties_panel.symbolic_subtabs.currentIndex()
-            if symbolic_subtab == 0:  # Matrix subtab
-                matrix_subtab = self.properties_panel.matrix_subtabs.currentIndex()
-                if matrix_subtab == 0:  # Original matrix
-                    self.properties_panel.matrix_display.zoom_in()
-                elif matrix_subtab == 1:  # Kron matrix
-                    self.properties_panel.kron_matrix_display.zoom_in()
-            elif symbolic_subtab == 1:  # Basis subtab
-                self.properties_panel.basis_display.zoom_in()
+        self._apply_zoom_action('in')
 
     def _zoom_matrix_display_out(self):
         """Zoom out Matrix/Basis/Notes display (Ctrl+Minus)"""
-        current_tab = self.properties_panel.tabs.currentIndex()
-        if current_tab == 1:  # Notes tab
-            notes_subtab = self.properties_panel.notes_subtabs.currentIndex()
-            if notes_subtab == 0:  # Edit subtab - zoom font
-                self.properties_panel.notes_editor.zoom_out()
-            elif notes_subtab == 1:  # Preview subtab - zoom web view
-                self.properties_panel.notes_preview.zoom_out()
-        elif current_tab == 2:  # Symbolic tab
-            symbolic_subtab = self.properties_panel.symbolic_subtabs.currentIndex()
-            if symbolic_subtab == 0:  # Matrix subtab
-                matrix_subtab = self.properties_panel.matrix_subtabs.currentIndex()
-                if matrix_subtab == 0:  # Original matrix
-                    self.properties_panel.matrix_display.zoom_out()
-                elif matrix_subtab == 1:  # Kron matrix
-                    self.properties_panel.kron_matrix_display.zoom_out()
-            elif symbolic_subtab == 1:  # Basis subtab
-                self.properties_panel.basis_display.zoom_out()
+        self._apply_zoom_action('out')
 
     def _zoom_matrix_display_reset(self):
         """Reset zoom for Matrix/Basis/Notes display (Ctrl+0)"""
-        current_tab = self.properties_panel.tabs.currentIndex()
-        if current_tab == 1:  # Notes tab
-            notes_subtab = self.properties_panel.notes_subtabs.currentIndex()
-            if notes_subtab == 0:  # Edit subtab - reset font to default
-                font = self.properties_panel.notes_editor.font()
-                font.setPointSize(12)  # Default size
-                self.properties_panel.notes_editor.setFont(font)
-            elif notes_subtab == 1:  # Preview subtab - reset web view zoom
-                self.properties_panel.notes_preview.reset_zoom()
-        elif current_tab == 2:  # Symbolic tab
-            symbolic_subtab = self.properties_panel.symbolic_subtabs.currentIndex()
-            if symbolic_subtab == 0:  # Matrix subtab
-                matrix_subtab = self.properties_panel.matrix_subtabs.currentIndex()
-                if matrix_subtab == 0:  # Original matrix
-                    self.properties_panel.matrix_display.reset_zoom()
-                elif matrix_subtab == 1:  # Kron matrix
-                    self.properties_panel.kron_matrix_display.reset_zoom()
-            elif symbolic_subtab == 1:  # Basis subtab
-                self.properties_panel.basis_display.reset_zoom()
+        self._apply_zoom_action('reset')
 
     def _pan_matrix_display(self, direction):
         """Pan Matrix/Basis display using JavaScript (Alt+Arrow keys)"""
@@ -12886,12 +12933,10 @@ class Graphulator(QMainWindow):
         import numpy as np
 
         # Debug: verify this is being called
-        # print(f"[DEBUG _draw_edges] Drawing {len(self.edges)} edges")
         # for i, edge in enumerate(self.edges):
         #     from_label = edge['from_node'].get('label', '?')
         #     to_label = edge['to_node'].get('label', '?')
         #     is_selfloop = edge['is_self_loop']
-        #     print(f"  Edge {i}: {from_label} -> {to_label}, self_loop={is_selfloop}")
 
         # Calculate scaling factor for edges (same as nodes)
         fig = self.canvas.fig
@@ -13083,7 +13128,6 @@ class Graphulator(QMainWindow):
                 # Debug: print edge positions
                 # from_label = from_node.get('label', '?')
                 # to_label = to_node.get('label', '?')
-                # print(f"  Edge {from_label}→{to_label}: from={from_pos}, to={to_pos}, angle={labeltheta:.1f}°, flip={flip}")
 
                 # Scale linewidth proportionally to zoom (base 5.5 at reference zoom)
                 base_lw = 2.0
@@ -13098,7 +13142,6 @@ class Graphulator(QMainWindow):
                 # NOTE: DO NOT scale by points_per_data_unit here - graph_primitives does this internally!
 
                 # Debug: print edge properties (comment out later)
-                # print(f"Drawing edge: lw_mult={linewidth_mult}, label_mult={label_size_mult}, style={edge.get('style')}")
 
                 # Scale label offset (base 2.3 at reference zoom)
                 base_labeloffset = 2.3
@@ -16416,9 +16459,6 @@ class Graphulator(QMainWindow):
         self.canvas.ax.clear()
 
 
-        # print("DEBUG: CHECKING HOW PLOT FILLS CANVAS AREA")
-        # print(f"DEBUG: {self._get_xlim()}")
-        # print(f"DEBUG: {self._get_ylim()}")
 
         # Set limits and aspect FIRST before drawing
         self.canvas.ax.set_xlim(*self._get_xlim())

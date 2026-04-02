@@ -12,8 +12,11 @@ from matplotlib import rcParams
 
 from numpy import pi,cos,sin,angle,real,asarray,sqrt,arctan2,abs,diff,linspace
 
+import logging
 import os
 import warnings
+
+logger = logging.getLogger(__name__)
 
 #------------------------------------------------------------------------------
 ORIGSFFONTLIST = rcParams['font.sans-serif']
@@ -55,7 +58,6 @@ def drawloop(ax=None,v=[[4,0],[6,0.0]],R=[4,4],theta=[120,60],lw=2,color='black'
     # theta = [90+30,90-30] # in degrees
 
     bz = [[vv[0]+RR/2*cos(pi*tht/180),vv[1]+RR/2*sin(pi*tht/180)] for vv,RR,tht in zip(v,R,theta)]
-    # print(bz)
 
     if not ax:
         fig, ax = plt.subplots()
@@ -176,7 +178,6 @@ def selfloop(ax=None,
     R2 = [R,R]
     theta = [baseangle+dtheta,baseangle-dtheta] 
     v = [[RR*cos(th*pi/180)+nodecent[0],RR*sin(th*pi/180)+nodecent[1]] for RR,th in zip(R2,theta)]
-    # print(v)
 
     if flip:
         theta = theta[::-1]
@@ -290,7 +291,6 @@ def plotnode(ax = None,
     else:
         points_per_data_unit = 43.0
 
-    # print(f'DEBUG:{drawselfloop=}')
     if drawselfloop is True:
         # Scale self-loop linewidth proportionally to node radius only
         # Use R=2.0 as reference (typical default node radius)
@@ -335,7 +335,7 @@ def plotnode(ax = None,
         scaled_selflooplabelsize = reference_R * 2 * points_per_data_unit * 0.45 * conj_scale
 
         if debug:
-            print(f"FONT DEBUG: R={R:.2f}, points_per_data_unit={points_per_data_unit:.2f}, scaled_nodelabelsize={scaled_nodelabelsize:.2f}")
+            logger.debug(f"FONT: R={R:.2f}, points_per_data_unit={points_per_data_unit:.2f}, scaled_nodelabelsize={scaled_nodelabelsize:.2f}")
 
         # Format label with bold sans-serif, handling subscripts/superscripts
         # In LaTeX mode with sfmath, use \mathbf{...} (sfmath makes it sans-serif)
@@ -436,7 +436,6 @@ def plotnode(ax = None,
                 va = 'top'
 
             offsetxy_label = [selflooplabelanchor[0]+selflooplabelnudge[0],selflooplabelanchor[1]+selflooplabelnudge[1]]
-            # print(f'{nodelabelsize=}')
             # Use scaled_selflooplabelsize (based on reference radius, not actual node size)
 
             # Create bbox dict for self-loop label background if specified
@@ -567,7 +566,6 @@ def edge(ax = None,
         singleloopkwargs.pop('arrowlength', None)  # Remove arrowlength if present
 
         if 'lw' not in singleloopkwargs:
-            # print('DEBUG: BUTTZ')
             singleloopkwargs['lw'] = 3.5*scaled_lw
 
         looparrow(ax,
@@ -606,7 +604,6 @@ def edge(ax = None,
         doubleloopkwargs['lw'] = doubleloopkwargs.pop('lw')*0.33
         doubleloopkwargs['color'] = 'white'
         
-        # print(f'DEBUG: {doubleloopkwargs=}')
         voffsetendpts = [(n[0] + .98*RR * cos(pi/180*th), n[1] + .98*RR * sin(pi/180*th)) 
                             for n,RR,th in zip(nodexy,Rtot,thetaoffsetangles)]
         
@@ -653,7 +650,6 @@ def edge(ax = None,
         vlength = sqrt(v12[0]**2 + v12[1]**2)
         th = arctan2(v12[1],v12[0])
 
-        # print(f'DEBUG: label = {label} vlength = {vlength} th = {th}')
         voffsetmid = (nodexy[0][0] + vlength/2 * cos(th), nodexy[0][1] + vlength/2 * sin(th))
         labelvecpos = (labeloffset * cos(th+pi/2),labeloffset * sin(th+pi/2))
         labelvecneg = (labeloffset * cos(th-pi/2),labeloffset * sin(th-pi/2))
@@ -679,7 +675,7 @@ def edge(ax = None,
 
     if debug:
         for nodecent,nR in zip(nodexy,nodeR):
-            print(f'DEBUG:EDGE():{nodecent=},{nR=}')
+            logger.debug(f'EDGE(): {nodecent=}, {nR=}')
             circle = plt.Circle(nodecent, nR, 
                                 facecolor='darkred',alpha=0.6)    
             ax.add_patch(circle)
@@ -892,7 +888,6 @@ class GraphCircuit:
             else:
                 nodedict['selflooplabel'] = rf'${{-}}\Delta_{{{nodedict["nodelabel"]}}}^*$'
 
-            # print(f'DEBUG: selflooplabel = {nodedict["selflooplabel"]}')
     
     def addprettynode(self, 
                     mode = 'A',    # str in ['A','B','C','D','E']
@@ -1071,7 +1066,6 @@ class GraphCircuit:
         nodelist_tmp = []
 
         for node in self.nodes:
-            # print(f'DEBUG: nodelabel = {node["nodelabel"]}')  
             if node['nodelabel'] != nodelabel:
                 # need to get the matching conjugation state
                 # if node['conj'] != conj:
@@ -1082,7 +1076,7 @@ class GraphCircuit:
                     warnings.warn('Node not removed because the conjugation state does not match. Did you mean to remove the conjugated version?')
                     nodelist_tmp.append(node)
                 else:
-                    print('Node removed.')
+                    logger.debug('Node removed.')
 
         # still need to audit the edge list to remove any edges that connect to this node
         # removeedge(self, nodelist = [])
@@ -1140,10 +1134,8 @@ class GraphCircuit:
             _, self.ax = plt.subplots(figsize=(figsize,figsize));
             # Set the x and y limits of the axes
             # self.ax.set_xlim(-xylim/2,xylim/2);self.ax.set_ylim(-xylim/2,xylim/2)
-            # print(f'DEBUG: {self.ax.get_xlim()=}')
             # self._setminmaxnodecoords(overfrac=overfrac,debug=debug)
             self._axisequalizer(overfrac=overfrac,debug=debug)
-            # print(f'DEBUG (after _setminmaxnodecoords()): {self.ax.get_xlim()=}')
         else:
             self.ax = ax
 
@@ -1166,8 +1158,8 @@ class GraphCircuit:
         # Draw the edges
         for ed in self.edges:
             if debug:
-                print(f'DEBUG: {ed=}')
-                print(f'DEBUG: edge from {ed["fromnode"]} to {ed["tonode"]}')
+                logger.debug(f'{ed=}')
+                logger.debug(f'edge from {ed["fromnode"]} to {ed["tonode"]}')
 
             # Use node_ids if available (for duplicate labels), otherwise use labels
             from_id = ed.get('fromnode_id')
@@ -1240,7 +1232,7 @@ class GraphCircuit:
         """
 
         if debug:
-            print(f'DEBUG: {self.nodes=}')
+            logger.debug(f'{self.nodes=}')
 
 
         if len(self.nodes) > 1: 
@@ -1251,7 +1243,6 @@ class GraphCircuit:
             maxy = max([node['nodecent'][1] for node in self.nodes])
 
             # # Print the minimum and maximum coordinates of the nodes
-            # print(f'DEBUG: minx={minx}, maxx={maxx}, miny={miny}, maxy={maxy}')
 
             # Set the x and y limits of the axes
             dx = (maxx - minx) * overfrac/2
@@ -1263,9 +1254,6 @@ class GraphCircuit:
             self.ax.set_xlim(minx-span/2,maxx+span/2)
             self.ax.set_ylim(miny-span/2,maxy+span/2)
 
-            # print(f'DEBUG: {span=}')
-            # print(f'DEBUG: {self.ax.get_xlim()=}')
-            # print(f'DEBUG: {self.ax.get_ylim()=}')
 
             if debug:
                 # show the axis boundaries
@@ -1312,8 +1300,6 @@ class GraphCircuit:
 
         maxnodeR = max([node['R'] for node in self.nodes])
 
-        # print(f'DEBUG: {maxx=},{minx=},{maxy=},{miny=}')
-        # print(f'DEBUG: {maxnodeR=}')
 
         centerx,centery = (maxx+minx)/2,(maxy+miny)/2
 
@@ -1349,8 +1335,6 @@ class GraphCircuit:
         spanx = abs(maxx-minx) + total_buffer*2
         spany = abs(maxy-miny) + total_buffer*2
 
-        # print(f'DEBUG: {betteroverscalefrac=}')
-        # print(f'DEBUG: {spanx=},{spany=}')
 
         self.ax.set_xlim(centerx-spanx/2,centerx+spanx/2)
         self.ax.set_ylim(centery-spany/2,centery+spany/2)
@@ -1358,9 +1342,9 @@ class GraphCircuit:
         self.ax.set_aspect('equal')
 
         if debug:
-            print(f'DEBUGGGG: {centerx=},{centery=}')
-            print(f'DEBUGGGG: {self.ax.get_xlim()=}')
-            print(f'DEBUGGGG: {self.ax.get_ylim()=}')
+            logger.debug(f'{centerx=}, {centery=}')
+            logger.debug(f'{self.ax.get_xlim()=}')
+            logger.debug(f'{self.ax.get_ylim()=}')
 
 
 #********************************************************************************
@@ -1397,7 +1381,6 @@ def prettynode(
         figwidth = plt.gcf().get_figwidth()
         xylim = abs(diff(plt.gca().get_xlim()))
 
-    # print(f"DEBUG: {plt.gca().get_xlim()}")
 
     NODESCALING = dict(
         R = D/2,
@@ -1405,7 +1388,6 @@ def prettynode(
         fontscale = fontscale  # Pass through to plotnode() for new auto-scaling
     )
 
-    # print(f"DEBUG: {NODESCALING['nodelabelsize']=}")
 
     MODELABELS = ['A','B','C',
                   'D','E','F']
@@ -1448,7 +1430,6 @@ def prettynode(
         plt.tight_layout()
 
 
-    # print(f'DEBUG: {kwargs=}')
 
     ALLNODEPREFS = {**NODEPREFS,**NODESCALING,**kwargs}
 
