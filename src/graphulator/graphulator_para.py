@@ -4,15 +4,21 @@ Advanced GUI for creating coupled mode theory graphs using PySide6. Modified fro
 
 """
 
+import base64
+import copy
 import html as html_module
+import io
 import json
 import logging
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import time
 import traceback
 import warnings
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -2546,7 +2552,6 @@ class PropertiesPanel(QWidget):
         layout.addWidget(close_button)
 
         # Try to load tutorial.md - handle both development and PyInstaller bundle
-        import tempfile
         diagnostic_info = []
         is_frozen = getattr(sys, 'frozen', False)
         diagnostic_info.append(f"Frozen app: {is_frozen}")
@@ -2664,8 +2669,6 @@ class PropertiesPanel(QWidget):
 
     def _render_tutorial_markdown(self, markdown_text, images_dir):
         """Render markdown for tutorial with image support"""
-        import base64
-
         text = markdown_text
 
         # Get the script directory for absolute paths
@@ -5271,7 +5274,6 @@ class LabelPatternAnalyzer:
         Returns:
             dict: Mapping of (pattern_type, prefix) -> {'max': int, 'labels': list}
         """
-        from collections import defaultdict
         series = defaultdict(lambda: {'max': -1, 'labels': []})
 
         for label in labels:
@@ -6482,12 +6484,24 @@ class Graphulator(QMainWindow):
         if self.last_directory and Path(self.last_directory).is_dir():
             return self.last_directory
 
-        # Fallback to examples/pgraphs directory from package resources
+        examples_dir = self._get_examples_dir()
+        if examples_dir:
+            return examples_dir
+
+        # Final fallback to home directory
+        return str(Path.home())
+
+    @staticmethod
+    def _get_examples_dir():
+        """Find the examples/pgraphs directory from package resources or dev layout.
+
+        Returns the path as a string, or None if not found.
+        """
+        # Try package resources
         try:
             from importlib import resources
             if hasattr(resources, 'files'):  # Python 3.9+
                 examples_path = resources.files('graphulator').joinpath('examples/pgraphs')
-                # Convert to actual path if possible
                 if hasattr(examples_path, '__fspath__'):
                     examples_str = str(examples_path)
                     if Path(examples_str).is_dir():
@@ -6500,7 +6514,7 @@ class Graphulator(QMainWindow):
         except Exception:
             pass
 
-        # Fallback: check project root examples/pgraphs (for development mode)
+        # Fallback: check project root (for development mode)
         try:
             this_file = Path(__file__).resolve()
             project_root = this_file.parent.parent.parent
@@ -6510,47 +6524,20 @@ class Graphulator(QMainWindow):
         except Exception:
             pass
 
-        # Final fallback to home directory
-        return str(Path.home())
+        return None
 
     def _populate_examples_menu(self):
         """Populate the Examples submenu with example graphs from package resources"""
         self.examples_menu.clear()
 
         example_files = []
-
-        # Try to find examples in package resources
-        try:
-            from importlib import resources
-            if hasattr(resources, 'files'):  # Python 3.9+
-                examples_path = resources.files('graphulator').joinpath('examples/pgraphs')
-            else:  # Fallback for older Python
-                import pkg_resources
-                examples_path = Path(pkg_resources.resource_filename('graphulator', 'examples/pgraphs'))
-
-            # Find all .pgraph files
-            if hasattr(examples_path, 'iterdir'):
-                try:
-                    example_files = sorted([f for f in examples_path.iterdir() if f.name.endswith('.pgraph')])
-                except (FileNotFoundError, OSError):
-                    example_files = []
-            else:
-                example_files = sorted([Path(f) for f in examples_path.glob('*.pgraph')])
-        except Exception as e:
-            print(f"Could not load examples from package: {e}")
-
-        # Fallback: check project root examples/pgraphs (for development mode)
-        if not example_files:
+        examples_dir = self._get_examples_dir()
+        if examples_dir:
             try:
-                # Find project root by going up from this file's location
-                this_file = Path(__file__).resolve()
-                # Go up: graphulator_para.py -> graphulator -> src -> project_root
-                project_root = this_file.parent.parent.parent
-                dev_examples = project_root / 'examples' / 'pgraphs'
-                if dev_examples.is_dir():
-                    example_files = sorted([f for f in dev_examples.iterdir() if f.name.endswith('.pgraph')])
-            except Exception as e:
-                print(f"Could not load examples from project root: {e}")
+                examples_path = Path(examples_dir)
+                example_files = sorted([f for f in examples_path.iterdir() if f.name.endswith('.pgraph')])
+            except (FileNotFoundError, OSError) as e:
+                logger.warning(f"Could not list examples from {examples_dir}: {e}")
 
         if not example_files:
             no_examples = QAction("(No examples available)", self)
@@ -6576,7 +6563,6 @@ class Graphulator(QMainWindow):
                     content = f.read()
 
             # Parse and load the example
-            import json
             data = json.loads(content)
             self._deserialize_graph(data)
 
@@ -7336,8 +7322,6 @@ class Graphulator(QMainWindow):
 
     def _show_settings_file_location(self):
         """Open the file manager at the settings file location"""
-        import subprocess
-
         # Ensure the settings directory exists
         USER_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -7570,8 +7554,6 @@ class Graphulator(QMainWindow):
         str
             The SVG content as a string, or empty string if generation fails.
         """
-        import io
-
         if not self.nodes:
             return ""
 
@@ -7668,7 +7650,6 @@ class Graphulator(QMainWindow):
                             print("Install with: pip install cairosvg")
                             print("Or use the SVG export which already has text as paths.")
                             # Fall back to regular PDF export
-                            import matplotlib
                             original_fonttype = matplotlib.rcParams.get('pdf.fonttype', 42)
                             matplotlib.rcParams['pdf.fonttype'] = 42
                             self.canvas.fig.savefig(filepath, format='pdf', bbox_inches='tight', dpi=300)
@@ -7676,7 +7657,6 @@ class Graphulator(QMainWindow):
                             print(f"Exported PDF (fonts embedded) to {filepath}")
                     else:
                         # Non-LaTeX mode: standard PDF export
-                        import matplotlib
                         original_fonttype = matplotlib.rcParams.get('pdf.fonttype', 42)
                         matplotlib.rcParams['pdf.fonttype'] = 42
                         self.canvas.fig.savefig(filepath, format='pdf', bbox_inches='tight', dpi=300)
@@ -8075,7 +8055,6 @@ class Graphulator(QMainWindow):
         - nodes: Copies of selected nodes with original styling preserved
         - edges: NEW edges determined by non-zero off-diagonal elements in reduced matrix
         """
-        import copy
 
         # Get the reduced matrix (already computed and stored)
         M_reduced = self.kron_reduced_matrix
@@ -9535,7 +9514,6 @@ class Graphulator(QMainWindow):
         For disconnected graphs with multiple components, computes S-parameters
         for each component separately and plots them together.
         """
-        import numpy as np
         from graphulator.autograph import GraphExtractor, GraphScatteringMatrix
 
         try:
@@ -9616,7 +9594,6 @@ class Graphulator(QMainWindow):
         Returns:
             dict with S-parameter results, or None if computation fails
         """
-        import numpy as np
         from graphulator.autograph import GraphExtractor, GraphScatteringMatrix
 
         # Determine which nodes/edges to use
@@ -10046,12 +10023,9 @@ class Graphulator(QMainWindow):
         if conjugate_mode:
             frequencies = -frequencies[::-1]
 
-        # Use rc_context to set mathtext font for subscripts (sans-serif)
-        import matplotlib as mpl
-
         # Apply sans-serif mathtext settings for entire plot
         # Use stixsans which is explicitly sans-serif
-        with mpl.rc_context({'mathtext.fontset': 'stixsans',
+        with matplotlib.rc_context({'mathtext.fontset': 'stixsans',
                             'mathtext.default': 'regular'}):
 
             # Plot each selected S-parameter with fixed colors based on matrix position
@@ -10262,8 +10236,6 @@ class Graphulator(QMainWindow):
 
             # Group ports by unique drive_signals arrays
             if displayed_ports:
-                from collections import defaultdict
-
                 # Map from tuple(drive_signals) -> list of (port_id, port_label)
                 freq_groups = defaultdict(list)
 
@@ -11927,8 +11899,6 @@ class Graphulator(QMainWindow):
         Returns a dict with the properties that the ghost preview should display,
         based on the current placement mode and dialog/node defaults.
         """
-        from .para_ui.dialogs import NodeInputDialog
-
         # For continuous_duplicate mode, use last_node_props with auto-incremented label
         if self.placement_mode == 'continuous_duplicate' and self.last_node_props:
             current_label = self.last_node_props['label']
@@ -12930,8 +12900,6 @@ class Graphulator(QMainWindow):
 
     def _draw_edges(self):
         """Draw all edges and self-loops"""
-        import numpy as np
-
         # Debug: verify this is being called
         # for i, edge in enumerate(self.edges):
         #     from_label = edge['from_node'].get('label', '?')
@@ -15033,6 +15001,58 @@ class Graphulator(QMainWindow):
         print(f"Selected all: {len(self.selected_nodes)} node(s) and {len(self.selected_edges)} edge(s)")
         self._update_plot()
 
+    def _create_node_copy_dict(self, node):
+        """Create a serializable copy of a node for clipboard operations."""
+        node_copy = {
+            'node_id': node['node_id'],
+            'label': node['label'],
+            'pos': node['pos'],
+            'color': node['color'],
+            'color_key': node['color_key'],
+            'node_size_mult': node.get('node_size_mult', 1.0),
+            'label_size_mult': node.get('label_size_mult', 1.0),
+            'conj': node.get('conj', False),
+            'nodelabelnudge': node.get('nodelabelnudge', (0.0, 0.0))
+        }
+        node_obj_id = id(node)
+        if node_obj_id in self.scattering_assignments:
+            node_copy['scattering_params'] = dict(self.scattering_assignments[node_obj_id])
+        else:
+            node_copy['scattering_params'] = None
+        return node_copy
+
+    def _create_edge_copy_dict(self, edge):
+        """Create a serializable copy of an edge for clipboard operations."""
+        edge_copy = {
+            'from_node_id': edge['from_node_id'],
+            'to_node_id': edge['to_node_id'],
+            'label1': edge.get('label1', ''),
+            'label2': edge.get('label2', ''),
+            'linewidth_mult': edge['linewidth_mult'],
+            'label_size_mult': edge['label_size_mult'],
+            'label_offset_mult': edge.get('label_offset_mult', 1.0),
+            'style': edge['style'],
+            'direction': edge['direction'],
+            'looptheta': edge.get('looptheta', 30),
+            'is_self_loop': edge['is_self_loop']
+        }
+        if edge['is_self_loop']:
+            edge_copy['selfloopangle'] = edge.get('selfloopangle', 0)
+            edge_copy['selfloopscale'] = edge.get('selfloopscale', 1.0)
+            edge_copy['arrowlengthsc'] = edge.get('arrowlengthsc', 1.0)
+            edge_copy['flip'] = edge.get('flip', False)
+            edge_copy['selflooplabelnudge'] = edge.get('selflooplabelnudge', (0.0, 0.0))
+            edge_copy['label_bgcolor'] = edge.get('label_bgcolor', None)
+        else:
+            edge_copy['label1_bgcolor'] = edge.get('label1_bgcolor', None)
+            edge_copy['label2_bgcolor'] = edge.get('label2_bgcolor', None)
+        edge_obj_id = id(edge)
+        if edge_obj_id in self.scattering_assignments:
+            edge_copy['scattering_params'] = dict(self.scattering_assignments[edge_obj_id])
+        else:
+            edge_copy['scattering_params'] = None
+        return edge_copy
+
     def _copy_nodes(self):
         """Copy selected nodes and edges to clipboard"""
         if not self.selected_nodes and not self.selected_edges:
@@ -15048,60 +15068,12 @@ class Graphulator(QMainWindow):
 
         # Copy nodes
         for node in self.selected_nodes:
-            node_copy = {
-                'node_id': node['node_id'],
-                'label': node['label'],
-                'pos': node['pos'],
-                'color': node['color'],
-                'color_key': node['color_key'],
-                'node_size_mult': node.get('node_size_mult', 1.0),
-                'label_size_mult': node.get('label_size_mult', 1.0),
-                'conj': node.get('conj', False),
-                'nodelabelnudge': node.get('nodelabelnudge', (0.0, 0.0))
-            }
-            # Copy scattering parameters if assigned
-            node_obj_id = id(node)
-            if node_obj_id in self.scattering_assignments:
-                node_copy['scattering_params'] = dict(self.scattering_assignments[node_obj_id])
-            else:
-                node_copy['scattering_params'] = None
-            self.clipboard['nodes'].append(node_copy)
+            self.clipboard['nodes'].append(self._create_node_copy_dict(node))
 
         # Copy edges where BOTH endpoints are in selected nodes
-        # (This includes edges between selected nodes, even if not explicitly selected)
         for edge in self.edges:
             if edge['from_node'] in self.selected_nodes and edge['to_node'] in self.selected_nodes:
-                edge_copy = {
-                    'from_node_id': edge['from_node_id'],
-                    'to_node_id': edge['to_node_id'],
-                    'label1': edge.get('label1', ''),
-                    'label2': edge.get('label2', ''),
-                    'linewidth_mult': edge['linewidth_mult'],
-                    'label_size_mult': edge['label_size_mult'],
-                    'label_offset_mult': edge.get('label_offset_mult', 1.0),
-                    'style': edge['style'],
-                    'direction': edge['direction'],
-                    'looptheta': edge.get('looptheta', 30),
-                    'is_self_loop': edge['is_self_loop']
-                }
-                # Copy self-loop specific parameters
-                if edge['is_self_loop']:
-                    edge_copy['selfloopangle'] = edge.get('selfloopangle', 0)
-                    edge_copy['selfloopscale'] = edge.get('selfloopscale', 1.0)
-                    edge_copy['arrowlengthsc'] = edge.get('arrowlengthsc', 1.0)
-                    edge_copy['flip'] = edge.get('flip', False)
-                    edge_copy['selflooplabelnudge'] = edge.get('selflooplabelnudge', (0.0, 0.0))
-                    edge_copy['label_bgcolor'] = edge.get('label_bgcolor', None)
-                else:
-                    edge_copy['label1_bgcolor'] = edge.get('label1_bgcolor', None)
-                    edge_copy['label2_bgcolor'] = edge.get('label2_bgcolor', None)
-                # Copy scattering parameters if assigned
-                edge_obj_id = id(edge)
-                if edge_obj_id in self.scattering_assignments:
-                    edge_copy['scattering_params'] = dict(self.scattering_assignments[edge_obj_id])
-                else:
-                    edge_copy['scattering_params'] = None
-                self.clipboard['edges'].append(edge_copy)
+                self.clipboard['edges'].append(self._create_edge_copy_dict(edge))
 
         # Copy constraint groups that involve copied nodes/edges
         self.clipboard['constraint_groups'] = []
@@ -15166,24 +15138,7 @@ class Graphulator(QMainWindow):
 
         # Copy and remove nodes
         for node in nodes_to_remove:
-            node_copy = {
-                'node_id': node['node_id'],
-                'label': node['label'],
-                'pos': node['pos'],
-                'color': node['color'],
-                'color_key': node['color_key'],
-                'node_size_mult': node.get('node_size_mult', 1.0),
-                'label_size_mult': node.get('label_size_mult', 1.0),
-                'conj': node.get('conj', False),
-                'nodelabelnudge': node.get('nodelabelnudge', (0.0, 0.0))
-            }
-            # Copy scattering parameters if assigned
-            node_obj_id = id(node)
-            if node_obj_id in self.scattering_assignments:
-                node_copy['scattering_params'] = dict(self.scattering_assignments[node_obj_id])
-            else:
-                node_copy['scattering_params'] = None
-            self.clipboard['nodes'].append(node_copy)
+            self.clipboard['nodes'].append(self._create_node_copy_dict(node))
             self.nodes.remove(node)
 
             # Find all edges connected to this node
@@ -15196,37 +15151,7 @@ class Graphulator(QMainWindow):
         # (This includes edges between selected nodes, even if not explicitly selected)
         for edge in edges_to_remove:
             if edge['from_node'] in nodes_to_remove and edge['to_node'] in nodes_to_remove:
-                edge_copy = {
-                    'from_node_id': edge['from_node_id'],
-                    'to_node_id': edge['to_node_id'],
-                    'label1': edge.get('label1', ''),
-                    'label2': edge.get('label2', ''),
-                    'linewidth_mult': edge['linewidth_mult'],
-                    'label_size_mult': edge['label_size_mult'],
-                    'label_offset_mult': edge.get('label_offset_mult', 1.0),
-                    'style': edge['style'],
-                    'direction': edge['direction'],
-                    'looptheta': edge.get('looptheta', 30),
-                    'is_self_loop': edge['is_self_loop']
-                }
-                # Copy self-loop specific parameters
-                if edge['is_self_loop']:
-                    edge_copy['selfloopangle'] = edge.get('selfloopangle', 0)
-                    edge_copy['selfloopscale'] = edge.get('selfloopscale', 1.0)
-                    edge_copy['arrowlengthsc'] = edge.get('arrowlengthsc', 1.0)
-                    edge_copy['flip'] = edge.get('flip', False)
-                    edge_copy['selflooplabelnudge'] = edge.get('selflooplabelnudge', (0.0, 0.0))
-                    edge_copy['label_bgcolor'] = edge.get('label_bgcolor', None)
-                else:
-                    edge_copy['label1_bgcolor'] = edge.get('label1_bgcolor', None)
-                    edge_copy['label2_bgcolor'] = edge.get('label2_bgcolor', None)
-                # Copy scattering parameters if assigned
-                edge_obj_id = id(edge)
-                if edge_obj_id in self.scattering_assignments:
-                    edge_copy['scattering_params'] = dict(self.scattering_assignments[edge_obj_id])
-                else:
-                    edge_copy['scattering_params'] = None
-                self.clipboard['edges'].append(edge_copy)
+                self.clipboard['edges'].append(self._create_edge_copy_dict(edge))
 
         # Copy constraint groups that involve cut nodes/edges (before removing)
         self.clipboard['constraint_groups'] = []
@@ -15801,7 +15726,6 @@ class Graphulator(QMainWindow):
         if not self.nodes:
             return 0, 0, 0, 0
 
-        import numpy as np
         xlims = []
         ylims = []
 
@@ -15874,7 +15798,6 @@ class Graphulator(QMainWindow):
 
             # Calculate full graph extents including all objects first
             # This will be used for both scaling calculations and final plot limits
-            import numpy as np
             extent_x_min, extent_x_max, extent_y_min, extent_y_max = self._calculate_graph_extents()
     
             # Calculate graph center - we'll shift all coordinates to center at origin

@@ -3,6 +3,7 @@ Graphulator - Interactive Graph Drawing Tool (Qt Version)
 Advanced GUI for creating coupled mode theory graphs using PySide6
 """
 
+import logging
 import sys
 import time
 import json
@@ -10,6 +11,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QHBoxLayout, QDialog, QLabel, QLineEdit,
@@ -336,7 +339,7 @@ class EdgeInputDialog(QDialog):
             self.looptheta_spinbox.setValue(30)  # Default value
             looptheta_layout.addWidget(self.looptheta_spinbox)
             layout.addLayout(looptheta_layout)
-            print("DEBUG: EdgeInputDialog - looptheta spinbox created")
+            logger.debug("EdgeInputDialog - looptheta spinbox created")
         else:
             self.dir_combo = None
             self.looptheta_spinbox = None
@@ -430,9 +433,9 @@ class EdgeInputDialog(QDialog):
         looptheta = 30  # Default
         if not self.is_self_loop and hasattr(self, 'looptheta_spinbox') and self.looptheta_spinbox:
             looptheta = self.looptheta_spinbox.value()
-            print(f"DEBUG: EdgeInputDialog - looptheta value from spinbox: {looptheta}")
+            logger.debug(f"EdgeInputDialog - looptheta value from spinbox: {looptheta}")
         else:
-            print(f"DEBUG: EdgeInputDialog - using default looptheta: {looptheta}, is_self_loop={self.is_self_loop}")
+            logger.debug(f"EdgeInputDialog - using default looptheta: {looptheta}, is_self_loop={self.is_self_loop}")
 
         self.result = {
             'label1': label1,
@@ -1495,7 +1498,7 @@ class Graphulator(QMainWindow):
         ctrl_left.activated.connect(lambda: self._adjust_edge_looptheta_or_selfloop_angle('decrease'))
         ctrl_right = QShortcut(QKeySequence("Ctrl+Right"), self)
         ctrl_right.activated.connect(lambda: self._adjust_edge_looptheta_or_selfloop_angle('increase'))
-        print(f"DEBUG: Ctrl+Left/Right shortcuts registered: {ctrl_left}, {ctrl_right}")
+        logger.debug(f"Ctrl+Left/Right shortcuts registered: {ctrl_left}, {ctrl_right}")
 
         # File operations
         QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(self._new_graph)
@@ -2923,18 +2926,18 @@ class Graphulator(QMainWindow):
 
     def _adjust_edge_looptheta_or_selfloop_angle(self, action):
         """Adjust looptheta for regular edges or selfloopangle for self-loops using Ctrl+Left/Right (2° increments for looptheta, 15° for selfloop)"""
-        print(f"DEBUG: _adjust_edge_looptheta_or_selfloop_angle called with action={action}, selected_edges count={len(self.selected_edges)}")
+        logger.debug(f"_adjust_edge_looptheta_or_selfloop_angle called with action={action}, selected_edges count={len(self.selected_edges)}")
         if not self.selected_edges:
-            print("DEBUG: No edges selected, returning")
+            logger.debug("No edges selected, returning")
             return
 
         # Separate self-loops from regular edges
         selfloops = [e for e in self.selected_edges if e.get('is_self_loop', False)]
         regular_edges = [e for e in self.selected_edges if not e.get('is_self_loop', False)]
-        print(f"DEBUG: selfloops={len(selfloops)}, regular_edges={len(regular_edges)}")
+        logger.debug(f"selfloops={len(selfloops)}, regular_edges={len(regular_edges)}")
 
         if not selfloops and not regular_edges:
-            print("DEBUG: No valid edges found")
+            logger.debug("No valid edges found")
             return
 
         self._save_state()
@@ -3624,7 +3627,6 @@ class Graphulator(QMainWindow):
         import numpy as np
 
         # Debug: verify this is being called
-        # print(f"DEBUG: Drawing {len(self.edges)} edges")
 
         # Calculate scaling factor for edges (same as nodes)
         fig = self.canvas.fig
@@ -5671,9 +5673,6 @@ class Graphulator(QMainWindow):
         self.canvas.ax.clear()
 
 
-        # print("DEBUG: CHECKING HOW PLOT FILLS CANVAS AREA")
-        # print(f"DEBUG: {self._get_xlim()}")
-        # print(f"DEBUG: {self._get_ylim()}")
 
         # Set limits and aspect FIRST before drawing
         self.canvas.ax.set_xlim(*self._get_xlim())
