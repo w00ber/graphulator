@@ -9709,6 +9709,14 @@ class Graphulator(QMainWindow):
                 precomputed_chord_edges=chord_edges_list
             )
 
+            # Validate all required parameters are assigned before computing
+            missing = extractor.validate_parameters()
+            missing_items = missing.get('missing_nodes', []) + missing.get('missing_edges', [])
+            if missing_items:
+                detail = "\n".join(f"  - {item}" for item in missing_items)
+                print(f"  {comp_name}: Missing scattering parameters:\n{detail}")
+                return None
+
             # Check if injection node is conjugated
             root_node = next((n for n in nodes if n['node_id'] == root_node_id), None)
             f_calc = f_root_s
