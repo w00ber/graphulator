@@ -1091,10 +1091,19 @@ class GraphCircuit:
         
 
     def removeedge(self, nodelist):
-        # do we just remove edges connecting to a particular node? or do we remove particular edges that connect two particular nodes?
-        # NOT QUITE CORRECT self.edges = [edge for edge in self.edges if edge['startend'] != edge['startend']]
-        # Scan through the edge list and remove any edges that connect to any of the nodes in the list
-        pass
+        """Remove edges connected to any node in the given list.
+
+        Filters the edge list to remove edges where either endpoint
+        is one of the nodes being removed.
+        """
+        if not nodelist:
+            return
+        node_labels = {n['label'] for n in nodelist}
+        self.edges = [
+            edge for edge in self.edges
+            if edge['startend'][0] not in node_labels
+            and edge['startend'][1] not in node_labels
+        ]
 
     def draw(self, ax=None, figsize = 8, overfrac=0.25, debug=False)->None:
         """

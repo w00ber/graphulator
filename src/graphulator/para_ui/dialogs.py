@@ -9,10 +9,10 @@ from PySide6.QtWidgets import (
     QComboBox, QSlider, QCheckBox, QDialogButtonBox, QSpinBox
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
 
 from .. import graphulator_para_config as config
 from .widgets import FineControlSpinBox
+from .color_utils import populate_color_combo
 
 
 class NodeInputDialog(QDialog):
@@ -56,19 +56,7 @@ class NodeInputDialog(QDialog):
         color_layout = QHBoxLayout()
         color_layout.addWidget(QLabel("Color:"))
         self.color_combo = QComboBox()
-
-        # Add colors to combo box with visual colors
-        for color_key, color_value in config.MYCOLORS.items():
-            self.color_combo.addItem(f"  {color_key}", color_key)
-            idx = self.color_combo.count() - 1
-            self.color_combo.setItemData(idx, QColor(color_value), Qt.BackgroundRole)
-
-        # Set to last used color
-        try:
-            last_idx = list(config.MYCOLORS.keys()).index(self.last_color)
-            self.color_combo.setCurrentIndex(last_idx)
-        except:
-            self.color_combo.setCurrentIndex(0)
+        populate_color_combo(self.color_combo, self.last_color)
 
         # Connect for live updates
         self.color_combo.currentIndexChanged.connect(self._update_color_live)
@@ -127,19 +115,7 @@ class NodeInputDialog(QDialog):
         outline_color_layout = QHBoxLayout()
         outline_color_layout.addWidget(QLabel("Outline Color:"))
         self.outline_color_combo = QComboBox()
-
-        # Add colors to combo box with visual colors
-        for color_key, color_value in config.MYCOLORS.items():
-            self.outline_color_combo.addItem(f"  {color_key}", color_key)
-            idx = self.outline_color_combo.count() - 1
-            self.outline_color_combo.setItemData(idx, QColor(color_value), Qt.BackgroundRole)
-
-        # Set to last used outline color
-        try:
-            last_idx = list(config.MYCOLORS.keys()).index(self.last_outline_color)
-            self.outline_color_combo.setCurrentIndex(last_idx)
-        except:
-            self.outline_color_combo.setCurrentIndex(list(config.MYCOLORS.keys()).index('BLACK'))
+        populate_color_combo(self.outline_color_combo, self.last_outline_color)
 
         self.outline_color_combo.currentIndexChanged.connect(self._update_outline_color_live)
         outline_color_layout.addWidget(self.outline_color_combo)

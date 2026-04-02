@@ -4,11 +4,15 @@ Web view widgets for paragraphulator.
 This module contains the ZoomableWebView class for displaying KaTeX-rendered content.
 """
 
+import logging
+
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtCore import QTimer, QEvent, Qt
 from PySide6.QtWidgets import QMenu, QWidget
 from PySide6.QtGui import QAction
 from PySide6.QtWebEngineCore import QWebEnginePage
+
+logger = logging.getLogger(__name__)
 
 
 class ZoomableWebView(QWebEngineView):
@@ -80,16 +84,16 @@ class ZoomableWebView(QWebEngineView):
         current = self.zoomFactor()
         new_zoom = current * 1.25  # Removed cap to allow unlimited zoom
         self.setZoomFactor(new_zoom)
-        print(f"[ZoomableWebView] Zoom IN: {new_zoom:.2f}x")
+        logger.debug("Zoom IN: %.2fx", new_zoom)
 
     def zoom_out(self):
         """Zoom out by 25%"""
         current = self.zoomFactor()
         new_zoom = max(current / 1.25, 0.1)  # Lowered minimum to 0.1x
         self.setZoomFactor(new_zoom)
-        print(f"[ZoomableWebView] Zoom OUT: {new_zoom:.2f}x")
+        logger.debug("Zoom OUT: %.2fx", new_zoom)
 
     def reset_zoom(self):
         """Reset zoom to default"""
         self.setZoomFactor(self.default_zoom)
-        print(f"[ZoomableWebView] Zoom RESET to {self.default_zoom:.2f}x")
+        logger.debug("Zoom RESET to %.2fx", self.default_zoom)
