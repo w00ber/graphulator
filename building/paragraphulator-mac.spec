@@ -272,8 +272,8 @@ app = BUNDLE(
     info_plist={
         'CFBundleName': 'paragraphulator',
         'CFBundleDisplayName': 'paragraphulator',
-        'CFBundleShortVersionString': '0.1.0',
-        'CFBundleVersion': '0.1.0',
+        'CFBundleShortVersionString': '0.5.0',
+        'CFBundleVersion': '0.5.0',
         'NSHighResolutionCapable': True,
         'NSPrincipalClass': 'NSApplication',
         'LSMinimumSystemVersion': '10.15',

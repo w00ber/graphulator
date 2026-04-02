@@ -52,13 +52,13 @@ python -m build
 ```
 
 This creates files in `dist/`:
-- `graphulator-0.1.0-py3-none-any.whl` (wheel)
-- `graphulator-0.1.0.tar.gz` (source)
+- `graphulator-0.5.0-py3-none-any.whl` (wheel)
+- `graphulator-0.5.0.tar.gz` (source)
 
 ### Install from wheel:
 
 ```bash
-pip install dist/graphulator-0.1.0-py3-none-any.whl
+pip install dist/graphulator-0.5.0-py3-none-any.whl
 ```
 
 ## Publishing to PyPI

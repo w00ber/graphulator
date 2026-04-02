@@ -93,7 +93,7 @@ python -m graphulator
 
 # Test import
 python -c "import graphulator; print(graphulator.__version__)"
-# Should print: 0.1.0
+# Should print: 0.5.0
 ```
 
 ### Run Tutorial
@@ -112,12 +112,12 @@ python -m build
 ```
 
 Creates:
-- `dist/graphulator-0.1.0-py3-none-any.whl`
-- `dist/graphulator-0.1.0.tar.gz`
+- `dist/graphulator-0.5.0-py3-none-any.whl`
+- `dist/graphulator-0.5.0.tar.gz`
 
 ### 2. Test installation from wheel:
 ```bash
-pip install dist/graphulator-0.1.0-py3-none-any.whl
+pip install dist/graphulator-0.5.0-py3-none-any.whl
 ```
 
 ### 3. Upload to PyPI (when ready):
@@ -129,7 +129,7 @@ python -m twine upload dist/*
 ## Package Metadata
 
 - **Name**: graphulator
-- **Version**: 0.1.0
+- **Version**: 0.5.0
 - **Author**: J. Aumentado <jose.aumentado@nist.gov>
 - **License**: MIT
 - **Python**: ≥3.9
@@ -197,7 +197,7 @@ Before publishing to PyPI:
 - [ ] Add screenshots to README
 - [ ] Update GitHub URL in pyproject.toml
 - [ ] Create GitHub repository
-- [ ] Tag release: `git tag v0.1.0`
+- [ ] Tag release: `git tag v0.5.0`
 - [ ] Build: `python -m build`
 - [ ] Upload: `twine upload dist/*`
 

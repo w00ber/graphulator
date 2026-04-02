@@ -5,7 +5,7 @@ A PySide6-based GUI application for creating coupled mode theory graphs
 and quantum circuit diagrams with matplotlib rendering.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.5.0"
 __author__ = "J. Aumentado"
 __email__ = "jose.aumentado@nist.gov"
 
