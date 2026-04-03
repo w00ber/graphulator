@@ -5,7 +5,10 @@ This module contains background workers and utilities for rendering LaTeX.
 """
 
 import io
+import logging
 import traceback
+
+logger = logging.getLogger(__name__)
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QPixmap
@@ -65,7 +68,7 @@ class MatrixRenderWorker(QThread):
 
         except Exception as e:
             # On error, emit None to trigger fallback
-            print(f"Matrix render error: {e}")
+            logger.error("Matrix render error: %s", e)
             traceback.print_exc()
             self.render_complete.emit(None)
 

@@ -9,8 +9,11 @@ This module provides a centralized system for managing keyboard shortcuts with:
 - Signals for documentation updates
 """
 
+import logging
 import sys
 from typing import Dict, Optional, Callable, List, Any
+
+logger = logging.getLogger(__name__)
 
 from PySide6.QtCore import QObject, Signal, Qt
 from PySide6.QtGui import QKeySequence, QShortcut, QAction
@@ -256,12 +259,12 @@ class ShortcutManager(QObject):
         """
         definition = self._definitions.get(action_id)
         if not definition:
-            print(f"Warning: Unknown shortcut action_id: {action_id}")
+            logger.warning("Unknown shortcut action_id: %s", action_id)
             return None
 
         parent = parent_widget or self._parent_widget
         if not parent:
-            print(f"Warning: No parent widget for shortcut: {action_id}")
+            logger.warning("No parent widget for shortcut: %s", action_id)
             return None
 
         key_seq = self._current_bindings.get(action_id, "")
@@ -306,7 +309,7 @@ class ShortcutManager(QObject):
             True if successful, False if action_id not found
         """
         if action_id not in self._definitions:
-            print(f"Warning: Unknown shortcut action_id: {action_id}")
+            logger.warning("Unknown shortcut action_id: %s", action_id)
             return False
 
         key_seq = self._current_bindings.get(action_id, "")

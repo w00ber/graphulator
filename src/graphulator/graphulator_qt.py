@@ -1530,56 +1530,56 @@ class Graphulator(QMainWindow):
 
     def _print_instructions(self):
         """Print usage instructions to console"""
-        print("=" * 70)
-        print("GRAPHULATOR - Interactive Graph Drawing Tool (Qt Version)")
-        print("=" * 70)
-        print("Controls:")
-        print("  'g'             : Place single node (dialog for label/color)")
-        print("  'G' (Shift+g)   : Continuous node placement mode")
-        print("  'Ctrl+G'        : Continuous duplicate mode (auto-increment labels)")
-        print("  'e'             : Place single edge (exits after one edge)")
-        print("  'Ctrl+E'        : Toggle continuous edge mode")
-        print("  'c'             : Conjugation mode (click nodes to toggle)")
-        print("  'Esc'           : Exit placement mode / Clear selection")
-        print("  'r'             : Rotate grid (45° square, 30° triangular)")
-        print("  't'             : Toggle grid type (square/triangular)")
-        print("  'Ctrl+Shift+C'  : Clear all nodes")
-        print("  'a'             : Auto-fit view to nodes")
-        print("  '+/-'           : Zoom in/out")
-        print("  Mouse wheel     : Zoom in/out")
-        print("  Arrow keys      : Pan view (or adjust size when selected)")
-        print("")
-        print("Node Selection & Editing:")
-        print("  Left click      : Select node (drag to move)")
-        print("  Right click     : Color menu (nodes) / Edge type menu (edges)")
-        print("  Shift+click     : Add/remove node or edge from selection")
-        print("  Click+drag      : Draw selection window")
-        print("  Double-click    : Edit node or edge properties")
-        print("  Up/Down arrows  : Increase/decrease node/edge size (when selected)")
-        print("  Left/Right      : Adjust label size (nodes/edges when selected)")
-        print("  Shift+Up/Down   : Nudge node label / Adjust edge label offset")
-        print("  Shift+Left/Right: Nudge node label horizontally")
-        print("  Ctrl+A          : Select all nodes and edges")
-        print("  Ctrl+C          : Copy selected nodes and edges")
-        print("  Ctrl+X          : Cut selected nodes and edges")
-        print("  Ctrl+V          : Paste nodes and edges at view center")
-        print("  Ctrl+Z          : Undo last action")
-        print("  Ctrl+R          : Rotate selected nodes 15° CCW")
-        print("  Ctrl+Shift+R    : Rotate selected nodes 15° CW")
-        print("  Ctrl+Shift+E    : Export graph as Python code")
-        print("  Ctrl+L          : Toggle LaTeX rendering mode")
-        print("  'f'             : Flip edge labels (when edge selected)")
-        print("  Shift+F         : Toggle edge label rotation mode (when edge selected)")
-        print("                    Then use Left/Right arrows to rotate ±5°")
-        print("  'd' or Delete   : Delete selected nodes and edges")
-        print("")
-        print("Navigation:")
-        print("  Middle button   : Pan (click and drag)")
-        print("  Right button    : Zoom window (click and drag)")
-        print("  'Ctrl+Q'        : Quit")
-        print("=" * 70)
-        print(f"Current: {self.grid_type} grid, rotation={self.grid_rotation}°")
-        print()
+        logger.debug("=" * 70)
+        logger.info("GRAPHULATOR - Interactive Graph Drawing Tool (Qt Version)")
+        logger.debug("=" * 70)
+        logger.info("Controls:")
+        logger.debug("  'g'             : Place single node (dialog for label/color)")
+        logger.debug("  'G' (Shift+g)   : Continuous node placement mode")
+        logger.debug("  'Ctrl+G'        : Continuous duplicate mode (auto-increment labels)")
+        logger.debug("  'e'             : Place single edge (exits after one edge)")
+        logger.debug("  'Ctrl+E'        : Toggle continuous edge mode")
+        logger.debug("  'c'             : Conjugation mode (click nodes to toggle)")
+        logger.debug("  'Esc'           : Exit placement mode / Clear selection")
+        logger.debug("  'r'             : Rotate grid (45° square, 30° triangular)")
+        logger.debug("  't'             : Toggle grid type (square/triangular)")
+        logger.debug("  'Ctrl+Shift+C'  : Clear all nodes")
+        logger.debug("  'a'             : Auto-fit view to nodes")
+        logger.debug("  '+/-'           : Zoom in/out")
+        logger.debug("  Mouse wheel     : Zoom in/out")
+        logger.debug("  Arrow keys      : Pan view (or adjust size when selected)")
+        logger.debug("")
+        logger.debug("Node Selection & Editing:")
+        logger.debug("  Left click      : Select node (drag to move)")
+        logger.debug("  Right click     : Color menu (nodes) / Edge type menu (edges)")
+        logger.debug("  Shift+click     : Add/remove node or edge from selection")
+        logger.debug("  Click+drag      : Draw selection window")
+        logger.debug("  Double-click    : Edit node or edge properties")
+        logger.debug("  Up/Down arrows  : Increase/decrease node/edge size (when selected)")
+        logger.debug("  Left/Right      : Adjust label size (nodes/edges when selected)")
+        logger.debug("  Shift+Up/Down   : Nudge node label / Adjust edge label offset")
+        logger.debug("  Shift+Left/Right: Nudge node label horizontally")
+        logger.debug("  Ctrl+A          : Select all nodes and edges")
+        logger.debug("  Ctrl+C          : Copy selected nodes and edges")
+        logger.info("  Ctrl+X          : Cut selected nodes and edges")
+        logger.debug("  Ctrl+V          : Paste nodes and edges at view center")
+        logger.info("  Ctrl+Z          : Undo last action")
+        logger.debug("  Ctrl+R          : Rotate selected nodes 15° CCW")
+        logger.debug("  Ctrl+Shift+R    : Rotate selected nodes 15° CW")
+        logger.debug("  Ctrl+Shift+E    : Export graph as Python code")
+        logger.debug("  Ctrl+L          : Toggle LaTeX rendering mode")
+        logger.debug("  'f'             : Flip edge labels (when edge selected)")
+        logger.debug("  Shift+F         : Toggle edge label rotation mode (when edge selected)")
+        logger.debug("                    Then use Left/Right arrows to rotate ±5°")
+        logger.debug("  'd' or Delete   : Delete selected nodes and edges")
+        logger.debug("")
+        logger.debug("Navigation:")
+        logger.debug("  Middle button   : Pan (click and drag)")
+        logger.debug("  Right button    : Zoom window (click and drag)")
+        logger.debug("  'Ctrl+Q'        : Quit")
+        logger.debug("=" * 70)
+        logger.debug(f"Current: {self.grid_type} grid, rotation={self.grid_rotation}°")
+        logger.debug()
 
     def _create_menu_bar(self):
         """Create menu bar with File menu"""
@@ -1700,7 +1700,7 @@ class Graphulator(QMainWindow):
                 self.recent_files = [f for f in self.recent_files if Path(f).exists()]
                 self.recent_files = self.recent_files[:self.max_recent_files]
         except Exception as e:
-            print(f"Error loading recent files: {e}")
+            logger.error(f"Error loading recent files: {e}")
             self.recent_files = []
 
     def _save_recent_files(self):
@@ -1710,7 +1710,7 @@ class Graphulator(QMainWindow):
                 for filepath in self.recent_files:
                     f.write(f"{filepath}\n")
         except Exception as e:
-            print(f"Error saving recent files: {e}")
+            logger.error(f"Error saving recent files: {e}")
 
     def _add_to_recent_files(self, filepath):
         """Add a file to the recent files list"""
@@ -1782,7 +1782,7 @@ class Graphulator(QMainWindow):
                     action.triggered.connect(lambda checked, f=example_file: self._load_example(f))
                     self.examples_menu.addAction(action)
         except Exception as e:
-            print(f"Could not load examples: {e}")
+            logger.debug(f"Could not load examples: {e}")
             no_examples = QAction("(Examples not found)", self)
             no_examples.setEnabled(False)
             self.examples_menu.addAction(no_examples)
@@ -1808,9 +1808,9 @@ class Graphulator(QMainWindow):
             self.current_filepath = None
             self._set_modified(False)
             self.setWindowTitle(f"Graphulator - {example_path.stem} (example)")
-            print(f"Loaded example: {example_path.stem}")
+            logger.info(f"Loaded example: {example_path.stem}")
         except Exception as e:
-            print(f"Error loading example: {e}")
+            logger.error(f"Error loading example: {e}")
             QMessageBox.warning(self, "Load Error", f"Could not load example:\n{e}")
 
     def _serialize_graph(self):
@@ -1983,7 +1983,7 @@ class Graphulator(QMainWindow):
 
         self._set_modified(False)
         self._update_plot()
-        print("New graph created")
+        logger.info("New graph created")
 
     def _open_graph(self):
         """Open a graph from file"""
@@ -2007,14 +2007,14 @@ class Graphulator(QMainWindow):
             self.current_filepath = filepath
             self._set_modified(False)
             self._add_to_recent_files(filepath)
-            print(f"Opened graph from {filepath}")
+            logger.info(f"Opened graph from {filepath}")
 
         except Exception as e:
             QMessageBox.critical(
                 self, "Error Opening File",
                 f"Could not open file:\n{e}"
             )
-            print(f"Error opening graph: {e}")
+            logger.error(f"Error opening graph: {e}")
 
     def _save_graph(self):
         """Save the current graph"""
@@ -2055,7 +2055,7 @@ class Graphulator(QMainWindow):
             except:
                 pass  # Don't fail if we can't save last graph
 
-            print(f"Saved graph to {filepath}")
+            logger.info(f"Saved graph to {filepath}")
             return True
 
         except Exception as e:
@@ -2063,7 +2063,7 @@ class Graphulator(QMainWindow):
                 self, "Error Saving File",
                 f"Could not save file:\n{e}"
             )
-            print(f"Error saving graph: {e}")
+            logger.error(f"Error saving graph: {e}")
             return False
 
     def _reload_last_graph(self):
@@ -2085,7 +2085,7 @@ class Graphulator(QMainWindow):
             self._deserialize_graph(data)
             self.current_filepath = None  # Don't set filepath for reloaded last graph
             self._set_modified(False)
-            print("Reloaded last graph")
+            logger.info("Reloaded last graph")
 
         except Exception as e:
             QMessageBox.critical(
@@ -2096,7 +2096,7 @@ class Graphulator(QMainWindow):
     def _export_png(self):
         """Export graph as PNG image"""
         if not self.nodes:
-            print("No nodes to export")
+            logger.info("No nodes to export")
             return
 
         filepath, _ = QFileDialog.getSaveFileName(
@@ -2123,14 +2123,14 @@ class Graphulator(QMainWindow):
                 self.canvas.ax.set_title(current_title)
                 self._update_plot()
 
-                print(f"Exported PNG to {filepath}")
+                logger.info(f"Exported PNG to {filepath}")
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Could not export PNG:\n{e}")
 
     def _export_svg(self):
         """Export graph as SVG image"""
         if not self.nodes:
-            print("No nodes to export")
+            logger.info("No nodes to export")
             return
 
         filepath, _ = QFileDialog.getSaveFileName(
@@ -2157,14 +2157,14 @@ class Graphulator(QMainWindow):
                 self.canvas.ax.set_title(current_title)
                 self._update_plot()
 
-                print(f"Exported SVG to {filepath}")
+                logger.info(f"Exported SVG to {filepath}")
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Could not export SVG:\n{e}")
 
     def _export_pdf(self):
         """Export graph as PDF document"""
         if not self.nodes:
-            print("No nodes to export")
+            logger.info("No nodes to export")
             return
 
         filepath, _ = QFileDialog.getSaveFileName(
@@ -2187,7 +2187,7 @@ class Graphulator(QMainWindow):
                 # For LaTeX mode, save as SVG first, then convert to PDF to get outlined text
                 # SVG naturally stores LaTeX text as paths, which Illustrator can read
                 if self.use_latex:
-                    print("LaTeX mode: Exporting via SVG for text-as-paths compatibility")
+                    logger.debug("LaTeX mode: Exporting via SVG for text-as-paths compatibility")
                     # Save as SVG (text will be paths)
                     svg_filepath = filepath.replace('.pdf', '_temp.svg')
                     self.canvas.fig.savefig(svg_filepath, format='svg', bbox_inches='tight')
@@ -2198,21 +2198,19 @@ class Graphulator(QMainWindow):
                         cairosvg.svg2pdf(url=svg_filepath, write_to=filepath)
                         import os
                         os.remove(svg_filepath)  # Clean up temp file
-                        print(f"Exported PDF with outlined text to {filepath}")
+                        logger.info(f"Exported PDF with outlined text to {filepath}")
                     except ImportError:
-                        print("Note: cairosvg not installed. Saved as SVG instead.")
-                        print("Install with: pip install cairosvg")
-                        print("Or use the SVG export which already has text as paths.")
+                        logger.info("Note: cairosvg not installed. Saved as SVG instead.")
+                        logger.debug("Install with: pip install cairosvg")
+                        logger.debug("Or use the SVG export which already has text as paths.")
                         # Fall back to regular PDF export
-                        import matplotlib
                         original_fonttype = matplotlib.rcParams.get('pdf.fonttype', 42)
                         matplotlib.rcParams['pdf.fonttype'] = 42
                         self.canvas.fig.savefig(filepath, format='pdf', bbox_inches='tight', dpi=300)
                         matplotlib.rcParams['pdf.fonttype'] = original_fonttype
-                        print(f"Exported PDF (fonts embedded) to {filepath}")
+                        logger.info(f"Exported PDF (fonts embedded) to {filepath}")
                 else:
                     # Non-LaTeX mode: standard PDF export
-                    import matplotlib
                     original_fonttype = matplotlib.rcParams.get('pdf.fonttype', 42)
                     matplotlib.rcParams['pdf.fonttype'] = 42
                     self.canvas.fig.savefig(filepath, format='pdf', bbox_inches='tight', dpi=300)
@@ -2222,7 +2220,7 @@ class Graphulator(QMainWindow):
                 self.canvas.ax.set_title(current_title)
                 self._update_plot()
 
-                print(f"Exported PDF to {filepath}")
+                logger.info(f"Exported PDF to {filepath}")
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Could not export PDF:\n{e}")
 
@@ -2258,33 +2256,33 @@ class Graphulator(QMainWindow):
         canvas_height = self.canvas.size().height()
 
         if canvas_height > 0 and canvas_width > 0:
-            print("\n" + "="*60)
-            print("WINDOW RESIZE COMPLETE - Redrawing")
-            print("="*60)
-            print(f"Canvas size: {canvas_width} x {canvas_height}")
-            print(f"Canvas aspect ratio: {canvas_width/canvas_height:.3f}")
+            logger.debug("" + "="*60)
+            logger.debug("WINDOW RESIZE COMPLETE - Redrawing")
+            logger.debug("="*60)
+            logger.debug(f"Canvas size: {canvas_width} x {canvas_height}")
+            logger.debug(f"Canvas aspect ratio: {canvas_width/canvas_height:.3f}")
             xlim = self._get_xlim()
             ylim = self._get_ylim()
-            print(f"Calculated xlim: [{xlim[0]:.2f}, {xlim[1]:.2f}]")
-            print(f"Calculated ylim: [{ylim[0]:.2f}, {ylim[1]:.2f}]")
-            print("="*60 + "\n")
+            logger.debug(f"Calculated xlim: [{xlim[0]:.2f}, {xlim[1]:.2f}]")
+            logger.debug(f"Calculated ylim: [{ylim[0]:.2f}, {ylim[1]:.2f}]")
+            logger.debug("="*60 + "\n")
 
             self._update_plot()
 
     def _set_placement_mode(self, mode):
         """Set placement mode"""
         self.placement_mode = mode
-        print(f"Placement mode: {mode}")
+        logger.debug(f"Placement mode: {mode}")
         self._update_plot()
 
     def _toggle_continuous_mode(self):
         """Toggle continuous placement mode"""
         if self.placement_mode == 'continuous':
             self.placement_mode = None
-            print("Exited continuous placement mode")
+            logger.debug("Exited continuous placement mode")
         else:
             self.placement_mode = 'continuous'
-            print("Continuous placement mode - click to place nodes, press G again to exit")
+            logger.debug("Continuous placement mode - click to place nodes, press G again to exit")
         self._update_plot()
 
     def _auto_increment_label(self, label):
@@ -2357,7 +2355,7 @@ class Graphulator(QMainWindow):
         """Toggle continuous duplicate placement mode"""
         if self.placement_mode == 'continuous_duplicate':
             self.placement_mode = None
-            print("Exited continuous duplicate mode")
+            logger.debug("Exited continuous duplicate mode")
         else:
             # If no previous node, use defaults
             if self.last_node_props is None:
@@ -2369,12 +2367,12 @@ class Graphulator(QMainWindow):
                     'label_size_mult': 1.4,  # Large
                     'conj': False
                 }
-                print("Continuous duplicate mode - starting with 'A'")
+                logger.debug("Continuous duplicate mode - starting with 'A'")
             else:
-                print(f"Continuous duplicate mode - duplicating '{self.last_node_props['label']}' ({self.last_node_props['color_key']}) with auto-increment")
+                logger.debug(f"Continuous duplicate mode - duplicating '{self.last_node_props['label']}' ({self.last_node_props['color_key']}) with auto-increment")
 
             self.placement_mode = 'continuous_duplicate'
-            print("Click to place nodes, press Ctrl+G again to exit")
+            logger.debug("Click to place nodes, press Ctrl+G again to exit")
         self._update_plot()
 
     def _toggle_conjugation_mode(self):
@@ -2385,23 +2383,23 @@ class Graphulator(QMainWindow):
             for node in self.selected_nodes:
                 node['conj'] = not node.get('conj', False)
             conj_count = sum(1 for node in self.selected_nodes if node.get('conj', False))
-            print(f"Toggled conjugation for {len(self.selected_nodes)} node(s) ({conj_count} now conjugated)")
+            logger.debug(f"Toggled conjugation for {len(self.selected_nodes)} node(s) ({conj_count} now conjugated)")
             self._update_plot()
         # Otherwise, enter/exit conjugation mode
         elif self.placement_mode == 'conjugation':
             self.placement_mode = None
-            print("Exited conjugation mode")
+            logger.debug("Exited conjugation mode")
             self._update_plot()
         else:
             self.placement_mode = 'conjugation'
-            print("Conjugation mode - click nodes to toggle conjugation ('c' or Esc to exit)")
+            logger.debug("Conjugation mode - click nodes to toggle conjugation ('c' or Esc to exit)")
             self._update_plot()
 
     def _toggle_edge_mode(self):
         """Enter single edge placement mode (exits after one edge)"""
         self.placement_mode = 'edge'
         self.edge_mode_first_node = None
-        print("Edge mode - click two nodes to connect them (single edge, exits after placement)")
+        logger.debug("Edge mode - click two nodes to connect them (single edge, exits after placement)")
         self._update_plot()
 
     def _toggle_edge_continuous_mode(self):
@@ -2409,19 +2407,19 @@ class Graphulator(QMainWindow):
         if self.placement_mode == 'edge_continuous':
             self.placement_mode = None
             self.edge_mode_first_node = None
-            print("Exited continuous edge mode")
+            logger.debug("Exited continuous edge mode")
             self._update_plot()
         else:
             self.placement_mode = 'edge_continuous'
             self.edge_mode_first_node = None
-            print("Continuous edge mode - click nodes to connect them (Ctrl+E to exit)")
+            logger.debug("Continuous edge mode - click nodes to connect them (Ctrl+E to exit)")
             self._update_plot()
 
     def _exit_placement_mode(self):
         """Exit any placement mode and clear selections"""
         # Cancel any active dragging operations
         if self.dragging_node is not None:
-            print("Cancelled node drag")
+            logger.debug("Cancelled node drag")
             self.dragging_node = None
             self.dragging_group = False
             self.drag_start_pos = None
@@ -2429,14 +2427,14 @@ class Graphulator(QMainWindow):
             return
 
         if self.placement_mode is not None:
-            print(f"Exited {self.placement_mode} mode")
+            logger.debug(f"Exited {self.placement_mode} mode")
             self.placement_mode = None
             # Clear edge mode state if exiting edge mode
             if self.edge_mode_first_node is not None:
                 self.edge_mode_first_node = None
             self._update_plot()
         elif self.selected_nodes or self.selected_edges:
-            print(f"Cleared selection of {len(self.selected_nodes)} node(s) and {len(self.selected_edges)} edge(s)")
+            logger.debug(f"Cleared selection of {len(self.selected_nodes)} node(s) and {len(self.selected_edges)} edge(s)")
             self.selected_nodes.clear()
             self.selected_edges.clear()
             self._update_plot()
@@ -2464,14 +2462,14 @@ class Graphulator(QMainWindow):
             for selected_node in self.selected_nodes:
                 selected_node['color'] = config.MYCOLORS[color_key]
                 selected_node['color_key'] = color_key
-            print(f"Changed color of {len(self.selected_nodes)} nodes to {color_key}")
+            logger.debug(f"Changed color of {len(self.selected_nodes)} nodes to {color_key}")
             # Update last_node_props with the first selected node's properties
             last_modified = self.selected_nodes[0]
         else:
             # Change just this node
             node['color'] = config.MYCOLORS[color_key]
             node['color_key'] = color_key
-            print(f"Changed node '{node['label']}' color to {color_key}")
+            logger.debug(f"Changed node '{node['label']}' color to {color_key}")
             last_modified = node
 
         # Update last_node_props so continuous mode inherits these properties
@@ -2514,11 +2512,11 @@ class Graphulator(QMainWindow):
         if edge in self.selected_edges and len(self.selected_edges) > 1:
             for selected_edge in self.selected_edges:
                 selected_edge['style'] = edge_type
-            print(f"Changed type of {len(self.selected_edges)} edge(s) to {edge_type}")
+            logger.debug(f"Changed type of {len(self.selected_edges)} edge(s) to {edge_type}")
         else:
             # Change just this edge
             edge['style'] = edge_type
-            print(f"Changed edge type to {edge_type}")
+            logger.debug(f"Changed edge type to {edge_type}")
 
         self._update_plot()
 
@@ -2537,25 +2535,25 @@ class Graphulator(QMainWindow):
         if len(self.selected_edges) == 1:
             edge = self.selected_edges[0]
             state = "flipped" if edge['flip_labels'] else "normal"
-            print(f"Edge labels: {state}")
+            logger.debug(f"Edge labels: {state}")
         else:
             flipped_count = sum(1 for e in self.selected_edges if e.get('flip_labels', False))
-            print(f"Toggled flip for {len(self.selected_edges)} edge(s) ({flipped_count} now flipped)")
+            logger.debug(f"Toggled flip for {len(self.selected_edges)} edge(s) ({flipped_count} now flipped)")
 
         self._update_plot()
 
     def _toggle_edge_rotation_mode(self):
         """Toggle edge label rotation mode (Shift+F)"""
         if not self.selected_edges:
-            print("Select an edge to adjust label rotation")
+            logger.debug("Select an edge to adjust label rotation")
             return
 
         self.edge_rotation_mode = not self.edge_rotation_mode
 
         if self.edge_rotation_mode:
-            print("Edge rotation mode: Use Left/Right arrows to adjust label angle (±5°)")
+            logger.debug("Edge rotation mode: Use Left/Right arrows to adjust label angle (±5°)")
         else:
-            print("Exited edge rotation mode")
+            logger.debug("Exited edge rotation mode")
 
     def _adjust_edge_rotation(self, direction):
         """Adjust edge label rotation angle by ±5 degrees"""
@@ -2577,9 +2575,9 @@ class Graphulator(QMainWindow):
         if len(self.selected_edges) == 1:
             edge = self.selected_edges[0]
             rotation = edge.get('label_rotation_offset', 0)
-            print(f"Edge label rotation: {rotation:+d}°")
+            logger.debug(f"Edge label rotation: {rotation:+d}°")
         else:
-            print(f"Adjusted rotation for {len(self.selected_edges)} edge(s)")
+            logger.debug(f"Adjusted rotation for {len(self.selected_edges)} edge(s)")
 
         self._update_plot()
 
@@ -2587,27 +2585,27 @@ class Graphulator(QMainWindow):
         """Rotate the grid"""
         increment = config.SQUARE_GRID_ROTATION_INCREMENT if self.grid_type == "square" else config.TRIANGULAR_GRID_ROTATION_INCREMENT
         self.grid_rotation = (self.grid_rotation + increment) % 360
-        print(f"Rotated grid to {self.grid_rotation}°")
+        logger.debug(f"Rotated grid to {self.grid_rotation}°")
         self._update_plot()
 
     def _toggle_grid_type(self):
         """Toggle grid type"""
         self.grid_type = "triangular" if self.grid_type == "square" else "square"
         self.grid_rotation = 0
-        print(f"Switched to {self.grid_type} grid")
+        logger.debug(f"Switched to {self.grid_type} grid")
         self._update_plot()
 
     def _clear_nodes(self):
         """Clear all nodes"""
         self.nodes = []
         self.node_counter = 0
-        print("All nodes cleared")
+        logger.info("All nodes cleared")
         self._update_plot()
 
     def _zoom(self, factor):
         """Zoom by factor"""
         self.zoom_level *= factor
-        print(f"Zoom level: {self.zoom_level:.3f}x")
+        logger.debug(f"Zoom level: {self.zoom_level:.3f}x")
         self._update_plot()
 
     def _pan_arrow(self, direction):
@@ -2678,14 +2676,14 @@ class Graphulator(QMainWindow):
         if len(self.selected_nodes) == 1:
             node = self.selected_nodes[0]
             if direction in ['up', 'down']:
-                print(f"Node '{node['label']}' size: {node['node_size_mult']:.1f}")
+                logger.debug(f"Node '{node['label']}' size: {node['node_size_mult']:.1f}")
             else:
-                print(f"Node '{node['label']}' label size: {node['label_size_mult']:.1f}")
+                logger.debug(f"Node '{node['label']}' label size: {node['label_size_mult']:.1f}")
         else:
             if direction in ['up', 'down']:
-                print(f"Adjusted node size for {len(self.selected_nodes)} nodes")
+                logger.debug(f"Adjusted node size for {len(self.selected_nodes)} nodes")
             else:
-                print(f"Adjusted label size for {len(self.selected_nodes)} nodes")
+                logger.debug(f"Adjusted label size for {len(self.selected_nodes)} nodes")
 
         self._update_plot()
 
@@ -2696,7 +2694,7 @@ class Graphulator(QMainWindow):
             angle_degrees: Rotation angle in degrees. Positive = CCW, Negative = CW
         """
         if not self.selected_nodes:
-            print("No nodes selected to rotate")
+            logger.info("No nodes selected to rotate")
             return
 
         self._save_state()
@@ -2740,9 +2738,9 @@ class Graphulator(QMainWindow):
         # Print feedback
         direction = "CCW" if angle_degrees > 0 else "CW"
         if len(self.selected_nodes) == 1:
-            print(f"Rotated node '{self.selected_nodes[0]['label']}' {abs(angle_degrees)}° {direction}")
+            logger.debug(f"Rotated node '{self.selected_nodes[0]['label']}' {abs(angle_degrees)}° {direction}")
         else:
-            print(f"Rotated {len(self.selected_nodes)} nodes {abs(angle_degrees)}° {direction} around centroid ({centroid[0]:.2f}, {centroid[1]:.2f})")
+            logger.debug(f"Rotated {len(self.selected_nodes)} nodes {abs(angle_degrees)}° {direction} around centroid ({centroid[0]:.2f}, {centroid[1]:.2f})")
 
         self._update_plot()
 
@@ -2794,9 +2792,9 @@ class Graphulator(QMainWindow):
         if len(self.selected_nodes) == 1:
             node = self.selected_nodes[0]
             nudge = node['nodelabelnudge']
-            print(f"Node '{node['label']}' label nudge: ({nudge[0]:.3f}, {nudge[1]:.3f})")
+            logger.debug(f"Node '{node['label']}' label nudge: ({nudge[0]:.3f}, {nudge[1]:.3f})")
         else:
-            print(f"Nudged labels for {len(self.selected_nodes)} nodes")
+            logger.debug(f"Nudged labels for {len(self.selected_nodes)} nodes")
 
         self._update_plot()
 
@@ -2833,11 +2831,11 @@ class Graphulator(QMainWindow):
         if len(self.selected_edges) == 1:
             edge = self.selected_edges[0]
             if direction in ['up', 'down']:
-                print(f"Edge linewidth: {edge['linewidth_mult']:.1f}")
+                logger.debug(f"Edge linewidth: {edge['linewidth_mult']:.1f}")
             else:
-                print(f"Edge label size: {edge['label_size_mult']:.1f}")
+                logger.debug(f"Edge label size: {edge['label_size_mult']:.1f}")
         else:
-            print(f"Adjusted properties for {len(self.selected_edges)} edge(s)")
+            logger.debug(f"Adjusted properties for {len(self.selected_edges)} edge(s)")
 
         self._update_plot()
 
@@ -2865,7 +2863,7 @@ class Graphulator(QMainWindow):
         elif direction == 'down':
             edge['linewidth_mult'] = max(current - increment, 0.2)
 
-        print(f"Self-loop linewidth: {edge['linewidth_mult']:.3f}")
+        logger.debug(f"Self-loop linewidth: {edge['linewidth_mult']:.3f}")
         self._update_plot()
 
     def _adjust_selfloop_scale(self, action):
@@ -2890,9 +2888,9 @@ class Graphulator(QMainWindow):
                 edge['selfloopscale'] = max(current - increment, 0.3)
 
         if len(selfloops) == 1:
-            print(f"Self-loop scale: {selfloops[0]['selfloopscale']:.3f}")
+            logger.debug(f"Self-loop scale: {selfloops[0]['selfloopscale']:.3f}")
         else:
-            print(f"Adjusted scale for {len(selfloops)} self-loop(s)")
+            logger.debug(f"Adjusted scale for {len(selfloops)} self-loop(s)")
 
         self._update_plot()
 
@@ -2918,9 +2916,9 @@ class Graphulator(QMainWindow):
                 edge['selfloopangle'] = (current + 15) % 360
 
         if len(selfloops) == 1:
-            print(f"Self-loop angle: {selfloops[0]['selfloopangle']}°")
+            logger.debug(f"Self-loop angle: {selfloops[0]['selfloopangle']}°")
         else:
-            print(f"Adjusted angle for {len(selfloops)} self-loop(s)")
+            logger.debug(f"Adjusted angle for {len(selfloops)} self-loop(s)")
 
         self._update_plot()
 
@@ -2972,16 +2970,16 @@ class Graphulator(QMainWindow):
         if len(self.selected_edges) == 1:
             edge = self.selected_edges[0]
             if edge.get('is_self_loop', False):
-                print(f"Self-loop angle: {edge['selfloopangle']}°")
+                logger.debug(f"Self-loop angle: {edge['selfloopangle']}°")
             else:
-                print(f"Edge looptheta: {edge.get('looptheta', 30)}°")
+                logger.debug(f"Edge looptheta: {edge.get('looptheta', 30)}°")
         else:
             if selfloops and regular_edges:
-                print(f"Adjusted {len(selfloops)} self-loop(s) and {len(regular_edges)} edge(s)")
+                logger.debug(f"Adjusted {len(selfloops)} self-loop(s) and {len(regular_edges)} edge(s)")
             elif selfloops:
-                print(f"Adjusted angle for {len(selfloops)} self-loop(s)")
+                logger.debug(f"Adjusted angle for {len(selfloops)} self-loop(s)")
             else:
-                print(f"Adjusted looptheta for {len(regular_edges)} edge(s)")
+                logger.debug(f"Adjusted looptheta for {len(regular_edges)} edge(s)")
 
         self._update_plot()
 
@@ -3006,9 +3004,9 @@ class Graphulator(QMainWindow):
         # Print feedback
         if len(self.selected_edges) == 1:
             edge = self.selected_edges[0]
-            print(f"Edge label offset: {edge['label_offset_mult']:.1f}")
+            logger.debug(f"Edge label offset: {edge['label_offset_mult']:.1f}")
         else:
-            print(f"Adjusted label offset for {len(self.selected_edges)} edge(s)")
+            logger.debug(f"Adjusted label offset for {len(self.selected_edges)} edge(s)")
 
         self._update_plot()
 
@@ -3058,9 +3056,9 @@ class Graphulator(QMainWindow):
         if len(selfloops) == 1:
             edge = selfloops[0]
             nudge = edge['selflooplabelnudge']
-            print(f"Self-loop label nudge: ({nudge[0]:.3f}, {nudge[1]:.3f})")
+            logger.debug(f"Self-loop label nudge: ({nudge[0]:.3f}, {nudge[1]:.3f})")
         else:
-            print(f"Nudged labels for {len(selfloops)} self-loop(s)")
+            logger.debug(f"Nudged labels for {len(selfloops)} self-loop(s)")
 
         self._update_plot()
 
@@ -3318,7 +3316,7 @@ class Graphulator(QMainWindow):
 
     def _edit_node(self, node):
         """Edit an existing node"""
-        print(f"Editing node '{node['label']}'...")
+        logger.debug(f"Editing node '{node['label']}'...")
 
         # Create dialog with current values
         dialog = NodeInputDialog(default_label=node['label'], parent=self)
@@ -3368,7 +3366,7 @@ class Graphulator(QMainWindow):
                     'conj': result['conj']
                 }
 
-                print(f"✓ Updated node to '{result['label']}' ({result['color_key']})")
+                logger.info(f"✓ Updated node to '{result['label']}' ({result['color_key']})")
                 self._update_plot()
 
     def _edit_edge(self, edge):
@@ -3377,7 +3375,7 @@ class Graphulator(QMainWindow):
         to_label = edge['to_node']['label']
         is_self_loop = edge['is_self_loop']
 
-        print(f"Editing edge '{from_label}' → '{to_label}'...")
+        logger.debug(f"Editing edge '{from_label}' → '{to_label}'...")
 
         # Create dialog with current values
         dialog = EdgeInputDialog(
@@ -3469,10 +3467,10 @@ class Graphulator(QMainWindow):
                     edge['flip'] = result.get('flip', False)
 
                 if is_self_loop:
-                    print(f"✓ Updated self-loop on node '{from_label}'")
+                    logger.info(f"✓ Updated self-loop on node '{from_label}'")
                 else:
-                    print(f"✓ Updated edge '{from_label}' → '{to_label}'")
-                print(f"  linewidth_mult={edge['linewidth_mult']}, label_size_mult={edge['label_size_mult']}, style={edge['style']}")
+                    logger.info(f"✓ Updated edge '{from_label}' → '{to_label}'")
+                logger.debug(f"  linewidth_mult={edge['linewidth_mult']}, label_size_mult={edge['label_size_mult']}, style={edge['style']}")
                 self._update_plot()
 
     def _draw_nodes(self):
@@ -3624,7 +3622,6 @@ class Graphulator(QMainWindow):
 
     def _draw_edges(self):
         """Draw all edges and self-loops"""
-        import numpy as np
 
         # Debug: verify this is being called
 
@@ -3801,11 +3798,6 @@ class Graphulator(QMainWindow):
                 # Add fine-tuning rotation offset
                 labeltheta += edge.get('label_rotation_offset', 0)
 
-                # Debug: print edge positions
-                # from_label = from_node.get('label', '?')
-                # to_label = to_node.get('label', '?')
-                # print(f"  Edge {from_label}→{to_label}: from={from_pos}, to={to_pos}, angle={labeltheta:.1f}°, flip={flip}")
-
                 # Scale linewidth proportionally to zoom (base 5.5 at reference zoom)
                 base_lw = 2.0
                 linewidth_mult = edge.get('linewidth_mult', 1.0)
@@ -3817,9 +3809,6 @@ class Graphulator(QMainWindow):
                 label_size_mult = edge.get('label_size_mult', 1.0)
                 scaled_labelfontsize = base_labelfontsize * label_size_mult
                 # NOTE: DO NOT scale by points_per_data_unit here - graph_primitives does this internally!
-
-                # Debug: print edge properties (comment out later)
-                # print(f"Drawing edge: lw_mult={linewidth_mult}, label_mult={label_size_mult}, style={edge.get('style')}")
 
                 # Scale label offset (base 2.3 at reference zoom)
                 base_labeloffset = 2.3
@@ -3896,11 +3885,11 @@ class Graphulator(QMainWindow):
                 if self.drag_pending_group:
                     self.dragging_group = True
                     self.drag_pending_group = False
-                    print(f"Dragging {len(self.selected_nodes)} node(s)...")
+                    logger.debug(f"Dragging {len(self.selected_nodes)} node(s)...")
                 elif self.drag_pending_node:
                     self.dragging_node = self.drag_pending_node
                     self.drag_pending_node = None
-                    print(f"Dragging node '{self.dragging_node['label']}'...")
+                    logger.debug(f"Dragging node '{self.dragging_node['label']}'...")
                 # Fall through to dragging handling below
 
         # Handle panning - don't redraw during pan, just on release
@@ -4159,7 +4148,7 @@ class Graphulator(QMainWindow):
                     # Toggle conjugation state
                     clicked_node['conj'] = not clicked_node.get('conj', False)
                     conj_state = "conjugated" if clicked_node['conj'] else "unconjugated"
-                    print(f"Node '{clicked_node['label']}' is now {conj_state}")
+                    logger.debug(f"Node '{clicked_node['label']}' is now {conj_state}")
                     self._update_plot()
                 return
 
@@ -4170,7 +4159,7 @@ class Graphulator(QMainWindow):
                     if self.edge_mode_first_node is None:
                         # First node selected
                         self.edge_mode_first_node = clicked_node
-                        print(f"First node selected: '{clicked_node['label']}'. Click another node to connect.")
+                        logger.debug(f"First node selected: '{clicked_node['label']}'. Click another node to connect.")
                         self._update_plot()
                     else:
                         # Second node selected - show dialog or use last settings
@@ -4240,9 +4229,9 @@ class Graphulator(QMainWindow):
                                     existing_edge['arrowlengthsc'] = result.get('arrowlengthsc', 1.0)
                                     existing_edge['flip'] = result.get('flip', False)
                                 if is_self_loop:
-                                    print(f"Replaced self-loop on node '{self.edge_mode_first_node['label']}'")
+                                    logger.debug(f"Replaced self-loop on node '{self.edge_mode_first_node['label']}'")
                                 else:
-                                    print(f"Replaced edge: '{self.edge_mode_first_node['label']}' ↔ '{second_node['label']}'")
+                                    logger.debug(f"Replaced edge: '{self.edge_mode_first_node['label']}' ↔ '{second_node['label']}'")
                             else:
                                 # Create new edge
                                 edge = {
@@ -4269,14 +4258,14 @@ class Graphulator(QMainWindow):
                                     edge['flip'] = result.get('flip', False)
                                 self.edges.append(edge)
                                 if is_self_loop:
-                                    print(f"Added self-loop to node '{self.edge_mode_first_node['label']}'")
+                                    logger.debug(f"Added self-loop to node '{self.edge_mode_first_node['label']}'")
                                 else:
-                                    print(f"Added edge: '{self.edge_mode_first_node['label']}' → '{second_node['label']}'")
+                                    logger.debug(f"Added edge: '{self.edge_mode_first_node['label']}' → '{second_node['label']}'")
 
                         # Exit single edge mode after placement, continue in continuous mode
                         if self.placement_mode == 'edge':
                             self.placement_mode = None
-                            print("Edge placed - exited edge mode")
+                            logger.debug("Edge placed - exited edge mode")
 
                         # Reset for next edge
                         self.edge_mode_first_node = None
@@ -4290,10 +4279,10 @@ class Graphulator(QMainWindow):
                 if clicked_node and shift_pressed:
                     if clicked_node in self.selected_nodes:
                         self.selected_nodes.remove(clicked_node)
-                        print(f"Deselected node '{clicked_node['label']}'")
+                        logger.debug(f"Deselected node '{clicked_node['label']}'")
                     else:
                         self.selected_nodes.append(clicked_node)
-                        print(f"Selected node '{clicked_node['label']}'")
+                        logger.debug(f"Selected node '{clicked_node['label']}'")
                     # Don't update click tracking for shift-clicks
                     self._update_plot()
                     return
@@ -4354,23 +4343,23 @@ class Graphulator(QMainWindow):
                             if clicked_edge in self.selected_edges:
                                 self.selected_edges.remove(clicked_edge)
                                 if is_self_loop:
-                                    print(f"Deselected self-loop on '{from_label}'")
+                                    logger.debug(f"Deselected self-loop on '{from_label}'")
                                 else:
-                                    print(f"Deselected edge '{from_label}' → '{to_label}'")
+                                    logger.debug(f"Deselected edge '{from_label}' → '{to_label}'")
                             else:
                                 self.selected_edges.append(clicked_edge)
                                 if is_self_loop:
-                                    print(f"Selected self-loop on '{from_label}'")
+                                    logger.debug(f"Selected self-loop on '{from_label}'")
                                 else:
-                                    print(f"Selected edge '{from_label}' → '{to_label}'")
+                                    logger.debug(f"Selected edge '{from_label}' → '{to_label}'")
                         else:
                             self.selected_nodes.clear()  # Clear node selection when selecting edge
                             self.selected_edges.clear()
                             self.selected_edges.append(clicked_edge)
                             if is_self_loop:
-                                print(f"Selected self-loop on '{from_label}'")
+                                logger.debug(f"Selected self-loop on '{from_label}'")
                             else:
-                                print(f"Selected edge '{from_label}' → '{to_label}'")
+                                logger.debug(f"Selected edge '{from_label}' → '{to_label}'")
                         self._update_plot()
                         return
 
@@ -4395,7 +4384,7 @@ class Graphulator(QMainWindow):
                 )
 
                 if occupied:
-                    print(f"Position ({snap_x:.3f}, {snap_y:.3f}) already occupied!")
+                    logger.debug(f"Position ({snap_x:.3f}, {snap_y:.3f}) already occupied!")
                     return
 
                 # Continuous duplicate mode - use last node properties
@@ -4428,7 +4417,7 @@ class Graphulator(QMainWindow):
                         # Update last_node_props with the new label for next placement
                         self.last_node_props['label'] = next_label
 
-                        print(f"✓ Node '{next_label}' ({self.last_node_props['color_key']}) placed at ({snap_x:.3f}, {snap_y:.3f})")
+                        logger.info(f"✓ Node '{next_label}' ({self.last_node_props['color_key']}) placed at ({snap_x:.3f}, {snap_y:.3f})")
                         self._update_plot()
                     return
 
@@ -4485,12 +4474,12 @@ class Graphulator(QMainWindow):
                             'conj': result['conj']
                         }
 
-                        print(f"✓ Node '{result['label']}' ({result['color_key']}) placed at ({snap_x:.3f}, {snap_y:.3f})")
+                        logger.info(f"✓ Node '{result['label']}' ({result['color_key']}) placed at ({snap_x:.3f}, {snap_y:.3f})")
 
                         # Exit single mode
                         if self.placement_mode == 'single':
                             self.placement_mode = None
-                            print("Exited placement mode")
+                            logger.debug("Exited placement mode")
 
                         self._update_plot()
 
@@ -4538,7 +4527,7 @@ class Graphulator(QMainWindow):
                     if self.selected_edges:
                         msg.append(f"{len(self.selected_edges)} edge(s)")
                     if msg:
-                        print(f"Selected {' and '.join(msg)}")
+                        logger.debug(f"Selected {' and '.join(msg)}")
 
                 # Clean up
                 self.selection_window = False
@@ -4572,7 +4561,7 @@ class Graphulator(QMainWindow):
                         self.base_xlim = (x0, x1)
                         self.base_ylim = (y0, y1)
                         self.zoom_level = 1.0
-                        print(f"Zoom window: ({x0:.3f}, {y0:.3f}) to ({x1:.3f}, {y1:.3f})")
+                        logger.debug(f"Zoom window: ({x0:.3f}, {y0:.3f}) to ({x1:.3f}, {y1:.3f})")
 
                 # Clean up
                 self.zoom_window = False
@@ -4622,9 +4611,9 @@ class Graphulator(QMainWindow):
                         self._save_state()
                         for node, snap_x, snap_y in new_positions:
                             node['pos'] = (snap_x, snap_y)
-                        print(f"✓ Moved {len(self.selected_nodes)} node(s)")
+                        logger.info(f"✓ Moved {len(self.selected_nodes)} node(s)")
                     else:
-                        print(f"✗ Cannot move group - some positions occupied")
+                        logger.info(f"✗ Cannot move group - some positions occupied")
 
                 # Clean up
                 self.dragging_group = False
@@ -4663,9 +4652,9 @@ class Graphulator(QMainWindow):
                         self._save_state()
                         old_pos = self.dragging_node['pos']
                         self.dragging_node['pos'] = (snap_x, snap_y)
-                        print(f"✓ Moved node '{self.dragging_node['label']}' from ({old_pos[0]:.3f}, {old_pos[1]:.3f}) to ({snap_x:.3f}, {snap_y:.3f})")
+                        logger.info(f"✓ Moved node '{self.dragging_node['label']}' from ({old_pos[0]:.3f}, {old_pos[1]:.3f}) to ({snap_x:.3f}, {snap_y:.3f})")
                     else:
-                        print(f"✗ Cannot move node '{self.dragging_node['label']}' - position occupied")
+                        logger.info(f"✗ Cannot move node '{self.dragging_node['label']}' - position occupied")
 
                 # Clean up
                 self.dragging_node = None
@@ -4762,7 +4751,7 @@ class Graphulator(QMainWindow):
     def _undo(self):
         """Undo last action"""
         if not self.undo_stack:
-            print("Nothing to undo")
+            logger.info("Nothing to undo")
             return
 
         # Restore previous state
@@ -4814,20 +4803,20 @@ class Graphulator(QMainWindow):
         self.selected_nodes.clear()
         self.selected_edges.clear()
 
-        print(f"Undo - restored to {len(self.nodes)} node(s) and {len(self.edges)} edge(s)")
+        logger.info(f"Undo - restored to {len(self.nodes)} node(s) and {len(self.edges)} edge(s)")
         self._update_plot()
 
     def _select_all(self):
         """Select all nodes and edges"""
         self.selected_nodes = self.nodes.copy()
         self.selected_edges = self.edges.copy()
-        print(f"Selected all: {len(self.selected_nodes)} node(s) and {len(self.selected_edges)} edge(s)")
+        logger.info(f"Selected all: {len(self.selected_nodes)} node(s) and {len(self.selected_edges)} edge(s)")
         self._update_plot()
 
     def _copy_nodes(self):
         """Copy selected nodes and edges to clipboard"""
         if not self.selected_nodes and not self.selected_edges:
-            print("No nodes or edges selected to copy")
+            logger.info("No nodes or edges selected to copy")
             return
 
         self.clipboard = {'nodes': [], 'edges': []}
@@ -4879,12 +4868,12 @@ class Graphulator(QMainWindow):
             msg.append(f"{len(self.clipboard['nodes'])} node(s)")
         if len(self.clipboard['edges']) > 0:
             msg.append(f"{len(self.clipboard['edges'])} edge(s)")
-        print(f"Copied {' and '.join(msg)}")
+        logger.info(f"Copied {' and '.join(msg)}")
 
     def _cut_nodes(self):
         """Cut selected nodes and edges to clipboard"""
         if not self.selected_nodes and not self.selected_edges:
-            print("No nodes or edges selected to cut")
+            logger.info("No nodes or edges selected to cut")
             return
 
         self._save_state()
@@ -4950,7 +4939,7 @@ class Graphulator(QMainWindow):
             msg.append(f"{len(self.clipboard['nodes'])} node(s)")
         if len(self.clipboard['edges']) > 0:
             msg.append(f"{len(self.clipboard['edges'])} edge(s)")
-        print(f"Cut {' and '.join(msg)}")
+        logger.info(f"Cut {' and '.join(msg)}")
 
         self.selected_nodes.clear()
         self.selected_edges.clear()
@@ -4959,7 +4948,7 @@ class Graphulator(QMainWindow):
     def _paste_nodes(self):
         """Paste nodes and edges from clipboard"""
         if not self.clipboard or (not self.clipboard.get('nodes') and not self.clipboard.get('edges')):
-            print("Clipboard is empty")
+            logger.info("Clipboard is empty")
             return
 
         self._save_state()
@@ -5062,13 +5051,13 @@ class Graphulator(QMainWindow):
             msg.append(f"{len(self.selected_nodes)} node(s)")
         if len(self.selected_edges) > 0:
             msg.append(f"{len(self.selected_edges)} edge(s)")
-        print(f"Pasted {' and '.join(msg)}")
+        logger.info(f"Pasted {' and '.join(msg)}")
         self._update_plot()
 
     def _delete_selected_nodes(self):
         """Delete selected nodes and edges"""
         if not self.selected_nodes and not self.selected_edges:
-            print("No nodes or edges selected to delete")
+            logger.info("No nodes or edges selected to delete")
             return
 
         self._save_state()
@@ -5105,7 +5094,7 @@ class Graphulator(QMainWindow):
             msg.append(f"{node_count} node(s)")
         if edge_count > 0:
             msg.append(f"{edge_count} edge(s)")
-        print(f"Deleted {' and '.join(msg)}")
+        logger.info(f"Deleted {' and '.join(msg)}")
 
         self.selected_nodes.clear()
         self.selected_edges.clear()
@@ -5151,7 +5140,7 @@ class Graphulator(QMainWindow):
             matplotlib.rcParams['font.family'] = 'STIXGeneral'
 
         render_mode = "LaTeX" if self.use_latex else "MathText"
-        print(f"Rendering mode: {render_mode}")
+        logger.info(f"Rendering mode: {render_mode}")
         self._update_plot()
 
     def _calculate_graph_extents(self):
@@ -5159,7 +5148,6 @@ class Graphulator(QMainWindow):
         if not self.nodes:
             return 0, 0, 0, 0
 
-        import numpy as np
         xlims = []
         ylims = []
 
@@ -5205,12 +5193,11 @@ class Graphulator(QMainWindow):
     def _export_code(self):
         """Export graph as Python code using graph_primitives GraphCircuit"""
         if not self.nodes:
-            print("No nodes to export")
+            logger.info("No nodes to export")
             return
 
         # Calculate full graph extents including all objects first
         # This will be used for both scaling calculations and final plot limits
-        import numpy as np
         extent_x_min, extent_x_max, extent_y_min, extent_y_max = self._calculate_graph_extents()
 
         # Calculate graph center - we'll shift all coordinates to center at origin
@@ -5233,14 +5220,14 @@ class Graphulator(QMainWindow):
         # consistently as multipliers on auto-calculated base sizes
 
         # Debug: print the extent
-        print(f"Graph extent span: {full_extent_span:.3f}")
+        logger.debug(f"Graph extent span: {full_extent_span:.3f}")
 
         # Calculate linewidth scaling factor to keep linewidths proportional to node size
         # Linewidths are in points (absolute), but need to scale with graph extent
         # Use a reference extent (typical small graph is ~10-15 units after padding)
         reference_extent = 15.0
         lw_extent_scale = reference_extent / full_extent_span
-        print(f"Linewidth extent scale factor: {lw_extent_scale:.3f}")
+        logger.debug(f"Linewidth extent scale factor: {lw_extent_scale:.3f}")
 
         # Use the export_rescale dictionary (tunable via UI in Export Scaling tab)
         # These parameters provide absolute control over scaling, independent of graph size
@@ -5534,12 +5521,12 @@ class Graphulator(QMainWindow):
             clipboard = QApplication.clipboard()
             clipboard.setText(code)
             edge_str = f", {len(self.edges)} edge(s)" if self.edges else ""
-            print(f"✓ Exported code for {len(self.nodes)} node(s){edge_str} to clipboard")
+            logger.info(f"✓ Exported code for {len(self.nodes)} node(s){edge_str} to clipboard")
         except Exception as e:
-            print(f"Code export (clipboard failed: {e}, printing to console):")
-            print("=" * 70)
-            print(code)
-            print("=" * 70)
+            logger.debug(f"Code export (clipboard failed: {e}, printing to console):")
+            logger.debug("=" * 70)
+            logger.debug(code)
+            logger.debug("=" * 70)
 
     def _update_properties_panel(self):
         """Update the properties panel based on current selection"""
@@ -5568,7 +5555,7 @@ class Graphulator(QMainWindow):
     def _auto_fit_view(self):
         """Auto-fit view to nodes"""
         if not self.nodes:
-            print("No nodes to fit view to")
+            logger.info("No nodes to fit view to")
             return
 
         positions = np.array([node['pos'] for node in self.nodes])
@@ -5583,7 +5570,7 @@ class Graphulator(QMainWindow):
         self.base_ylim = (centroid[1] - extent, centroid[1] + extent)
         self.zoom_level = 1.0
 
-        print(f"Auto-fit: centered on ({centroid[0]:.3f}, {centroid[1]:.3f}), extent={extent:.3f}")
+        logger.debug(f"Auto-fit: centered on ({centroid[0]:.3f}, {centroid[1]:.3f}), extent={extent:.3f}")
         self._update_plot()
 
     def _update_plot_no_grid(self):
@@ -5661,7 +5648,7 @@ class Graphulator(QMainWindow):
             matplotlib.rcParams['text.usetex'] = True
             matplotlib.rcParams['text.latex.preamble'] = r'\usepackage{amsmath}\usepackage{sfmath}\renewcommand{\familydefault}{\sfdefault}'
 
-            print("Rendering with LaTeX...")
+            logger.debug("Rendering with LaTeX...")
             # Re-render with LaTeX
             self._do_plot_render()
 

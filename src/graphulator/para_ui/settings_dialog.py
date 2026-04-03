@@ -4,6 +4,8 @@ Settings dialog and color palette widgets for paragraphulator.
 This module contains the SettingsDialog and ColorPaletteWidget classes.
 """
 
+import logging
+
 from PySide6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTabWidget, QScrollArea, QFormLayout, QSpinBox, QComboBox,
@@ -12,6 +14,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor, QIcon, QPixmap
+
+logger = logging.getLogger(__name__)
 
 from .. import graphulator_para_config as config
 from .widgets import FineControlSpinBox
@@ -672,7 +676,7 @@ class SettingsDialog(QDialog):
                 if has_data and has_canvas:
                     g._plot_sparams()
             except Exception as e:
-                print(f"Settings: Error refreshing S-param plot: {e}")
+                logger.error("Settings: Error refreshing S-param plot: %s", e)
 
     def _on_apply(self):
         """Apply button - apply changes, refresh UI, keep dialog open."""
