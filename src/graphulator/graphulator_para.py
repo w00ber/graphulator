@@ -13199,8 +13199,7 @@ class Graphulator(QMainWindow):
                     self.canvas.ax.add_patch(selection_circle)
 
     def _on_motion(self, event):
-        """Handle mouse motion"""
-        # Check if event came from main canvas, scattering canvas, or kron canvas
+        """Handle mouse motion - dispatches to appropriate handler."""
         valid_axes = [self.canvas.ax, self.kron_canvas.ax]
         if hasattr(self, 'scattering_canvas') and self.scattering_canvas:
             valid_axes.append(self.scattering_canvas.ax)
@@ -13228,65 +13227,7 @@ class Graphulator(QMainWindow):
 
         # Handle panning
         if self.panning and self.pan_start is not None:
-            dx = event.xdata - self.pan_start[0]
-            dy = event.ydata - self.pan_start[1]
-
-            # Determine which canvas is being panned
-            if hasattr(self, 'scattering_canvas') and self.scattering_canvas and event.inaxes == self.scattering_canvas.ax:
-                # Panning Scattering canvas
-                if hasattr(self, 'scattering_original_base_xlim'):
-                    self.scattering_original_base_xlim = (self.scattering_original_base_xlim[0] - dx,
-                                                           self.scattering_original_base_xlim[1] - dx)
-                    self.scattering_original_base_ylim = (self.scattering_original_base_ylim[0] - dy,
-                                                           self.scattering_original_base_ylim[1] - dy)
-
-                    # Temporarily swap base limits to calculate Scattering canvas limits
-                    saved_base_xlim = self.base_xlim
-                    saved_base_ylim = self.base_ylim
-                    self.base_xlim = self.scattering_original_base_xlim
-                    self.base_ylim = self.scattering_original_base_ylim
-
-                    # Update the Scattering canvas view using the standard methods
-                    self.scattering_canvas.ax.set_xlim(*self._get_xlim())
-                    self.scattering_canvas.ax.set_ylim(*self._get_ylim())
-                    self.scattering_canvas.draw_idle()
-
-                    # Restore original base limits
-                    self.base_xlim = saved_base_xlim
-                    self.base_ylim = saved_base_ylim
-            elif event.inaxes == self.kron_canvas.ax:
-                # Panning Kron canvas
-                if hasattr(self, 'kron_original_base_xlim'):
-                    self.kron_original_base_xlim = (self.kron_original_base_xlim[0] - dx,
-                                                     self.kron_original_base_xlim[1] - dx)
-                    self.kron_original_base_ylim = (self.kron_original_base_ylim[0] - dy,
-                                                     self.kron_original_base_ylim[1] - dy)
-
-                    # Temporarily swap base limits to calculate Kron canvas limits
-                    saved_base_xlim = self.base_xlim
-                    saved_base_ylim = self.base_ylim
-                    self.base_xlim = self.kron_original_base_xlim
-                    self.base_ylim = self.kron_original_base_ylim
-
-                    # Update the Kron canvas view using the standard methods
-                    self.kron_canvas.ax.set_xlim(*self._get_xlim())
-                    self.kron_canvas.ax.set_ylim(*self._get_ylim())
-                    self.kron_canvas.draw_idle()
-
-                    # Restore original base limits
-                    self.base_xlim = saved_base_xlim
-                    self.base_ylim = saved_base_ylim
-            else:
-                # Panning main canvas
-                self.base_xlim = (self.base_xlim[0] - dx, self.base_xlim[1] - dx)
-                self.base_ylim = (self.base_ylim[0] - dy, self.base_ylim[1] - dy)
-                # Update main canvas view
-                self.canvas.ax.set_xlim(*self._get_xlim())
-                self.canvas.ax.set_ylim(*self._get_ylim())
-                self.canvas.draw_idle()
-
-            # Keep pan_start fixed in world coordinates for smoother panning
-            # (don't update pan_start)
+            self._handle_pan(event)
             return
 
         # Handle selection window drawing
@@ -13555,12 +13496,58 @@ class Graphulator(QMainWindow):
             return
 
         # Handle node placement preview
-        if self.placement_mode not in ['single', 'continuous', 'continuous_duplicate']:
-            return
+        if self.placement_mode in ['single', 'continuous', 'continuous_duplicate']:
+            self._draw_placement_preview(event)
 
+    def _handle_pan(self, event):
+        """Handle canvas panning during mouse motion."""
+        dx = event.xdata - self.pan_start[0]
+        dy = event.ydata - self.pan_start[1]
+
+        if hasattr(self, 'scattering_canvas') and self.scattering_canvas and event.inaxes == self.scattering_canvas.ax:
+            # Panning Scattering canvas
+            if hasattr(self, 'scattering_original_base_xlim'):
+                self.scattering_original_base_xlim = (self.scattering_original_base_xlim[0] - dx,
+                                                       self.scattering_original_base_xlim[1] - dx)
+                self.scattering_original_base_ylim = (self.scattering_original_base_ylim[0] - dy,
+                                                       self.scattering_original_base_ylim[1] - dy)
+                saved_base_xlim = self.base_xlim
+                saved_base_ylim = self.base_ylim
+                self.base_xlim = self.scattering_original_base_xlim
+                self.base_ylim = self.scattering_original_base_ylim
+                self.scattering_canvas.ax.set_xlim(*self._get_xlim())
+                self.scattering_canvas.ax.set_ylim(*self._get_ylim())
+                self.scattering_canvas.draw_idle()
+                self.base_xlim = saved_base_xlim
+                self.base_ylim = saved_base_ylim
+        elif event.inaxes == self.kron_canvas.ax:
+            # Panning Kron canvas
+            if hasattr(self, 'kron_original_base_xlim'):
+                self.kron_original_base_xlim = (self.kron_original_base_xlim[0] - dx,
+                                                 self.kron_original_base_xlim[1] - dx)
+                self.kron_original_base_ylim = (self.kron_original_base_ylim[0] - dy,
+                                                 self.kron_original_base_ylim[1] - dy)
+                saved_base_xlim = self.base_xlim
+                saved_base_ylim = self.base_ylim
+                self.base_xlim = self.kron_original_base_xlim
+                self.base_ylim = self.kron_original_base_ylim
+                self.kron_canvas.ax.set_xlim(*self._get_xlim())
+                self.kron_canvas.ax.set_ylim(*self._get_ylim())
+                self.kron_canvas.draw_idle()
+                self.base_xlim = saved_base_xlim
+                self.base_ylim = saved_base_ylim
+        else:
+            # Panning main canvas
+            self.base_xlim = (self.base_xlim[0] - dx, self.base_xlim[1] - dx)
+            self.base_ylim = (self.base_ylim[0] - dy, self.base_ylim[1] - dy)
+            self.canvas.ax.set_xlim(*self._get_xlim())
+            self.canvas.ax.set_ylim(*self._get_ylim())
+            self.canvas.draw_idle()
+
+    def _draw_placement_preview(self, event):
+        """Draw ghost preview for node placement."""
         snap_x, snap_y = self._snap_to_grid(event.xdata, event.ydata)
 
-        # Check if occupied
         occupied = any(
             np.isclose(node['pos'][0], snap_x, atol=0.01) and
             np.isclose(node['pos'][1], snap_y, atol=0.01)
@@ -13568,36 +13555,19 @@ class Graphulator(QMainWindow):
         )
 
         # Remove old preview elements
-        if self.preview_patch:
-            try:
-                self.preview_patch.remove()
-            except:
-                pass
+        for attr in ('preview_patch', 'preview_text', 'preview_outline'):
+            obj = getattr(self, attr, None)
+            if obj:
+                try:
+                    obj.remove()
+                except:
+                    pass
 
-        if self.preview_text:
-            try:
-                self.preview_text.remove()
-            except:
-                pass
-
-        if self.preview_outline:
-            try:
-                self.preview_outline.remove()
-            except:
-                pass
-
-        # Get predicted properties for the next node
         ghost_props = self._get_ghost_node_properties()
-
-        # Calculate node radius with size multiplier
         ghost_radius = self.node_radius * ghost_props['node_size_mult']
-
-        # Ghost preview alpha (reduced from normal to indicate it's a preview)
         ghost_alpha = 0.5
 
-        # Draw preview - use actual color when not occupied, red when occupied
         if occupied:
-            # Position occupied - show red warning circle
             self.preview_patch = patches.Circle(
                 (snap_x, snap_y), ghost_radius,
                 fill=True, facecolor='red', edgecolor='darkred',
@@ -13605,8 +13575,8 @@ class Graphulator(QMainWindow):
             )
             self.canvas.ax.add_patch(self.preview_patch)
             self.preview_outline = None
+            self.preview_text = None
         else:
-            # Position available - show actual node appearance
             self.preview_patch = patches.Circle(
                 (snap_x, snap_y), ghost_radius,
                 fill=True, facecolor=ghost_props['color'], edgecolor='gray',
@@ -13614,7 +13584,6 @@ class Graphulator(QMainWindow):
             )
             self.canvas.ax.add_patch(self.preview_patch)
 
-            # Draw outline preview if enabled
             if ghost_props['outline_enabled']:
                 self.preview_outline = patches.Circle(
                     (snap_x, snap_y), ghost_radius,
@@ -13627,10 +13596,8 @@ class Graphulator(QMainWindow):
             else:
                 self.preview_outline = None
 
-            # Format label text with same bold sans-serif styling as actual nodes
+            # Format label with same bold sans-serif styling as actual nodes
             label_text = ghost_props['label']
-
-            # Choose font command based on rendering mode (same as _draw_nodes)
             if self.use_latex:
                 def apply_font(text):
                     return r'\mathbf{' + text + '}'
@@ -13638,9 +13605,7 @@ class Graphulator(QMainWindow):
                 def apply_font(text):
                     return r'\mathbf{\mathsf{' + text + '}}'
 
-            # Handle subscripts/superscripts (same logic as _draw_nodes)
             parts = re.split(r'([_^])', label_text)
-
             formatted_parts = []
             i = 0
             while i < len(parts):
@@ -13662,15 +13627,11 @@ class Graphulator(QMainWindow):
                     i += 1
 
             formatted_label = ''.join(formatted_parts)
-
-            # Add conjugation marker if applicable
             if ghost_props['conj']:
                 display_text = rf"${formatted_label}\ast$"
             else:
                 display_text = rf"${formatted_label}$"
 
-            # Calculate font size proportional to node radius (similar to _draw_nodes)
-            # Use a simplified calculation for the preview
             fig = self.canvas.fig
             ax = self.canvas.ax
             xlim = ax.get_xlim()
@@ -13690,7 +13651,7 @@ class Graphulator(QMainWindow):
         self.canvas.draw_idle()
 
     def _on_click(self, event):
-        """Handle mouse click"""
+        """Handle mouse click - dispatches to mode-specific handlers"""
         # Check if event came from main canvas, scattering canvas, or kron canvas
         valid_axes = [self.canvas.ax, self.kron_canvas.ax]
         if hasattr(self, 'scattering_canvas') and self.scattering_canvas:
@@ -13707,893 +13668,868 @@ class Graphulator(QMainWindow):
 
         # Right button - show context menu if on node/edge, otherwise start zoom window
         if event.button == 3:
-            clicked_node = self._find_node_at_position(event.xdata, event.ydata)
-            if clicked_node:
-                # Show context menu for color selection
-                self._show_color_context_menu(event, clicked_node)
-                return
-
-            clicked_edge = self._find_edge_at_position(event.xdata, event.ydata)
-            if clicked_edge:
-                # Show context menu for edge width selection
-                self._show_edge_context_menu(event, clicked_edge)
-                return
-
-            # Start zoom window if not on node or edge
-            self.zoom_window = True
-            self.zoom_window_start = (event.xdata, event.ydata)
+            self._on_right_click(event)
             return
 
         # Left button - node placement, editing, dragging, or selection
         if event.button == 1:
-            # Check for double-click on node (for editing)
-            current_time = time.time()
-            clicked_node = None
+            self._on_left_click(event)
 
-            # Use Qt's keyboard modifiers for reliable Shift/Ctrl detection
-            modifiers = QApplication.keyboardModifiers()
-            shift_pressed = modifiers & Qt.ShiftModifier
-            ctrl_pressed = modifiers & Qt.ControlModifier
+    def _on_right_click(self, event):
+        """Handle right-click: context menu on node/edge, or start zoom window."""
+        clicked_node = self._find_node_at_position(event.xdata, event.ydata)
+        if clicked_node:
+            self._show_color_context_menu(event, clicked_node)
+            return
 
-            # Basis ordering mode - select nodes in order
-            if self.basis_ordering_mode:
-                clicked_node = self._find_node_at_position(event.xdata, event.ydata)
-                if clicked_node:
-                    if clicked_node in self.basis_order:
-                        print(f"Node '{clicked_node['label']}' is already in basis order")
+        clicked_edge = self._find_edge_at_position(event.xdata, event.ydata)
+        if clicked_edge:
+            self._show_edge_context_menu(event, clicked_edge)
+            return
+
+        # Start zoom window if not on node or edge
+        self.zoom_window = True
+        self.zoom_window_start = (event.xdata, event.ydata)
+
+    def _on_left_click(self, event):
+        """Handle left-click: dispatch to active mode handler."""
+        # Use Qt's keyboard modifiers for reliable Shift/Ctrl detection
+        modifiers = QApplication.keyboardModifiers()
+        shift_pressed = modifiers & Qt.ShiftModifier
+
+        # Basis ordering mode - select nodes in order
+        if self.basis_ordering_mode:
+            self._on_click_basis_ordering(event)
+            return
+
+        # Kron reduction mode - toggle node selection (keep vs eliminate)
+        if self.kron_mode:
+            self._on_click_kron_mode(event)
+            return
+
+        # Conjugation mode - toggle conjugation on clicked nodes
+        if self.placement_mode == 'conjugation':
+            self._on_click_conjugation(event)
+            return
+
+        # Edge mode - connect two nodes
+        if self.placement_mode in ['edge', 'edge_continuous']:
+            self._on_click_edge_mode(event)
+            return
+
+        # Normal mode (no placement) - select, drag, double-click
+        if self.placement_mode is None:
+            self._on_click_normal_mode(event, shift_pressed)
+            return
+
+        # Node placement mode
+        if self.placement_mode in ['single', 'continuous', 'continuous_duplicate']:
+            self._on_click_placement_mode(event)
+
+    def _on_click_basis_ordering(self, event):
+        """Handle click in basis ordering mode - select nodes in order."""
+        clicked_node = self._find_node_at_position(event.xdata, event.ydata)
+        if clicked_node:
+            if clicked_node in self.basis_order:
+                print(f"Node '{clicked_node['label']}' is already in basis order")
+            else:
+                self.basis_order_undo_stack.clear()
+                self.basis_order.append(clicked_node)
+                print(f"Added '{clicked_node['label']}' to basis (position {len(self.basis_order)})")
+                self._update_plot()
+                self.properties_panel._update_basis_display()
+
+    def _on_click_kron_mode(self, event):
+        """Handle click in Kron reduction mode - toggle keep/eliminate."""
+        clicked_node = self._find_node_at_position(event.xdata, event.ydata)
+        if clicked_node:
+            if clicked_node in self.kron_selected_nodes:
+                self.kron_selected_nodes.remove(clicked_node)
+                print(f"Deselected '{clicked_node['label']}' - will be ELIMINATED")
+            else:
+                self.kron_selected_nodes.append(clicked_node)
+                print(f"Selected '{clicked_node['label']}' - will be KEPT")
+
+            self.commit_kron_action.setEnabled(len(self.kron_selected_nodes) > 0)
+            self._update_plot()
+            self.properties_panel._update_kron_matrix_display()
+            self.properties_panel._update_basis_display()
+
+    def _on_click_conjugation(self, event):
+        """Handle click in conjugation mode - toggle node conjugation."""
+        clicked_node = self._find_node_at_position(event.xdata, event.ydata)
+        if clicked_node:
+            self._save_state()
+            clicked_node['conj'] = not clicked_node.get('conj', False)
+            conj_state = "conjugated" if clicked_node['conj'] else "unconjugated"
+            print(f"Node '{clicked_node['label']}' is now {conj_state}")
+            self._update_edge_styles_for_node(clicked_node)
+            self._update_conjugate_pair_constraints()
+            self._update_plot()
+
+    def _on_click_edge_mode(self, event):
+        """Handle click in edge mode - connect two nodes."""
+        clicked_node = self._find_node_at_position(event.xdata, event.ydata)
+        if clicked_node:
+            if self.edge_mode_first_node is None:
+                # First node selected
+                self.edge_mode_first_node = clicked_node
+                print(f"First node selected: '{clicked_node['label']}'. Click another node to connect.")
+                self._update_plot()
+            else:
+                # Second node selected - show dialog or use last settings
+                second_node = clicked_node
+                is_self_loop = (self.edge_mode_first_node == second_node)
+
+                # Determine style based on conjugation (always auto-determined)
+                node1_conj = self.edge_mode_first_node.get('conj', False)
+                node2_conj = second_node.get('conj', False)
+                same_conj = (node1_conj == node2_conj)
+                style = 'single' if same_conj else 'double'
+
+                if is_self_loop:
+                    # Self-loop: inherit from last_selfloop_props if available
+                    if self.last_selfloop_props:
+                        result = {
+                            'label1': '',
+                            'label2': '',
+                            'linewidth_mult': self.last_selfloop_props.get('linewidth_mult', config.DEFAULT_EDGE_LINEWIDTH_MULT),
+                            'label_size_mult': 1.0,
+                            'label_offset_mult': 1.0,
+                            'style': 'loopy',
+                            'direction': 'both',
+                            'flip_labels': False,
+                            'looptheta': 30,
+                            'selfloopangle': self.last_selfloop_props.get('selfloopangle', config.DEFAULT_SELFLOOP_ANGLE),
+                            'selfloopscale': self.last_selfloop_props.get('selfloopscale', config.DEFAULT_SELFLOOP_SCALE),
+                            'flip': self.last_selfloop_props.get('flip', config.DEFAULT_SELFLOOP_FLIP),
+                            'arrowlengthsc': self.last_selfloop_props.get('arrowlengthsc', config.DEFAULT_SELFLOOP_ARROWLENGTH)
+                        }
                     else:
-                        # Clear redo stack when making a new selection
-                        self.basis_order_undo_stack.clear()
-                        self.basis_order.append(clicked_node)
-                        print(f"Added '{clicked_node['label']}' to basis (position {len(self.basis_order)})")
-                        self._update_plot()
-                        self.properties_panel._update_basis_display()
-                return
-
-            # Kron reduction mode - toggle node selection (keep vs eliminate)
-            if self.kron_mode:
-                clicked_node = self._find_node_at_position(event.xdata, event.ydata)
-                if clicked_node:
-                    if clicked_node in self.kron_selected_nodes:
-                        # Deselect: will be eliminated
-                        self.kron_selected_nodes.remove(clicked_node)
-                        print(f"Deselected '{clicked_node['label']}' - will be ELIMINATED")
+                        # Use defaults for first self-loop
+                        result = {
+                            'label1': '',
+                            'label2': '',
+                            'linewidth_mult': config.DEFAULT_EDGE_LINEWIDTH_MULT,
+                            'label_size_mult': 1.0,
+                            'label_offset_mult': 1.0,
+                            'style': 'loopy',
+                            'direction': 'both',
+                            'flip_labels': False,
+                            'looptheta': 30,
+                            'selfloopangle': config.DEFAULT_SELFLOOP_ANGLE,
+                            'selfloopscale': config.DEFAULT_SELFLOOP_SCALE,
+                            'flip': config.DEFAULT_SELFLOOP_FLIP,
+                            'arrowlengthsc': config.DEFAULT_SELFLOOP_ARROWLENGTH
+                        }
+                    # Store for next self-loop
+                    self.last_selfloop_props = result.copy()
+                else:
+                    # Regular edge: inherit from last_edge_props if available
+                    if self.last_edge_props:
+                        result = {
+                            'label1': '',
+                            'label2': '',
+                            'linewidth_mult': self.last_edge_props.get('linewidth_mult', config.DEFAULT_EDGE_LINEWIDTH_MULT),
+                            'label_size_mult': 1.0,
+                            'label_offset_mult': 1.0,
+                            'style': style,  # Auto-determined from conjugation
+                            'direction': self.last_edge_props.get('direction', EdgeInputDialog.last_direction),
+                            'flip_labels': False,
+                            'looptheta': self.last_edge_props.get('looptheta', 30),
+                            'selfloopangle': None,
+                            'selfloopscale': None,
+                            'flip': None,
+                            'arrowlengthsc': 1.0
+                        }
                     else:
-                        # Select: will be kept
-                        self.kron_selected_nodes.append(clicked_node)
-                        print(f"Selected '{clicked_node['label']}' - will be KEPT")
+                        # Use defaults for first edge
+                        result = {
+                            'label1': '',
+                            'label2': '',
+                            'linewidth_mult': config.DEFAULT_EDGE_LINEWIDTH_MULT,
+                            'label_size_mult': 1.0,
+                            'label_offset_mult': 1.0,
+                            'style': style,  # Auto-determined from conjugation
+                            'direction': EdgeInputDialog.last_direction,
+                            'flip_labels': False,
+                            'looptheta': 30,
+                            'selfloopangle': None,
+                            'selfloopscale': None,
+                            'flip': None,
+                            'arrowlengthsc': 1.0
+                        }
+                    # Store for next regular edge
+                    self.last_edge_props = result.copy()
 
-                    # Enable/disable commit action based on whether at least one node is selected
-                    self.commit_kron_action.setEnabled(len(self.kron_selected_nodes) > 0)
-
-                    self._update_plot()
-                    # Update Kron matrix display and basis display
-                    self.properties_panel._update_kron_matrix_display()
-                    self.properties_panel._update_basis_display()
-                return
-
-            # Conjugation mode - toggle conjugation on clicked nodes (handle before other modes)
-            if self.placement_mode == 'conjugation':
-                clicked_node = self._find_node_at_position(event.xdata, event.ydata)
-                if clicked_node:
+                if result:
                     self._save_state()
-                    # Toggle conjugation state
-                    clicked_node['conj'] = not clicked_node.get('conj', False)
-                    conj_state = "conjugated" if clicked_node['conj'] else "unconjugated"
-                    print(f"Node '{clicked_node['label']}' is now {conj_state}")
-                    # Update edge styles for edges connected to this node
-                    self._update_edge_styles_for_node(clicked_node)
-                    # Update conjugate pair constraints (may create or dissolve constraint groups)
-                    self._update_conjugate_pair_constraints()
-                    self._update_plot()
-                return
 
-            # Edge mode - connect two nodes
-            if self.placement_mode in ['edge', 'edge_continuous']:
-                clicked_node = self._find_node_at_position(event.xdata, event.ydata)
-                if clicked_node:
-                    if self.edge_mode_first_node is None:
-                        # First node selected
-                        self.edge_mode_first_node = clicked_node
-                        print(f"First node selected: '{clicked_node['label']}'. Click another node to connect.")
-                        self._update_plot()
-                    else:
-                        # Second node selected - show dialog or use last settings
-                        second_node = clicked_node
-                        is_self_loop = (self.edge_mode_first_node == second_node)
-
-                        # Determine style based on conjugation (always auto-determined)
+                    # Override style based on current node conjugation states
+                    # (important for continuous mode and when conjugation changes)
+                    if not is_self_loop:
                         node1_conj = self.edge_mode_first_node.get('conj', False)
                         node2_conj = second_node.get('conj', False)
                         same_conj = (node1_conj == node2_conj)
-                        style = 'single' if same_conj else 'double'
+                        result['style'] = 'single' if same_conj else 'double'
+
+                    # Check if edge already exists between these nodes (in either direction)
+                    existing_edge = None
+                    for edge in self.edges:
+                        # Check both directions for regular edges
+                        if not is_self_loop:
+                            if ((edge['from_node_id'] == self.edge_mode_first_node['node_id'] and
+                                 edge['to_node_id'] == second_node['node_id']) or
+                                (edge['from_node_id'] == second_node['node_id'] and
+                                 edge['to_node_id'] == self.edge_mode_first_node['node_id'])):
+                                existing_edge = edge
+                                break
+                        # Check for existing self-loop
+                        else:
+                            if (edge['is_self_loop'] and
+                                edge['from_node_id'] == self.edge_mode_first_node['node_id']):
+                                existing_edge = edge
+                                break
+
+                    # Update existing edge or create new one
+                    if existing_edge:
+                        # Replace existing edge properties
+                        existing_edge['from_node'] = self.edge_mode_first_node
+                        existing_edge['to_node'] = second_node
+                        existing_edge['from_node_id'] = self.edge_mode_first_node['node_id']
+                        existing_edge['to_node_id'] = second_node['node_id']
+                        existing_edge['label1'] = result['label1']
+                        existing_edge['label2'] = result['label2']
+                        existing_edge['linewidth_mult'] = result['linewidth_mult']
+                        existing_edge['label_size_mult'] = result['label_size_mult']
+                        existing_edge['label_offset_mult'] = result['label_offset_mult']
+                        existing_edge['style'] = result['style']
+                        existing_edge['direction'] = result['direction']
+                        existing_edge['flip_labels'] = result.get('flip_labels', False)
+                        existing_edge['is_self_loop'] = is_self_loop
+                        # Self-loop specific parameters
+                        if is_self_loop:
+                            existing_edge['selfloopangle'] = result.get('selfloopangle', 0)
+                            existing_edge['selfloopscale'] = result.get('selfloopscale', 1.0)
+                            existing_edge['arrowlengthsc'] = result.get('arrowlengthsc', 1.0)
+                            existing_edge['flip'] = result.get('flip', False)
+                        if is_self_loop:
+                            print(f"Replaced self-loop on node '{self.edge_mode_first_node['label']}'")
+                        else:
+                            print(f"Replaced edge: '{self.edge_mode_first_node['label']}' ↔ '{second_node['label']}'")
+                    else:
+                        # Create new edge
+                        edge = {
+                            'from_node': self.edge_mode_first_node,
+                            'to_node': second_node,
+                            'from_node_id': self.edge_mode_first_node['node_id'],
+                            'to_node_id': second_node['node_id'],
+                            'label1': result['label1'],
+                            'label2': result['label2'],
+                            'linewidth_mult': result['linewidth_mult'],
+                            'label_size_mult': result['label_size_mult'],
+                            'label_offset_mult': result['label_offset_mult'],
+                            'style': result['style'],
+                            'direction': result['direction'],
+                            'flip_labels': result.get('flip_labels', False),
+                            'looptheta': result.get('looptheta', 30),
+                            'is_self_loop': is_self_loop
+                        }
+                        # Self-loop specific parameters
+                        if is_self_loop:
+                            edge['selfloopangle'] = result.get('selfloopangle', 0)
+                            edge['selfloopscale'] = result.get('selfloopscale', 1.0)
+                            edge['arrowlengthsc'] = result.get('arrowlengthsc', 1.0)
+                            edge['flip'] = result.get('flip', False)
+                        self.edges.append(edge)
+
+                        # Invalidate Kron reduction and scattering data since graph was modified
+                        self._invalidate_kron_reduction()
+                        self._invalidate_scattering_data()
+
+                        # Auto-update matrix display
+                        if hasattr(self, 'properties_panel'):
+                            self.properties_panel._update_matrix_display()
 
                         if is_self_loop:
-                            # Self-loop: inherit from last_selfloop_props if available
-                            if self.last_selfloop_props:
-                                result = {
-                                    'label1': '',
-                                    'label2': '',
-                                    'linewidth_mult': self.last_selfloop_props.get('linewidth_mult', config.DEFAULT_EDGE_LINEWIDTH_MULT),
-                                    'label_size_mult': 1.0,
-                                    'label_offset_mult': 1.0,
-                                    'style': 'loopy',
-                                    'direction': 'both',
-                                    'flip_labels': False,
-                                    'looptheta': 30,
-                                    'selfloopangle': self.last_selfloop_props.get('selfloopangle', config.DEFAULT_SELFLOOP_ANGLE),
-                                    'selfloopscale': self.last_selfloop_props.get('selfloopscale', config.DEFAULT_SELFLOOP_SCALE),
-                                    'flip': self.last_selfloop_props.get('flip', config.DEFAULT_SELFLOOP_FLIP),
-                                    'arrowlengthsc': self.last_selfloop_props.get('arrowlengthsc', config.DEFAULT_SELFLOOP_ARROWLENGTH)
-                                }
-                            else:
-                                # Use defaults for first self-loop
-                                result = {
-                                    'label1': '',
-                                    'label2': '',
-                                    'linewidth_mult': config.DEFAULT_EDGE_LINEWIDTH_MULT,
-                                    'label_size_mult': 1.0,
-                                    'label_offset_mult': 1.0,
-                                    'style': 'loopy',
-                                    'direction': 'both',
-                                    'flip_labels': False,
-                                    'looptheta': 30,
-                                    'selfloopangle': config.DEFAULT_SELFLOOP_ANGLE,
-                                    'selfloopscale': config.DEFAULT_SELFLOOP_SCALE,
-                                    'flip': config.DEFAULT_SELFLOOP_FLIP,
-                                    'arrowlengthsc': config.DEFAULT_SELFLOOP_ARROWLENGTH
-                                }
-                            # Store for next self-loop
-                            self.last_selfloop_props = result.copy()
+                            print(f"Added self-loop to node '{self.edge_mode_first_node['label']}'")
                         else:
-                            # Regular edge: inherit from last_edge_props if available
-                            if self.last_edge_props:
-                                result = {
-                                    'label1': '',
-                                    'label2': '',
-                                    'linewidth_mult': self.last_edge_props.get('linewidth_mult', config.DEFAULT_EDGE_LINEWIDTH_MULT),
-                                    'label_size_mult': 1.0,
-                                    'label_offset_mult': 1.0,
-                                    'style': style,  # Auto-determined from conjugation
-                                    'direction': self.last_edge_props.get('direction', EdgeInputDialog.last_direction),
-                                    'flip_labels': False,
-                                    'looptheta': self.last_edge_props.get('looptheta', 30),
-                                    'selfloopangle': None,
-                                    'selfloopscale': None,
-                                    'flip': None,
-                                    'arrowlengthsc': 1.0
-                                }
-                            else:
-                                # Use defaults for first edge
-                                result = {
-                                    'label1': '',
-                                    'label2': '',
-                                    'linewidth_mult': config.DEFAULT_EDGE_LINEWIDTH_MULT,
-                                    'label_size_mult': 1.0,
-                                    'label_offset_mult': 1.0,
-                                    'style': style,  # Auto-determined from conjugation
-                                    'direction': EdgeInputDialog.last_direction,
-                                    'flip_labels': False,
-                                    'looptheta': 30,
-                                    'selfloopangle': None,
-                                    'selfloopscale': None,
-                                    'flip': None,
-                                    'arrowlengthsc': 1.0
-                                }
-                            # Store for next regular edge
-                            self.last_edge_props = result.copy()
+                            print(f"Added edge: '{self.edge_mode_first_node['label']}' → '{second_node['label']}'")
+                            # Check if this edge connects previously disconnected components
+                            # and merge any linked constraint groups
+                            self._merge_linked_constraint_groups()
 
-                        if result:
-                            self._save_state()
+                # Exit single edge mode after placement, continue in continuous mode
+                if self.placement_mode == 'edge':
+                    self.placement_mode = None
+                    print("Edge placed - exited edge mode")
 
-                            # Override style based on current node conjugation states
-                            # (important for continuous mode and when conjugation changes)
-                            if not is_self_loop:
-                                node1_conj = self.edge_mode_first_node.get('conj', False)
-                                node2_conj = second_node.get('conj', False)
-                                same_conj = (node1_conj == node2_conj)
-                                result['style'] = 'single' if same_conj else 'double'
+                # Reset for next edge
+                self.edge_mode_first_node = None
+                self._update_plot()
+        return
 
-                            # Check if edge already exists between these nodes (in either direction)
-                            existing_edge = None
-                            for edge in self.edges:
-                                # Check both directions for regular edges
-                                if not is_self_loop:
-                                    if ((edge['from_node_id'] == self.edge_mode_first_node['node_id'] and
-                                         edge['to_node_id'] == second_node['node_id']) or
-                                        (edge['from_node_id'] == second_node['node_id'] and
-                                         edge['to_node_id'] == self.edge_mode_first_node['node_id'])):
-                                        existing_edge = edge
-                                        break
-                                # Check for existing self-loop
-                                else:
-                                    if (edge['is_self_loop'] and
-                                        edge['from_node_id'] == self.edge_mode_first_node['node_id']):
-                                        existing_edge = edge
-                                        break
+    def _on_click_normal_mode(self, event, shift_pressed):
+        """Handle click in normal mode - select, drag, or double-click."""
+        current_time = time.time()
 
-                            # Update existing edge or create new one
-                            if existing_edge:
-                                # Replace existing edge properties
-                                existing_edge['from_node'] = self.edge_mode_first_node
-                                existing_edge['to_node'] = second_node
-                                existing_edge['from_node_id'] = self.edge_mode_first_node['node_id']
-                                existing_edge['to_node_id'] = second_node['node_id']
-                                existing_edge['label1'] = result['label1']
-                                existing_edge['label2'] = result['label2']
-                                existing_edge['linewidth_mult'] = result['linewidth_mult']
-                                existing_edge['label_size_mult'] = result['label_size_mult']
-                                existing_edge['label_offset_mult'] = result['label_offset_mult']
-                                existing_edge['style'] = result['style']
-                                existing_edge['direction'] = result['direction']
-                                existing_edge['flip_labels'] = result.get('flip_labels', False)
-                                existing_edge['is_self_loop'] = is_self_loop
-                                # Self-loop specific parameters
-                                if is_self_loop:
-                                    existing_edge['selfloopangle'] = result.get('selfloopangle', 0)
-                                    existing_edge['selfloopscale'] = result.get('selfloopscale', 1.0)
-                                    existing_edge['arrowlengthsc'] = result.get('arrowlengthsc', 1.0)
-                                    existing_edge['flip'] = result.get('flip', False)
-                                if is_self_loop:
-                                    print(f"Replaced self-loop on node '{self.edge_mode_first_node['label']}'")
-                                else:
-                                    print(f"Replaced edge: '{self.edge_mode_first_node['label']}' ↔ '{second_node['label']}'")
-                            else:
-                                # Create new edge
-                                edge = {
-                                    'from_node': self.edge_mode_first_node,
-                                    'to_node': second_node,
-                                    'from_node_id': self.edge_mode_first_node['node_id'],
-                                    'to_node_id': second_node['node_id'],
-                                    'label1': result['label1'],
-                                    'label2': result['label2'],
-                                    'linewidth_mult': result['linewidth_mult'],
-                                    'label_size_mult': result['label_size_mult'],
-                                    'label_offset_mult': result['label_offset_mult'],
-                                    'style': result['style'],
-                                    'direction': result['direction'],
-                                    'flip_labels': result.get('flip_labels', False),
-                                    'looptheta': result.get('looptheta', 30),
-                                    'is_self_loop': is_self_loop
-                                }
-                                # Self-loop specific parameters
-                                if is_self_loop:
-                                    edge['selfloopangle'] = result.get('selfloopangle', 0)
-                                    edge['selfloopscale'] = result.get('selfloopscale', 1.0)
-                                    edge['arrowlengthsc'] = result.get('arrowlengthsc', 1.0)
-                                    edge['flip'] = result.get('flip', False)
-                                self.edges.append(edge)
+        # Disable node manipulation on Kron canvas - it's read-only (computed data)
+        if event.inaxes == self.kron_canvas.ax:
+            return
 
-                                # Invalidate Kron reduction and scattering data since graph was modified
-                                self._invalidate_kron_reduction()
-                                self._invalidate_scattering_data()
+        clicked_node = self._find_node_at_position(event.xdata, event.ydata)
 
-                                # Auto-update matrix display
-                                if hasattr(self, 'properties_panel'):
-                                    self.properties_panel._update_matrix_display()
+        # Handle node selection with Shift key (do this before double-click check)
+        if clicked_node and shift_pressed:
+            if clicked_node in self.selected_nodes:
+                self.selected_nodes.remove(clicked_node)
+                print(f"Deselected node '{clicked_node['label']}'")
+            else:
+                self.selected_nodes.append(clicked_node)
+                print(f"Selected node '{clicked_node['label']}'")
+            # Don't update click tracking for shift-clicks
+            self._update_plot()
+            return
 
-                                if is_self_loop:
-                                    print(f"Added self-loop to node '{self.edge_mode_first_node['label']}'")
-                                else:
-                                    print(f"Added edge: '{self.edge_mode_first_node['label']}' → '{second_node['label']}'")
-                                    # Check if this edge connects previously disconnected components
-                                    # and merge any linked constraint groups
-                                    self._merge_linked_constraint_groups()
+        # Check if this is a double-click on node or edge
+        if self.last_click_pos:
+            time_diff = current_time - self.last_click_time
+            pos_diff = np.sqrt((event.xdata - self.last_click_pos[0])**2 +
+                              (event.ydata - self.last_click_pos[1])**2)
 
-                        # Exit single edge mode after placement, continue in continuous mode
-                        if self.placement_mode == 'edge':
-                            self.placement_mode = None
-                            print("Edge placed - exited edge mode")
+            if time_diff < self.double_click_threshold and pos_diff < 0.5:
+                # Double-click detected
+                # Determine which canvas was clicked based on event.inaxes
+                is_scattering_view = (hasattr(self, 'scattering_canvas') and
+                                     self.scattering_canvas and
+                                     event.inaxes == self.scattering_canvas.ax)
 
-                        # Reset for next edge
-                        self.edge_mode_first_node = None
-                        self._update_plot()
-                return
-
-            if self.placement_mode is None:
-                # Disable node manipulation on Kron canvas - it's read-only (computed data)
-                if event.inaxes == self.kron_canvas.ax:
-                    return
-
-                clicked_node = self._find_node_at_position(event.xdata, event.ydata)
-
-                # Handle node selection with Shift key (do this before double-click check)
-                if clicked_node and shift_pressed:
-                    if clicked_node in self.selected_nodes:
-                        self.selected_nodes.remove(clicked_node)
-                        print(f"Deselected node '{clicked_node['label']}'")
-                    else:
-                        self.selected_nodes.append(clicked_node)
-                        print(f"Selected node '{clicked_node['label']}'")
-                    # Don't update click tracking for shift-clicks
-                    self._update_plot()
-                    return
-
-                # Check if this is a double-click on node or edge
-                if self.last_click_pos:
-                    time_diff = current_time - self.last_click_time
-                    pos_diff = np.sqrt((event.xdata - self.last_click_pos[0])**2 +
-                                      (event.ydata - self.last_click_pos[1])**2)
-
-                    if time_diff < self.double_click_threshold and pos_diff < 0.5:
-                        # Double-click detected
-                        # Determine which canvas was clicked based on event.inaxes
-                        is_scattering_view = (hasattr(self, 'scattering_canvas') and
-                                             self.scattering_canvas and
-                                             event.inaxes == self.scattering_canvas.ax)
-
-                        if clicked_node:
-                            # In scattering view, show scattering parameter dialog
-                            if is_scattering_view:
-                                self._edit_scattering_node_parameters(clicked_node)
-                            else:
-                                # Edit node appearance (only in original graph view)
-                                self._edit_node(clicked_node)
-                        else:
-                            # Check for edge
-                            clicked_edge = self._find_edge_at_position(event.xdata, event.ydata)
-                            if clicked_edge:
-                                # In scattering view, show scattering parameter dialog
-                                if is_scattering_view:
-                                    self._edit_scattering_edge_parameters(clicked_edge)
-                                else:
-                                    # Edit edge appearance (only in original graph view)
-                                    self._edit_edge(clicked_edge)
-                        self.last_click_time = 0
-                        self.last_click_pos = None
-                        return
-
-                # Update click tracking
-                self.last_click_time = current_time
-                self.last_click_pos = (event.xdata, event.ydata)
-
-                # Single click on node - select and prepare for potential dragging
                 if clicked_node:
-                    # If clicking on an already selected node, prepare to drag the whole group
-                    if clicked_node in self.selected_nodes and len(self.selected_nodes) > 1:
-                        self.drag_pending_group = True
-                        self.drag_start_pos = (event.xdata, event.ydata)
-                        # Don't print yet - wait until actual drag starts
+                    # In scattering view, show scattering parameter dialog
+                    if is_scattering_view:
+                        self._edit_scattering_node_parameters(clicked_node)
                     else:
-                        # Select only this node and prepare to drag it
-                        if clicked_node not in self.selected_nodes:
-                            self.selected_nodes.clear()
-                            self.selected_edges.clear()  # Clear edge selection when selecting node
-                            self.selected_nodes.append(clicked_node)
-                            self._update_plot()
-                        self.drag_pending_node = clicked_node
-                        self.drag_start_pos = (event.xdata, event.ydata)
-                        # Don't print yet - wait until actual drag starts
-                    return
-
-                # Single click on edge (if no node was clicked) - select edge
-                if not clicked_node:
+                        # Edit node appearance (only in original graph view)
+                        self._edit_node(clicked_node)
+                else:
+                    # Check for edge
                     clicked_edge = self._find_edge_at_position(event.xdata, event.ydata)
                     if clicked_edge:
-                        # Toggle edge selection with Shift, otherwise select only this edge
-                        is_self_loop = clicked_edge.get('is_self_loop', False)
-                        from_label = clicked_edge['from_node']['label']
-                        to_label = clicked_edge['to_node']['label']
-
-                        if shift_pressed:
-                            if clicked_edge in self.selected_edges:
-                                self.selected_edges.remove(clicked_edge)
-                                if is_self_loop:
-                                    print(f"Deselected self-loop on '{from_label}'")
-                                else:
-                                    print(f"Deselected edge '{from_label}' → '{to_label}'")
-                            else:
-                                self.selected_edges.append(clicked_edge)
-                                if is_self_loop:
-                                    print(f"Selected self-loop on '{from_label}'")
-                                else:
-                                    print(f"Selected edge '{from_label}' → '{to_label}'")
+                        # In scattering view, show scattering parameter dialog
+                        if is_scattering_view:
+                            self._edit_scattering_edge_parameters(clicked_edge)
                         else:
-                            self.selected_nodes.clear()  # Clear node selection when selecting edge
-                            self.selected_edges.clear()
-                            self.selected_edges.append(clicked_edge)
-                            if is_self_loop:
-                                print(f"Selected self-loop on '{from_label}'")
-                            else:
-                                print(f"Selected edge '{from_label}' → '{to_label}'")
-                        self._update_plot()
-                        return
+                            # Edit edge appearance (only in original graph view)
+                            self._edit_edge(clicked_edge)
+                self.last_click_time = 0
+                self.last_click_pos = None
+                return
 
-                # Click on empty space - start selection window or clear selection
-                if not clicked_node:
+        # Update click tracking
+        self.last_click_time = current_time
+        self.last_click_pos = (event.xdata, event.ydata)
+
+        # Single click on node - select and prepare for potential dragging
+        if clicked_node:
+            # If clicking on an already selected node, prepare to drag the whole group
+            if clicked_node in self.selected_nodes and len(self.selected_nodes) > 1:
+                self.drag_pending_group = True
+                self.drag_start_pos = (event.xdata, event.ydata)
+                # Don't print yet - wait until actual drag starts
+            else:
+                # Select only this node and prepare to drag it
+                if clicked_node not in self.selected_nodes:
                     self.selected_nodes.clear()
-                    self.selected_edges.clear()
-                    self.selection_window = True
-                    self.selection_window_start = (event.xdata, event.ydata)
+                    self.selected_edges.clear()  # Clear edge selection when selecting node
+                    self.selected_nodes.append(clicked_node)
                     self._update_plot()
-                    return
+                self.drag_pending_node = clicked_node
+                self.drag_start_pos = (event.xdata, event.ydata)
+                # Don't print yet - wait until actual drag starts
+            return
 
-            # Node placement mode
-            if self.placement_mode in ['single', 'continuous', 'continuous_duplicate']:
-                snap_x, snap_y = self._snap_to_grid(event.xdata, event.ydata)
+        # Single click on edge (if no node was clicked) - select edge
+        if not clicked_node:
+            clicked_edge = self._find_edge_at_position(event.xdata, event.ydata)
+            if clicked_edge:
+                # Toggle edge selection with Shift, otherwise select only this edge
+                is_self_loop = clicked_edge.get('is_self_loop', False)
+                from_label = clicked_edge['from_node']['label']
+                to_label = clicked_edge['to_node']['label']
 
-                # Check if occupied
-                occupied = any(
-                    np.isclose(node['pos'][0], snap_x, atol=0.01) and
-                    np.isclose(node['pos'][1], snap_y, atol=0.01)
-                    for node in self.nodes
-                )
-
-                if occupied:
-                    print(f"Position ({snap_x:.3f}, {snap_y:.3f}) already occupied!")
-                    return
-
-                # Continuous duplicate mode - use last node properties
-                if self.placement_mode == 'continuous_duplicate':
-                    if self.last_node_props:
-                        self._save_state()
-
-                        # Auto-increment the label (or use 'A' if empty string)
-                        current_label = self.last_node_props['label']
-                        if current_label == '':
-                            # First node - start with 'A'
-                            next_label = 'A'
+                if shift_pressed:
+                    if clicked_edge in self.selected_edges:
+                        self.selected_edges.remove(clicked_edge)
+                        if is_self_loop:
+                            print(f"Deselected self-loop on '{from_label}'")
                         else:
-                            next_label = self._auto_increment_label(current_label)
-
-                        # Add node with duplicated properties and incremented label
-                        self.nodes.append({
-                            'node_id': self.node_id_counter,
-                            'label': next_label,
-                            'pos': (snap_x, snap_y),
-                            'color': self.last_node_props['color'],
-                            'color_key': self.last_node_props['color_key'],
-                            'node_size_mult': self.last_node_props['node_size_mult'],
-                            'label_size_mult': self.last_node_props['label_size_mult'],
-                            'conj': self.last_node_props['conj'],
-                            'outline_enabled': self.last_node_props.get('outline_enabled', False),
-                            'outline_color_key': self.last_node_props.get('outline_color_key', 'BLACK'),
-                            'outline_color': self.last_node_props.get('outline_color', 'black'),
-                            'outline_width': self.last_node_props.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH),
-                            'outline_alpha': self.last_node_props.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA)
-                        })
-                        self.node_counter += 1
-                        self.node_id_counter += 1
-
-                        # Invalidate Kron reduction and scattering data since graph was modified
-                        self._invalidate_kron_reduction()
-                        self._invalidate_scattering_data()
-
-                        # Auto-update matrix display and SymPy code
-                        if hasattr(self, 'properties_panel'):
-                            self.properties_panel._update_matrix_display()
-                            self.properties_panel._update_sympy_code_display()
-
-                        # Update last_node_props with the new label for next placement
-                        self.last_node_props['label'] = next_label
-
-                        print(f"✓ Node '{next_label}' ({self.last_node_props['color_key']}) placed at ({snap_x:.3f}, {snap_y:.3f})")
-                        self._update_plot()
-                    return
-
-                # Show dialog for single and continuous modes
-                # In continuous mode, inherit properties from last node
-                default_label = self._get_next_label()
-                if self.placement_mode == 'continuous' and self.last_node_props:
-                    # Use properties from last modified node
-                    dialog = NodeInputDialog(
-                        default_label=default_label,
-                        default_color=self.last_node_props['color_key'],
-                        parent=self
-                    )
-                    # Set the dialog defaults to match last node
-                    node_size_mult = self.last_node_props['node_size_mult']
-                    label_size_mult = self.last_node_props['label_size_mult']
-
-                    # Set slider values (sliders use percentage, e.g., 1.0 = 100)
-                    dialog.node_size_slider.setValue(int(node_size_mult * 100))
-                    dialog.label_size_slider.setValue(int(label_size_mult * 100))
-                    dialog.conj_checkbox.setChecked(self.last_node_props['conj'])
-
-                    # Also set outline properties if available
-                    if 'outline_enabled' in self.last_node_props:
-                        dialog.outline_checkbox.setChecked(self.last_node_props['outline_enabled'])
-                    if 'outline_color_key' in self.last_node_props:
-                        try:
-                            outline_idx = list(config.MYCOLORS.keys()).index(self.last_node_props['outline_color_key'])
-                            dialog.outline_color_combo.setCurrentIndex(outline_idx)
-                        except (ValueError, KeyError):
-                            pass
-                    if 'outline_width' in self.last_node_props:
-                        dialog.outline_width_slider.setValue(int(self.last_node_props['outline_width'] * 10))
-                    if 'outline_alpha' in self.last_node_props:
-                        dialog.outline_alpha_slider.setValue(int(self.last_node_props['outline_alpha'] * 100))
+                            print(f"Deselected edge '{from_label}' → '{to_label}'")
+                    else:
+                        self.selected_edges.append(clicked_edge)
+                        if is_self_loop:
+                            print(f"Selected self-loop on '{from_label}'")
+                        else:
+                            print(f"Selected edge '{from_label}' → '{to_label}'")
                 else:
-                    dialog = NodeInputDialog(default_label=default_label, default_color='BLUE', parent=self)
+                    self.selected_nodes.clear()  # Clear node selection when selecting edge
+                    self.selected_edges.clear()
+                    self.selected_edges.append(clicked_edge)
+                    if is_self_loop:
+                        print(f"Selected self-loop on '{from_label}'")
+                    else:
+                        print(f"Selected edge '{from_label}' → '{to_label}'")
+                self._update_plot()
+                return
 
-                if dialog.exec() == QDialog.Accepted:
-                    result = dialog.get_result()
-                    if result:
-                        # Add node
-                        new_node = {
-                            'node_id': self.node_id_counter,
-                            'label': result['label'],
-                            'pos': (snap_x, snap_y),
-                            'color': result['color'],
-                            'color_key': result['color_key'],
-                            'node_size_mult': result['node_size_mult'],
-                            'label_size_mult': result['label_size_mult'],
-                            'conj': result['conj'],
-                            'outline_enabled': result['outline_enabled'],
-                            'outline_color_key': result['outline_color_key'],
-                            'outline_color': result['outline_color'],
-                            'outline_width': result['outline_width'],
-                            'outline_alpha': result['outline_alpha']
-                        }
-                        self.nodes.append(new_node)
-                        self.node_counter += 1
-                        self.node_id_counter += 1
+        # Click on empty space - start selection window or clear selection
+        if not clicked_node:
+            self.selected_nodes.clear()
+            self.selected_edges.clear()
+            self.selection_window = True
+            self.selection_window_start = (event.xdata, event.ydata)
+            self._update_plot()
+            return
 
-                        # Invalidate Kron reduction and scattering data since graph was modified
-                        self._invalidate_kron_reduction()
-                        self._invalidate_scattering_data()
 
-                        # Auto-update matrix display and SymPy code
-                        if hasattr(self, 'properties_panel'):
-                            self.properties_panel._update_matrix_display()
-                            self.properties_panel._update_sympy_code_display()
+    def _on_click_placement_mode(self, event):
+        """Handle click in node placement mode."""
+        snap_x, snap_y = self._snap_to_grid(event.xdata, event.ydata)
 
-                        # Save properties for duplication
-                        self.last_node_props = {
-                            'label': result['label'],
-                            'color': result['color'],
-                            'color_key': result['color_key'],
-                            'node_size_mult': result['node_size_mult'],
-                            'label_size_mult': result['label_size_mult'],
-                            'conj': result['conj'],
-                            'outline_enabled': result['outline_enabled'],
-                            'outline_color_key': result['outline_color_key'],
-                            'outline_color': result['outline_color'],
-                            'outline_width': result['outline_width'],
-                            'outline_alpha': result['outline_alpha']
-                        }
+        # Check if occupied
+        occupied = any(
+            np.isclose(node['pos'][0], snap_x, atol=0.01) and
+            np.isclose(node['pos'][1], snap_y, atol=0.01)
+            for node in self.nodes
+        )
 
-                        print(f"✓ Node '{result['label']}' ({result['color_key']}) placed at ({snap_x:.3f}, {snap_y:.3f})")
+        if occupied:
+            print(f"Position ({snap_x:.3f}, {snap_y:.3f}) already occupied!")
+            return
 
-                        # Exit single mode
-                        if self.placement_mode == 'single':
-                            self.placement_mode = None
-                            print("Exited placement mode")
+        # Continuous duplicate mode - use last node properties
+        if self.placement_mode == 'continuous_duplicate':
+            if self.last_node_props:
+                self._save_state()
 
-                        self._update_plot()
+                # Auto-increment the label (or use 'A' if empty string)
+                current_label = self.last_node_props['label']
+                if current_label == '':
+                    # First node - start with 'A'
+                    next_label = 'A'
+                else:
+                    next_label = self._auto_increment_label(current_label)
+
+                # Add node with duplicated properties and incremented label
+                self.nodes.append({
+                    'node_id': self.node_id_counter,
+                    'label': next_label,
+                    'pos': (snap_x, snap_y),
+                    'color': self.last_node_props['color'],
+                    'color_key': self.last_node_props['color_key'],
+                    'node_size_mult': self.last_node_props['node_size_mult'],
+                    'label_size_mult': self.last_node_props['label_size_mult'],
+                    'conj': self.last_node_props['conj'],
+                    'outline_enabled': self.last_node_props.get('outline_enabled', False),
+                    'outline_color_key': self.last_node_props.get('outline_color_key', 'BLACK'),
+                    'outline_color': self.last_node_props.get('outline_color', 'black'),
+                    'outline_width': self.last_node_props.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH),
+                    'outline_alpha': self.last_node_props.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA)
+                })
+                self.node_counter += 1
+                self.node_id_counter += 1
+
+                # Invalidate Kron reduction and scattering data since graph was modified
+                self._invalidate_kron_reduction()
+                self._invalidate_scattering_data()
+
+                # Auto-update matrix display and SymPy code
+                if hasattr(self, 'properties_panel'):
+                    self.properties_panel._update_matrix_display()
+                    self.properties_panel._update_sympy_code_display()
+
+                # Update last_node_props with the new label for next placement
+                self.last_node_props['label'] = next_label
+
+                print(f"✓ Node '{next_label}' ({self.last_node_props['color_key']}) placed at ({snap_x:.3f}, {snap_y:.3f})")
+                self._update_plot()
+            return
+
+        # Show dialog for single and continuous modes
+        # In continuous mode, inherit properties from last node
+        default_label = self._get_next_label()
+        if self.placement_mode == 'continuous' and self.last_node_props:
+            # Use properties from last modified node
+            dialog = NodeInputDialog(
+                default_label=default_label,
+                default_color=self.last_node_props['color_key'],
+                parent=self
+            )
+            # Set the dialog defaults to match last node
+            node_size_mult = self.last_node_props['node_size_mult']
+            label_size_mult = self.last_node_props['label_size_mult']
+
+            # Set slider values (sliders use percentage, e.g., 1.0 = 100)
+            dialog.node_size_slider.setValue(int(node_size_mult * 100))
+            dialog.label_size_slider.setValue(int(label_size_mult * 100))
+            dialog.conj_checkbox.setChecked(self.last_node_props['conj'])
+
+            # Also set outline properties if available
+            if 'outline_enabled' in self.last_node_props:
+                dialog.outline_checkbox.setChecked(self.last_node_props['outline_enabled'])
+            if 'outline_color_key' in self.last_node_props:
+                try:
+                    outline_idx = list(config.MYCOLORS.keys()).index(self.last_node_props['outline_color_key'])
+                    dialog.outline_color_combo.setCurrentIndex(outline_idx)
+                except (ValueError, KeyError):
+                    pass
+            if 'outline_width' in self.last_node_props:
+                dialog.outline_width_slider.setValue(int(self.last_node_props['outline_width'] * 10))
+            if 'outline_alpha' in self.last_node_props:
+                dialog.outline_alpha_slider.setValue(int(self.last_node_props['outline_alpha'] * 100))
+        else:
+            dialog = NodeInputDialog(default_label=default_label, default_color='BLUE', parent=self)
+
+        if dialog.exec() == QDialog.Accepted:
+            result = dialog.get_result()
+            if result:
+                # Add node
+                new_node = {
+                    'node_id': self.node_id_counter,
+                    'label': result['label'],
+                    'pos': (snap_x, snap_y),
+                    'color': result['color'],
+                    'color_key': result['color_key'],
+                    'node_size_mult': result['node_size_mult'],
+                    'label_size_mult': result['label_size_mult'],
+                    'conj': result['conj'],
+                    'outline_enabled': result['outline_enabled'],
+                    'outline_color_key': result['outline_color_key'],
+                    'outline_color': result['outline_color'],
+                    'outline_width': result['outline_width'],
+                    'outline_alpha': result['outline_alpha']
+                }
+                self.nodes.append(new_node)
+                self.node_counter += 1
+                self.node_id_counter += 1
+
+                # Invalidate Kron reduction and scattering data since graph was modified
+                self._invalidate_kron_reduction()
+                self._invalidate_scattering_data()
+
+                # Auto-update matrix display and SymPy code
+                if hasattr(self, 'properties_panel'):
+                    self.properties_panel._update_matrix_display()
+                    self.properties_panel._update_sympy_code_display()
+
+                # Save properties for duplication
+                self.last_node_props = {
+                    'label': result['label'],
+                    'color': result['color'],
+                    'color_key': result['color_key'],
+                    'node_size_mult': result['node_size_mult'],
+                    'label_size_mult': result['label_size_mult'],
+                    'conj': result['conj'],
+                    'outline_enabled': result['outline_enabled'],
+                    'outline_color_key': result['outline_color_key'],
+                    'outline_color': result['outline_color'],
+                    'outline_width': result['outline_width'],
+                    'outline_alpha': result['outline_alpha']
+                }
+
+                print(f"✓ Node '{result['label']}' ({result['color_key']}) placed at ({snap_x:.3f}, {snap_y:.3f})")
+
+                # Exit single mode
+                if self.placement_mode == 'single':
+                    self.placement_mode = None
+                    print("Exited placement mode")
+
+                self._update_plot()
+
+
+    def _clear_drag_previews(self):
+        """Remove all drag preview patches, texts, and outlines."""
+        for patch in self.drag_preview_patches:
+            try:
+                patch.remove()
+            except:
+                pass
+        for text in self.drag_preview_texts:
+            try:
+                text.remove()
+            except:
+                pass
+        for outline in self.drag_preview_outlines:
+            try:
+                outline.remove()
+            except:
+                pass
+        self.drag_preview_patches.clear()
+        self.drag_preview_texts.clear()
+        self.drag_preview_outlines.clear()
 
     def _on_release(self, event):
-        """Handle mouse release"""
+        """Handle mouse release - dispatches to appropriate handler."""
         # Middle button - stop panning
         if event.button == 2:
             self.panning = False
             self.pan_start = None
             return
 
-        # Left button - complete selection window
-        if event.button == 1:
-            if self.selection_window and self.selection_window_start is not None:
-                if event.inaxes == self.canvas.ax:
-                    x0, y0 = self.selection_window_start
-                    x1, y1 = event.xdata, event.ydata
-
-                    # Ensure x0 < x1 and y0 < y1
-                    if x1 < x0:
-                        x0, x1 = x1, x0
-                    if y1 < y0:
-                        y0, y1 = y1, y0
-
-                    # Select all nodes within the rectangle
-                    for node in self.nodes:
-                        nx, ny = node['pos']
-                        if x0 <= nx <= x1 and y0 <= ny <= y1:
-                            if node not in self.selected_nodes:
-                                self.selected_nodes.append(node)
-
-                    # Select all edges whose midpoints are within the rectangle
-                    for edge in self.edges:
-                        from_pos = edge['from_node']['pos']
-                        to_pos = edge['to_node']['pos']
-                        mid_x = (from_pos[0] + to_pos[0]) / 2
-                        mid_y = (from_pos[1] + to_pos[1]) / 2
-                        if x0 <= mid_x <= x1 and y0 <= mid_y <= y1:
-                            if edge not in self.selected_edges:
-                                self.selected_edges.append(edge)
-
-                    msg = []
-                    if self.selected_nodes:
-                        msg.append(f"{len(self.selected_nodes)} node(s)")
-                    if self.selected_edges:
-                        msg.append(f"{len(self.selected_edges)} edge(s)")
-                    if msg:
-                        print(f"Selected {' and '.join(msg)}")
-
-                # Clean up
-                self.selection_window = False
-                self.selection_window_start = None
-                if self.selection_window_rect:
-                    try:
-                        self.selection_window_rect.remove()
-                    except:
-                        pass
-                    self.selection_window_rect = None
-
-                self._update_plot()
-                return
-
         # Right button - complete zoom window
         if event.button == 3:
-            if self.zoom_window and self.zoom_window_start is not None:
-                # Check if event is in main canvas, scattering canvas, or kron canvas
-                valid_canvas = (event.inaxes == self.canvas.ax or
-                               (hasattr(self, 'kron_canvas') and event.inaxes == self.kron_canvas.ax) or
-                               (hasattr(self, 'scattering_canvas') and self.scattering_canvas and event.inaxes == self.scattering_canvas.ax))
-
-                if valid_canvas:
-                    x0, y0 = self.zoom_window_start
-                    x1, y1 = event.xdata, event.ydata
-
-                    # Ensure x0 < x1 and y0 < y1
-                    if x1 < x0:
-                        x0, x1 = x1, x0
-                    if y1 < y0:
-                        y0, y1 = y1, y0
-
-                    # Check minimum size
-                    if abs(x1 - x0) > 0.5 and abs(y1 - y0) > 0.5:
-                        # Determine which canvas the zoom window was drawn on
-                        if hasattr(self, 'scattering_canvas') and self.scattering_canvas and event.inaxes == self.scattering_canvas.ax:
-                            # Zoom window on scattering canvas
-                            self.scattering_original_base_xlim = (x0, x1)
-                            self.scattering_original_base_ylim = (y0, y1)
-                            print(f"Scattering zoom window: ({x0:.3f}, {y0:.3f}) to ({x1:.3f}, {y1:.3f})")
-                        elif hasattr(self, 'kron_canvas') and event.inaxes == self.kron_canvas.ax:
-                            # Zoom window on kron canvas
-                            self.kron_original_base_xlim = (x0, x1)
-                            self.kron_original_base_ylim = (y0, y1)
-                            print(f"Kron zoom window: ({x0:.3f}, {y0:.3f}) to ({x1:.3f}, {y1:.3f})")
-                        else:
-                            # Zoom window on original canvas
-                            self.base_xlim = (x0, x1)
-                            self.base_ylim = (y0, y1)
-                            print(f"Zoom window: ({x0:.3f}, {y0:.3f}) to ({x1:.3f}, {y1:.3f})")
-
-                        self.zoom_level = 1.0
-
-                # Clean up
-                self.zoom_window = False
-                self.zoom_window_start = None
-                if self.zoom_window_rect:
-                    try:
-                        self.zoom_window_rect.remove()
-                    except:
-                        pass
-                    self.zoom_window_rect = None
-
-                self._update_both_canvases()
+            self._on_release_zoom_window(event)
             return
 
-        # Left button - complete group or single node dragging
+        # Left button
         if event.button == 1:
-            # Complete group dragging
+            if self.selection_window and self.selection_window_start is not None:
+                self._on_release_selection_window(event)
+                return
             if self.dragging_group and self.drag_start_pos is not None:
-                # Determine which canvas/nodes to use
-                if event.inaxes == self.kron_canvas.ax and hasattr(self, 'kron_graph') and self.kron_graph:
-                    target_nodes = self.kron_graph['nodes']
-                    target_canvas = self.kron_canvas
-                elif event.inaxes == self.canvas.ax:
-                    target_nodes = self.nodes
-                    target_canvas = self.canvas
-                else:
-                    target_nodes = None
-                    target_canvas = None
-
-                if target_nodes is not None:
-                    dx = event.xdata - self.drag_start_pos[0]
-                    dy = event.ydata - self.drag_start_pos[1]
-
-                    # Check if all new positions are valid
-                    new_positions = []
-                    all_valid = True
-                    for node in self.selected_nodes:
-                        new_x = node['pos'][0] + dx
-                        new_y = node['pos'][1] + dy
-                        snap_x, snap_y = self._snap_to_grid(new_x, new_y)
-
-                        # Check if occupied by non-selected node
-                        occupied = any(
-                            other_node not in self.selected_nodes and
-                            np.isclose(other_node['pos'][0], snap_x, atol=0.01) and
-                            np.isclose(other_node['pos'][1], snap_y, atol=0.01)
-                            for other_node in target_nodes
-                        )
-
-                        if occupied:
-                            all_valid = False
-                            break
-
-                        new_positions.append((node, snap_x, snap_y))
-
-                    # If all positions valid, move all nodes
-                    if all_valid:
-                        self._save_state()
-                        for node, snap_x, snap_y in new_positions:
-                            node['pos'] = (snap_x, snap_y)
-                        print(f"✓ Moved {len(self.selected_nodes)} node(s)")
-                    else:
-                        print(f"✗ Cannot move group - some positions occupied")
-
-                # Clean up
-                self.dragging_group = False
-                self.drag_pending_group = False
-                self.drag_start_pos = None
-                for patch in self.drag_preview_patches:
-                    try:
-                        patch.remove()
-                    except:
-                        pass
-                for text in self.drag_preview_texts:
-                    try:
-                        text.remove()
-                    except:
-                        pass
-                for outline in self.drag_preview_outlines:
-                    try:
-                        outline.remove()
-                    except:
-                        pass
-                self.drag_preview_patches.clear()
-                self.drag_preview_texts.clear()
-                self.drag_preview_outlines.clear()
-
-                # Update both canvases (only if we have a valid kron_graph)
-                if target_canvas == self.kron_canvas and hasattr(self, 'kron_graph') and self.kron_graph:
-                    saved_canvas = self.canvas
-                    saved_nodes = self.nodes
-                    saved_edges = self.edges
-
-                    self.canvas = self.kron_canvas
-                    self.nodes = self.kron_graph['nodes']
-                    self.edges = self.kron_graph['edges']
-                    self._update_plot()
-
-                    self.canvas = saved_canvas
-                    self.nodes = saved_nodes
-                    self.edges = saved_edges
-                else:
-                    self._update_plot()
+                self._on_release_group_drag(event)
                 return
-
-            # Complete single node dragging
             if self.dragging_node is not None:
-                # Determine which canvas/nodes to use
-                if event.inaxes == self.kron_canvas.ax and hasattr(self, 'kron_graph') and self.kron_graph:
-                    target_nodes = self.kron_graph['nodes']
-                    target_canvas = self.kron_canvas
-                elif event.inaxes == self.canvas.ax:
-                    target_nodes = self.nodes
-                    target_canvas = self.canvas
-                else:
-                    target_nodes = None
-                    target_canvas = None
-
-                if target_nodes is not None:
-                    snap_x, snap_y = self._snap_to_grid(event.xdata, event.ydata)
-
-                    # Check if occupied by another node
-                    occupied = any(
-                        node != self.dragging_node and
-                        np.isclose(node['pos'][0], snap_x, atol=0.01) and
-                        np.isclose(node['pos'][1], snap_y, atol=0.01)
-                        for node in target_nodes
-                    )
-
-                    if not occupied:
-                        self._save_state()
-                        old_pos = self.dragging_node['pos']
-                        self.dragging_node['pos'] = (snap_x, snap_y)
-
-                        # Also update the corresponding node in original_graph if it exists
-                        if hasattr(self, 'original_graph') and self.original_graph:
-                            for orig_node in self.original_graph['nodes']:
-                                if (orig_node['label'] == self.dragging_node['label'] and
-                                    orig_node.get('conj', False) == self.dragging_node.get('conj', False)):
-                                    orig_node['pos'] = (snap_x, snap_y)
-                                    break
-
-                        print(f"✓ Moved node '{self.dragging_node['label']}' from ({old_pos[0]:.3f}, {old_pos[1]:.3f}) to ({snap_x:.3f}, {snap_y:.3f})")
-                    else:
-                        print(f"✗ Cannot move node '{self.dragging_node['label']}' - position occupied")
-
-                # Clean up
-                self.dragging_node = None
-                self.drag_pending_node = None
-                self.drag_start_pos = None
-                for patch in self.drag_preview_patches:
-                    try:
-                        patch.remove()
-                    except:
-                        pass
-                for text in self.drag_preview_texts:
-                    try:
-                        text.remove()
-                    except:
-                        pass
-                for outline in self.drag_preview_outlines:
-                    try:
-                        outline.remove()
-                    except:
-                        pass
-                self.drag_preview_patches.clear()
-                self.drag_preview_texts.clear()
-                self.drag_preview_outlines.clear()
-
-                # Update appropriate canvas (only if we have a valid kron_graph)
-                if target_canvas == self.kron_canvas and hasattr(self, 'kron_graph') and self.kron_graph:
-                    saved_canvas = self.canvas
-                    saved_nodes = self.nodes
-                    saved_edges = self.edges
-
-                    self.canvas = self.kron_canvas
-                    self.nodes = self.kron_graph['nodes']
-                    self.edges = self.kron_graph['edges']
-                    self._update_plot()
-
-                    self.canvas = saved_canvas
-                    self.nodes = saved_nodes
-                    self.edges = saved_edges
-                else:
-                    self._update_plot()
-
-                    # Also update both canvases if Kron graph exists (when main canvas node is moved)
-                    # Need to sync node positions and re-render, matching _commit_kron_reduction()
-                    if hasattr(self, 'kron_graph') and self.kron_graph:
-                        # First, sync the Kron graph node positions with original graph
-                        # The kron_graph nodes are copies, so we need to update their positions
-                        for kron_node in self.kron_graph['nodes']:
-                            # Find the corresponding node in original_graph by label
-                            for orig_node in self.original_graph['nodes']:
-                                if orig_node['label'] == kron_node['label'] and orig_node.get('conj', False) == kron_node.get('conj', False):
-                                    kron_node['pos'] = orig_node['pos']
-                                    break
-
-                        saved_canvas = self.canvas
-                        saved_nodes = self.nodes
-                        saved_edges = self.edges
-                        saved_base_xlim = self.base_xlim
-                        saved_base_ylim = self.base_ylim
-
-                        # Render original graph to Original canvas (self.canvas is already the main canvas)
-                        self.nodes = self.original_graph['nodes']
-                        self.edges = self.original_graph['edges']
-                        self._do_plot_render()
-
-                        # Store/update the original base limits for Kron canvas
-                        self.kron_original_base_xlim = self.base_xlim
-                        self.kron_original_base_ylim = self.base_ylim
-
-                        # Render kron graph to Kron canvas
-                        self.canvas = self.kron_canvas
-                        self.nodes = self.kron_graph['nodes']
-                        self.edges = self.kron_graph['edges']
-                        self.base_xlim = self.kron_original_base_xlim
-                        self.base_ylim = self.kron_original_base_ylim
-                        self._do_plot_render()
-
-                        # Restore canvas and graph pointers
-                        self.canvas = saved_canvas
-                        self.nodes = saved_nodes
-                        self.edges = saved_edges
-                        self.base_xlim = saved_base_xlim
-                        self.base_ylim = saved_base_ylim
+                self._on_release_single_drag(event)
                 return
-
             # Clear pending drag states if mouse was released without dragging
             if self.drag_pending_node or self.drag_pending_group:
                 self.drag_pending_node = None
                 self.drag_pending_group = False
                 self.drag_start_pos = None
-                return
+
+    def _on_release_selection_window(self, event):
+        """Complete selection window and select enclosed nodes/edges."""
+        if event.inaxes == self.canvas.ax:
+            x0, y0 = self.selection_window_start
+            x1, y1 = event.xdata, event.ydata
+
+            if x1 < x0:
+                x0, x1 = x1, x0
+            if y1 < y0:
+                y0, y1 = y1, y0
+
+            for node in self.nodes:
+                nx, ny = node['pos']
+                if x0 <= nx <= x1 and y0 <= ny <= y1:
+                    if node not in self.selected_nodes:
+                        self.selected_nodes.append(node)
+
+            for edge in self.edges:
+                from_pos = edge['from_node']['pos']
+                to_pos = edge['to_node']['pos']
+                mid_x = (from_pos[0] + to_pos[0]) / 2
+                mid_y = (from_pos[1] + to_pos[1]) / 2
+                if x0 <= mid_x <= x1 and y0 <= mid_y <= y1:
+                    if edge not in self.selected_edges:
+                        self.selected_edges.append(edge)
+
+            msg = []
+            if self.selected_nodes:
+                msg.append(f"{len(self.selected_nodes)} node(s)")
+            if self.selected_edges:
+                msg.append(f"{len(self.selected_edges)} edge(s)")
+            if msg:
+                print(f"Selected {' and '.join(msg)}")
+
+        # Clean up
+        self.selection_window = False
+        self.selection_window_start = None
+        if self.selection_window_rect:
+            try:
+                self.selection_window_rect.remove()
+            except:
+                pass
+            self.selection_window_rect = None
+        self._update_plot()
+
+    def _on_release_zoom_window(self, event):
+        """Complete zoom window and apply zoom."""
+        if not (self.zoom_window and self.zoom_window_start is not None):
+            return
+
+        valid_canvas = (event.inaxes == self.canvas.ax or
+                       (hasattr(self, 'kron_canvas') and event.inaxes == self.kron_canvas.ax) or
+                       (hasattr(self, 'scattering_canvas') and self.scattering_canvas and event.inaxes == self.scattering_canvas.ax))
+
+        if valid_canvas:
+            x0, y0 = self.zoom_window_start
+            x1, y1 = event.xdata, event.ydata
+
+            if x1 < x0:
+                x0, x1 = x1, x0
+            if y1 < y0:
+                y0, y1 = y1, y0
+
+            if abs(x1 - x0) > 0.5 and abs(y1 - y0) > 0.5:
+                if hasattr(self, 'scattering_canvas') and self.scattering_canvas and event.inaxes == self.scattering_canvas.ax:
+                    self.scattering_original_base_xlim = (x0, x1)
+                    self.scattering_original_base_ylim = (y0, y1)
+                    print(f"Scattering zoom window: ({x0:.3f}, {y0:.3f}) to ({x1:.3f}, {y1:.3f})")
+                elif hasattr(self, 'kron_canvas') and event.inaxes == self.kron_canvas.ax:
+                    self.kron_original_base_xlim = (x0, x1)
+                    self.kron_original_base_ylim = (y0, y1)
+                    print(f"Kron zoom window: ({x0:.3f}, {y0:.3f}) to ({x1:.3f}, {y1:.3f})")
+                else:
+                    self.base_xlim = (x0, x1)
+                    self.base_ylim = (y0, y1)
+                    print(f"Zoom window: ({x0:.3f}, {y0:.3f}) to ({x1:.3f}, {y1:.3f})")
+
+                self.zoom_level = 1.0
+
+        # Clean up
+        self.zoom_window = False
+        self.zoom_window_start = None
+        if self.zoom_window_rect:
+            try:
+                self.zoom_window_rect.remove()
+            except:
+                pass
+            self.zoom_window_rect = None
+        self._update_both_canvases()
+
+    def _get_target_canvas_and_nodes(self, event):
+        """Determine target canvas and node list based on event axes."""
+        if event.inaxes == self.kron_canvas.ax and hasattr(self, 'kron_graph') and self.kron_graph:
+            return self.kron_canvas, self.kron_graph['nodes']
+        elif event.inaxes == self.canvas.ax:
+            return self.canvas, self.nodes
+        return None, None
+
+    def _update_target_canvas(self, target_canvas):
+        """Update the appropriate canvas after drag operations."""
+        if target_canvas == self.kron_canvas and hasattr(self, 'kron_graph') and self.kron_graph:
+            saved_canvas = self.canvas
+            saved_nodes = self.nodes
+            saved_edges = self.edges
+
+            self.canvas = self.kron_canvas
+            self.nodes = self.kron_graph['nodes']
+            self.edges = self.kron_graph['edges']
+            self._update_plot()
+
+            self.canvas = saved_canvas
+            self.nodes = saved_nodes
+            self.edges = saved_edges
+        else:
+            self._update_plot()
+
+    def _on_release_group_drag(self, event):
+        """Complete group node dragging."""
+        target_canvas, target_nodes = self._get_target_canvas_and_nodes(event)
+
+        if target_nodes is not None:
+            dx = event.xdata - self.drag_start_pos[0]
+            dy = event.ydata - self.drag_start_pos[1]
+
+            new_positions = []
+            all_valid = True
+            for node in self.selected_nodes:
+                new_x = node['pos'][0] + dx
+                new_y = node['pos'][1] + dy
+                snap_x, snap_y = self._snap_to_grid(new_x, new_y)
+
+                occupied = any(
+                    other_node not in self.selected_nodes and
+                    np.isclose(other_node['pos'][0], snap_x, atol=0.01) and
+                    np.isclose(other_node['pos'][1], snap_y, atol=0.01)
+                    for other_node in target_nodes
+                )
+
+                if occupied:
+                    all_valid = False
+                    break
+                new_positions.append((node, snap_x, snap_y))
+
+            if all_valid:
+                self._save_state()
+                for node, snap_x, snap_y in new_positions:
+                    node['pos'] = (snap_x, snap_y)
+                print(f"✓ Moved {len(self.selected_nodes)} node(s)")
+            else:
+                print(f"✗ Cannot move group - some positions occupied")
+
+        # Clean up
+        self.dragging_group = False
+        self.drag_pending_group = False
+        self.drag_start_pos = None
+        self._clear_drag_previews()
+        self._update_target_canvas(target_canvas)
+
+    def _on_release_single_drag(self, event):
+        """Complete single node dragging."""
+        target_canvas, target_nodes = self._get_target_canvas_and_nodes(event)
+
+        if target_nodes is not None:
+            snap_x, snap_y = self._snap_to_grid(event.xdata, event.ydata)
+
+            occupied = any(
+                node != self.dragging_node and
+                np.isclose(node['pos'][0], snap_x, atol=0.01) and
+                np.isclose(node['pos'][1], snap_y, atol=0.01)
+                for node in target_nodes
+            )
+
+            if not occupied:
+                self._save_state()
+                old_pos = self.dragging_node['pos']
+                self.dragging_node['pos'] = (snap_x, snap_y)
+
+                # Also update the corresponding node in original_graph if it exists
+                if hasattr(self, 'original_graph') and self.original_graph:
+                    for orig_node in self.original_graph['nodes']:
+                        if (orig_node['label'] == self.dragging_node['label'] and
+                            orig_node.get('conj', False) == self.dragging_node.get('conj', False)):
+                            orig_node['pos'] = (snap_x, snap_y)
+                            break
+
+                print(f"✓ Moved node '{self.dragging_node['label']}' from ({old_pos[0]:.3f}, {old_pos[1]:.3f}) to ({snap_x:.3f}, {snap_y:.3f})")
+            else:
+                print(f"✗ Cannot move node '{self.dragging_node['label']}' - position occupied")
+
+        # Clean up
+        self.dragging_node = None
+        self.drag_pending_node = None
+        self.drag_start_pos = None
+        self._clear_drag_previews()
+
+        if target_canvas == self.kron_canvas and hasattr(self, 'kron_graph') and self.kron_graph:
+            self._update_target_canvas(target_canvas)
+        else:
+            self._update_plot()
+
+            # Sync Kron graph node positions if it exists
+            if hasattr(self, 'kron_graph') and self.kron_graph:
+                for kron_node in self.kron_graph['nodes']:
+                    for orig_node in self.original_graph['nodes']:
+                        if orig_node['label'] == kron_node['label'] and orig_node.get('conj', False) == kron_node.get('conj', False):
+                            kron_node['pos'] = orig_node['pos']
+                            break
+
+                saved_canvas = self.canvas
+                saved_nodes = self.nodes
+                saved_edges = self.edges
+                saved_base_xlim = self.base_xlim
+                saved_base_ylim = self.base_ylim
+
+                self.nodes = self.original_graph['nodes']
+                self.edges = self.original_graph['edges']
+                self._do_plot_render()
+
+                self.kron_original_base_xlim = self.base_xlim
+                self.kron_original_base_ylim = self.base_ylim
+
+                self.canvas = self.kron_canvas
+                self.nodes = self.kron_graph['nodes']
+                self.edges = self.kron_graph['edges']
+                self.base_xlim = self.kron_original_base_xlim
+                self.base_ylim = self.kron_original_base_ylim
+                self._do_plot_render()
+
+                self.canvas = saved_canvas
+                self.nodes = saved_nodes
+                self.edges = saved_edges
+                self.base_xlim = saved_base_xlim
+                self.base_ylim = saved_base_ylim
 
     def _on_scroll(self, event):
         """Handle mouse scroll - optimized for smooth trackpad scrolling"""
