@@ -34,6 +34,10 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Install UPX
+        shell: bash
+        run: choco install upx -y
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -49,14 +53,53 @@ jobs:
         shell: bash
         run: ls -la dist*/ || echo "No dist directories found"; find . -name "graphulator.exe" -type f 2>/dev/null || true
 
+      - name: Post-build cleanup
+        working-directory: building
+        shell: bash
+        run: |
+          DIST_DIR=$(find . -name "graphulator.exe" -type f -print -quit | xargs dirname)
+          echo "Cleaning: $DIST_DIR"
+          if [ -n "$DIST_DIR" ]; then
+            # Remove unused Qt plugins
+            for dir in sqldrivers virtualkeyboard position sensors texttospeech multimedia qmltooling; do
+              rm -rf "$DIST_DIR/PySide6/plugins/$dir" 2>/dev/null || true
+            done
+            # Remove Qt translation files
+            rm -rf "$DIST_DIR/PySide6/translations" 2>/dev/null || true
+            # Remove unused Qt DLLs
+            for dll in Qt6Charts Qt6DataVisualization Qt6Quick Qt6Qml Qt6Quick3D Qt6ShaderTools \
+                       Qt6Multimedia Qt6Sensors Qt6Bluetooth Qt6Nfc Qt6SerialPort Qt6Test \
+                       Qt6VirtualKeyboard Qt6RemoteObjects Qt6Sql; do
+              rm -f "$DIST_DIR/PySide6/${dll}.dll" 2>/dev/null || true
+              rm -f "$DIST_DIR/PySide6/${dll}d.dll" 2>/dev/null || true
+            done
+            # Report size
+            echo "Size after cleanup:"
+            du -sh "$DIST_DIR" || true
+          fi
+
+      - name: Compress with UPX
+        working-directory: building
+        shell: bash
+        run: |
+          DIST_DIR=$(find . -name "graphulator.exe" -type f -print -quit | xargs dirname)
+          if [ -n "$DIST_DIR" ]; then
+            echo "Running UPX on binaries..."
+            find "$DIST_DIR" \( -name "*.dll" -o -name "*.pyd" \) \
+              ! -name "Qt*WebEngine*" ! -name "python*.dll" \
+              -exec upx --best --lzma {} + 2>/dev/null || true
+            upx --best --lzma "$DIST_DIR/graphulator.exe" 2>/dev/null || true
+            echo "Size after UPX:"
+            du -sh "$DIST_DIR" || true
+          fi
+
       - name: Zip artifact
-        shell: pwsh
+        shell: bash
         working-directory: building
         run: |
-          $exeDir = Get-ChildItem -Recurse -Filter "graphulator.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          $distDir = $exeDir.DirectoryName
-          Write-Host "Found exe at: $distDir"
-          Compress-Archive -Path "$distDir\*" -DestinationPath graphulator-windows.zip
+          DIST_DIR=$(find . -name "graphulator.exe" -type f -print -quit | xargs dirname)
+          echo "Found exe in: $DIST_DIR"
+          7z a -mx=9 graphulator-windows.zip "$DIST_DIR/*"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -89,6 +132,31 @@ jobs:
         working-directory: building
         run: ls -la dist*/ || echo "No dist directories found"; find . -name "graphulator.app" -maxdepth 3 -type d 2>/dev/null || true
 
+      - name: Post-build cleanup
+        working-directory: building
+        run: |
+          APP_DIR=$(find . -name "graphulator.app" -maxdepth 3 -type d | head -1)
+          if [ -n "$APP_DIR" ]; then
+            echo "Cleaning: $APP_DIR"
+
+            # Remove Qt translation files
+            find "$APP_DIR" -path "*/translations" -type d -exec rm -rf {} + 2>/dev/null || true
+
+            # Remove unused Qt plugins
+            for dir in sqldrivers virtualkeyboard position sensors texttospeech multimedia qmltooling; do
+              find "$APP_DIR" -path "*/$dir" -type d -exec rm -rf {} + 2>/dev/null || true
+            done
+
+            # Strip debug symbols from all binaries
+            find "$APP_DIR" -type f \( -name "*.so" -o -name "*.dylib" \) -exec strip -x {} + 2>/dev/null || true
+
+            # Re-sign
+            codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
+
+            echo "Size after cleanup:"
+            du -sh "$APP_DIR" || true
+          fi
+
       - name: Zip app bundle
         working-directory: building
         run: |
@@ -96,7 +164,7 @@ jobs:
           echo "Found app at: $APP_PATH"
           APP_DIR=$(dirname "$APP_PATH")
           cd "$APP_DIR"
-          zip -r "$GITHUB_WORKSPACE/graphulator-macos.zip" graphulator.app
+          zip -9 -r --symlinks "$GITHUB_WORKSPACE/graphulator-macos.zip" graphulator.app
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -115,6 +183,10 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Install UPX
+        shell: bash
+        run: choco install upx -y
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -131,14 +203,58 @@ jobs:
         shell: bash
         run: ls -la dist*/ || echo "No dist directories found"; find . -name "paragraphulator.exe" -type f 2>/dev/null || true
 
+      - name: Post-build cleanup
+        working-directory: building
+        shell: bash
+        run: |
+          DIST_DIR=$(find . -name "paragraphulator.exe" -type f -print -quit | xargs dirname)
+          echo "Cleaning: $DIST_DIR"
+          if [ -n "$DIST_DIR" ]; then
+            # Remove unused Qt plugins
+            for dir in sqldrivers virtualkeyboard position sensors texttospeech multimedia qmltooling; do
+              rm -rf "$DIST_DIR/PySide6/plugins/$dir" 2>/dev/null || true
+            done
+            # Remove non-English Qt translations
+            find "$DIST_DIR" -path "*/translations" -type d | while read tdir; do
+              find "$tdir" -name "*.qm" ! -name "qt_en*" ! -name "qtbase_en*" -delete 2>/dev/null || true
+            done
+            # Remove non-English QtWebEngine locales
+            find "$DIST_DIR" -path "*/qtwebengine_locales" -type d | while read ldir; do
+              find "$ldir" -name "*.pak" ! -name "en-US.pak" ! -name "en-GB.pak" -delete 2>/dev/null || true
+            done
+            # Remove unused Qt DLLs
+            for dll in Qt6Charts Qt6DataVisualization Qt6Quick3D Qt6ShaderTools \
+                       Qt6Sensors Qt6Bluetooth Qt6Nfc Qt6SerialPort Qt6Test \
+                       Qt6VirtualKeyboard Qt6RemoteObjects Qt6Sql; do
+              rm -f "$DIST_DIR/PySide6/${dll}.dll" 2>/dev/null || true
+              rm -f "$DIST_DIR/PySide6/${dll}d.dll" 2>/dev/null || true
+            done
+            echo "Size after cleanup:"
+            du -sh "$DIST_DIR" || true
+          fi
+
+      - name: Compress with UPX
+        working-directory: building
+        shell: bash
+        run: |
+          DIST_DIR=$(find . -name "paragraphulator.exe" -type f -print -quit | xargs dirname)
+          if [ -n "$DIST_DIR" ]; then
+            echo "Running UPX on binaries..."
+            find "$DIST_DIR" \( -name "*.dll" -o -name "*.pyd" \) \
+              ! -name "Qt*WebEngine*" ! -name "python*.dll" ! -name "d3dcompiler*" \
+              -exec upx --best --lzma {} + 2>/dev/null || true
+            upx --best --lzma "$DIST_DIR/paragraphulator.exe" 2>/dev/null || true
+            echo "Size after UPX:"
+            du -sh "$DIST_DIR" || true
+          fi
+
       - name: Zip artifact
-        shell: pwsh
+        shell: bash
         working-directory: building
         run: |
-          $exeDir = Get-ChildItem -Recurse -Filter "paragraphulator.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          $distDir = $exeDir.DirectoryName
-          Write-Host "Found exe at: $distDir"
-          Compress-Archive -Path "$distDir\*" -DestinationPath paragraphulator-windows.zip
+          DIST_DIR=$(find . -name "paragraphulator.exe" -type f -print -quit | xargs dirname)
+          echo "Found exe in: $DIST_DIR"
+          7z a -mx=9 paragraphulator-windows.zip "$DIST_DIR/*"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -182,27 +298,26 @@ jobs:
             # Remove Qt translation files (~5MB savings)
             rm -rf "$APP_DIR/Contents/Frameworks/PySide6/Qt/translations" 2>/dev/null || true
             rm -rf "$APP_DIR/Contents/Resources/PySide6/Qt/translations" 2>/dev/null || true
+            find "$APP_DIR" -path "*/translations" -type d -exec rm -rf {} + 2>/dev/null || true
 
             # Remove non-English QtWebEngine locales (~20MB savings)
-            LOCALES_DIR="$APP_DIR/Contents/Frameworks/PySide6/Qt/lib/QtWebEngineCore.framework/Versions/A/Resources/qtwebengine_locales"
-            if [ -d "$LOCALES_DIR" ]; then
-              find "$LOCALES_DIR" -name "*.pak" ! -name "en-US.pak" ! -name "en-GB.pak" -delete 2>/dev/null || true
-            fi
+            find "$APP_DIR" -path "*/qtwebengine_locales" -type d | while read ldir; do
+              find "$ldir" -name "*.pak" ! -name "en-US.pak" ! -name "en-GB.pak" -delete 2>/dev/null || true
+            done
 
             # Remove unused Qt plugins
-            PLUGINS_DIR="$APP_DIR/Contents/Frameworks/PySide6/Qt/plugins"
-            if [ -d "$PLUGINS_DIR" ]; then
-              rm -rf "$PLUGINS_DIR/sqldrivers" 2>/dev/null || true
-              rm -rf "$PLUGINS_DIR/virtualkeyboard" 2>/dev/null || true
-              rm -rf "$PLUGINS_DIR/position" 2>/dev/null || true
-              rm -rf "$PLUGINS_DIR/sensors" 2>/dev/null || true
-              rm -rf "$PLUGINS_DIR/texttospeech" 2>/dev/null || true
-              rm -rf "$PLUGINS_DIR/multimedia" 2>/dev/null || true
-              rm -rf "$PLUGINS_DIR/qmltooling" 2>/dev/null || true
-            fi
+            for dir in sqldrivers virtualkeyboard position sensors texttospeech multimedia qmltooling; do
+              find "$APP_DIR" -path "*/$dir" -type d -exec rm -rf {} + 2>/dev/null || true
+            done
+
+            # Strip debug symbols from all binaries
+            find "$APP_DIR" -type f \( -name "*.so" -o -name "*.dylib" \) -exec strip -x {} + 2>/dev/null || true
 
             # Re-sign after modifications
             codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
+
+            echo "Size after optimization:"
+            du -sh "$APP_DIR" || true
           else
             echo "WARNING: paragraphulator.app not found"
           fi
@@ -214,7 +329,7 @@ jobs:
           echo "Found app at: $APP_PATH"
           APP_DIR=$(dirname "$APP_PATH")
           cd "$APP_DIR"
-          zip -r "$GITHUB_WORKSPACE/paragraphulator-macos.zip" paragraphulator.app
+          zip -9 -r --symlinks "$GITHUB_WORKSPACE/paragraphulator-macos.zip" paragraphulator.app
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
