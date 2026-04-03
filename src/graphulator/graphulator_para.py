@@ -9751,7 +9751,7 @@ class Graphulator(QMainWindow):
             )
 
             # Validate all required parameters are assigned before computing
-            missing = extractor.validate_parameters()
+            missing = extractor.validate_scattering_assignments()
             missing_items = missing.get('missing_nodes', []) + missing.get('missing_edges', [])
             if missing_items:
                 detail = "\n".join(f"  - {item}" for item in missing_items)
