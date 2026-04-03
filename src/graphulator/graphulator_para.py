@@ -13775,7 +13775,7 @@ class Graphulator(QMainWindow):
         connected edge (including other self-loops).
         """
         node_id = node['node_id']
-        node_pos = np.array([node['x'], node['y']])
+        node_pos = np.array(node['pos'])
 
         # Collect angles of all edges connected to this node
         edge_angles = []
@@ -13792,7 +13792,7 @@ class Graphulator(QMainWindow):
                     other = edge.get('from_node', {})
                 else:
                     continue
-                other_pos = np.array([other['x'], other['y']])
+                other_pos = np.array(other['pos'])
                 diff = other_pos - node_pos
                 angle_deg = np.degrees(np.arctan2(diff[1], diff[0])) % 360
                 edge_angles.append(angle_deg)
