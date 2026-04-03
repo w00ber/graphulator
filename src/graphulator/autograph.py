@@ -9,10 +9,13 @@ Author: Graphulator Development Team
 """
 
 import json
+import logging
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Tuple, Set, Optional, Any, Union
 from more_itertools import collapse
+
+logger = logging.getLogger(__name__)
 
 def load_pgraph(filepath: Optional[Union[str, Path]] = None, use_dialog: bool = False) -> Dict[str, Any]:
     """
@@ -458,8 +461,8 @@ class GraphExtractor:
                 f"'{label}' (node_ids: {node_ids})"
                 for label, node_ids in sorted(self._duplicate_labels.items())
             )
-            print(f"⚠ Warning: Duplicate node labels detected: {dup_labels_str}")
-            print("  label_to_node_id mapping will not be available.")
+            logger.warning("Duplicate node labels detected: %s", dup_labels_str)
+            logger.warning("  label_to_node_id mapping will not be available.")
 
         # Determine root node - default to first port node (B_ext > 0) in basis order
         if root_node_id is None:
@@ -855,7 +858,7 @@ class GraphExtractor:
 
         if not is_connected:
             unreached = [node['node_id'] for node in nodes if node['node_id'] not in visited]
-            print(f"Warning: Graph is disconnected. Unreached nodes: {unreached}")
+            logger.warning("Graph is disconnected. Unreached nodes: %s", unreached)
 
         # Convert edge keys back to [from_id, to_id] lists, nested by branch
         tree_edges = [[list(key) for key in branch] for branch in tree_branches]
@@ -1590,7 +1593,7 @@ class GraphScatteringMatrix:
         )
 
         if self.verbose:
-            print("\n[DEBUG _build_M_matrix] Node diagonal values:")
+            logger.debug("[_build_M_matrix] Node diagonal values:")
 
         for idx, node in enumerate(self.extractor.graph_data['nodes']):
             node_id = node['node_id']
@@ -1601,7 +1604,7 @@ class GraphScatteringMatrix:
                 Btot = node['B_int'] + node['B_ext']
             conj_state = node['conj']
             if self.verbose:
-                print(f"  Node {node_id}: f0={f0}, B_int={node['B_int']}, B_ext={node['B_ext']}, Btot={Btot}")
+                logger.debug("  Node %s: f0=%s, B_int=%s, B_ext=%s, Btot=%s", node_id, f0, node['B_int'], node['B_ext'], Btot)
 
             for f_idx, f_root in enumerate(self.f_root_s):
                 # Compute drive signals for this f_root
@@ -1621,7 +1624,7 @@ class GraphScatteringMatrix:
         # Assemble off-diagonals
         basis = self.extractor.graph_data['basis_order']
         if self.verbose:
-            print("\n[DEBUG _build_M_matrix] Edge off-diagonal values:")
+            logger.debug("[_build_M_matrix] Edge off-diagonal values:")
         for edge in self.extractor.graph_data['edges']:
             from_id = edge['from_node_id']
             to_id = edge['to_node_id']
@@ -1636,7 +1639,7 @@ class GraphScatteringMatrix:
 
                 beta = rate/2 * np.exp(1j * phase * np.pi / 180)
                 if self.verbose:
-                    print(f"  Edge {from_id}→{to_id}: f_p={f_p}, rate={rate}, phase={phase}, beta={beta}")
+                    logger.debug("  Edge %s→%s: f_p=%s, rate=%s, phase=%s, beta=%s", from_id, to_id, f_p, rate, phase, beta)
 
                 conj_j = self.extractor.graph_data['nodes'][j]['conj']
                 conj_k = self.extractor.graph_data['nodes'][k]['conj']
@@ -1660,29 +1663,28 @@ class GraphScatteringMatrix:
         self.port_dict = {}
 
         if self.verbose:
-            print("\n[DEBUG _build_K_matrix] Building port dictionary:")
+            logger.debug("[_build_K_matrix] Building port dictionary:")
         for node in self.extractor.graph_data['nodes']:
             node_id = node['node_id']
-            # print(node)
             if node['B_ext'] is not None and node['B_ext'] > 0:
                 self.port_dict[node_id] = node['B_ext']
                 if self.verbose:
-                    print(f"  Added port: node_id={node_id}, B_ext={node['B_ext']}")
+                    logger.debug("  Added port: node_id=%s, B_ext=%s", node_id, node['B_ext'])
 
         self.num_ports = len(self.port_dict)
 
         if self.verbose:
-            print(f"[DEBUG _build_K_matrix] Total ports: {self.num_ports}")
+            logger.debug("[_build_K_matrix] Total ports: %d", self.num_ports)
         self.K = np.zeros(shape=(self.num_modes, len(self.port_dict)), dtype=float)
 
         if self.verbose:
-            print("[DEBUG _build_K_matrix] K matrix entries:")
+            logger.debug("[_build_K_matrix] K matrix entries:")
         for node_id, B_ext in self.port_dict.items():
             mode_idx = self.extractor.graph_data['basis_order'].index(node_id)
             port_idx = list(self.port_dict.keys()).index(node_id)
             self.K[mode_idx, port_idx] = np.sqrt(B_ext)
             if self.verbose:
-                print(f"  K[{mode_idx},{port_idx}] = sqrt({B_ext}) = {np.sqrt(B_ext)}")
+                logger.debug("  K[%d,%d] = sqrt(%s) = %s", mode_idx, port_idx, B_ext, np.sqrt(B_ext))
 
     def _build_S_matrix(self):
         self.S = np.empty(shape=(len(self.f_root_s), self.num_ports, self.num_ports), dtype=complex)

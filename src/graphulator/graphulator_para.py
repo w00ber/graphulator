@@ -78,12 +78,13 @@ from .para_ui.dialogs import NodeInputDialog, EdgeInputDialog
 from .para_ui.canvas import MplCanvas
 from .para_ui.web_views import ZoomableWebView
 from .para_ui.shortcut_manager import ShortcutManager
-from .para_ui.doc_template import CachedDocumentationProcessor
+from .para_ui.doc_template import CachedDocumentationProcessor, DocumentationTemplateProcessor
 from .para_core.settings_manager import (
     SettingsManager, get_settings_manager,
     USER_SETTINGS_DIR, USER_SETTINGS_FILE
 )
 from .para_core.interaction_state import InteractionMode, PlacementMode
+from .autograph import GraphExtractor, GraphScatteringMatrix
 
 logger = logging.getLogger(__name__)
 
@@ -1507,9 +1508,9 @@ class PropertiesPanel(QWidget):
         if code_text and code_text.strip():
             clipboard = QApplication.clipboard()
             clipboard.setText(code_text)
-            print("✓ Exported SymPy code to clipboard")
+            logger.info("✓ Exported SymPy code to clipboard")
         else:
-            print("No SymPy code to export")
+            logger.info("No SymPy code to export")
 
     def _get_clean_label(self, node):
         """Get clean label for SymPy (remove LaTeX formatting, flatten subscripts)"""
@@ -2394,7 +2395,6 @@ class PropertiesPanel(QWidget):
 
                 # Process shortcut templates if shortcut manager is available
                 if hasattr(self.graphulator, 'shortcut_manager'):
-                    from .para_ui.doc_template import DocumentationTemplateProcessor
                     processor = DocumentationTemplateProcessor(self.graphulator.shortcut_manager)
                     markdown_content = processor.process_markdown(markdown_content)
 
@@ -2590,7 +2590,6 @@ class PropertiesPanel(QWidget):
 
                 # Process shortcut templates if shortcut manager is available
                 if hasattr(self.graphulator, 'shortcut_manager'):
-                    from .para_ui.doc_template import DocumentationTemplateProcessor
                     processor = DocumentationTemplateProcessor(self.graphulator.shortcut_manager)
                     markdown_text = processor.process_markdown(markdown_text)
                     diagnostic_info.append("Shortcut templates processed")
@@ -2918,7 +2917,7 @@ class PropertiesPanel(QWidget):
             # Remove <br> between table rows
             text = re.sub(r'(</tr>)\s*(<br>\s*)+(<tr)', r'\1\3', text)
         except Exception as e:
-            print(f"Error in cleanup regexes: {e}")
+            logger.error(f"Error in cleanup regexes: {e}")
 
         # Get KaTeX header for LaTeX support (use absolute paths since HTML is in temp dir)
         katex_header = self._get_katex_html_header_absolute()
@@ -3763,7 +3762,7 @@ class PropertiesPanel(QWidget):
             # First time user is changing this value - mark as assigned
             widget.setProperty('user_assigned', True)
             widget.setStyleSheet("")  # Remove gray styling
-            print(f"[Scattering] Node parameter NOW ASSIGNED: {param_name}={value}")
+            logger.debug(f"[Scattering] Node parameter NOW ASSIGNED: {param_name}={value}")
 
         # Initialize node assignments if needed
         if node_id not in self.graphulator.scattering_assignments:
@@ -3936,12 +3935,12 @@ class PropertiesPanel(QWidget):
         chord_edges = [edge_map[key] for key in chord_edge_keys if key in edge_map]
 
         # Debug output
-        print(f"_order_edges_by_spanning_tree:")
-        print(f"  Tree edge keys from GUI: {sorted(tree_edge_keys)}")
-        print(f"  Chord edge keys from GUI: {sorted(chord_edge_keys)}")
-        print(f"  Returning {len(ordered_tree_edges)} tree edges, {len(chord_edges)} chord edges")
+        logger.debug(f"_order_edges_by_spanning_tree:")
+        logger.debug(f"  Tree edge keys from GUI: {sorted(tree_edge_keys)}")
+        logger.debug(f"  Chord edge keys from GUI: {sorted(chord_edge_keys)}")
+        logger.debug(f"  Returning {len(ordered_tree_edges)} tree edges, {len(chord_edges)} chord edges")
         for edge in chord_edges:
-            print(f"    Chord edge: {edge['from_node_id']}→{edge['to_node_id']}")
+            logger.debug(f"    Chord edge: {edge['from_node_id']}→{edge['to_node_id']}")
 
         return ordered_tree_edges, chord_edges
 
@@ -3951,7 +3950,6 @@ class PropertiesPanel(QWidget):
             return
 
         # Use GraphExtractor to compute chord frequencies
-        from graphulator.autograph import GraphExtractor
 
         try:
             # Create extractor and set up graph data
@@ -4031,12 +4029,12 @@ class PropertiesPanel(QWidget):
             # Get computed chord frequencies
             chord_frequencies = extractor.get_chord_frequencies()
 
-            print(f"_update_chord_frequency_displays: computed chord frequencies:")
+            logger.debug(f"_update_chord_frequency_displays: computed chord frequencies:")
             for key, val in chord_frequencies.items():
-                print(f"  {key}: {val}")
+                logger.debug(f"  {key}: {val}")
 
             # Update the display labels in the table
-            print("\n_update_chord_frequency_displays: Updating GUI table...")
+            logger.debug("_update_chord_frequency_displays: Updating GUI table...")
             for i in range(self.edges_param_layout.count()):
                 widget = self.edges_param_layout.itemAt(i).widget()
                 if widget and widget.property('is_chord_fp_display'):
@@ -4048,7 +4046,7 @@ class PropertiesPanel(QWidget):
                         edge_key_reversed = (edge_key[1], edge_key[0])
                         # Try both orderings
                         f_p_computed = chord_frequencies.get(edge_key, chord_frequencies.get(edge_key_reversed, None))
-                        print(f"  Chord edge {edge['from_node_id']}→{edge['to_node_id']}: looking for key {edge_key} or {edge_key_reversed}, found={f_p_computed}")
+                        logger.debug(f"  Chord edge {edge['from_node_id']}→{edge['to_node_id']}: looking for key {edge_key} or {edge_key_reversed}, found={f_p_computed}")
                         if f_p_computed is not None:
                             widget.setText(f"{f_p_computed:.3f}")
                             widget.setStyleSheet("color: royalblue; font-weight: bold;")
@@ -4059,7 +4057,7 @@ class PropertiesPanel(QWidget):
                             widget.setToolTip("Waiting for tree edge frequencies")
 
         except Exception as e:
-            print(f"Error computing chord frequencies: {e}")
+            logger.error(f"Error computing chord frequencies: {e}")
             traceback.print_exc()
 
     def _update_scattering_edge_table(self):
@@ -4305,7 +4303,7 @@ class PropertiesPanel(QWidget):
             # First time user is changing this value - mark as assigned
             widget.setProperty('user_assigned', True)
             widget.setStyleSheet("")  # Remove gray styling
-            print(f"[Scattering] Edge parameter NOW ASSIGNED: {param_name}={value}")
+            logger.debug(f"[Scattering] Edge parameter NOW ASSIGNED: {param_name}={value}")
 
         # Store the value (convert milliarb. to arb. units for rate)
         if edge_id not in self.graphulator.scattering_assignments:
@@ -4315,7 +4313,7 @@ class PropertiesPanel(QWidget):
         else:
             self.graphulator.scattering_assignments[edge_id][param_name] = value
 
-        print(f"[Scattering] Edge {edge_id} parameter '{param_name}' = {value}")
+        logger.debug(f"[Scattering] Edge {edge_id} parameter '{param_name}' = {value}")
 
         # Synchronize constraint group if this widget is in one
         self._sync_constraint_group(widget, value)
@@ -4433,7 +4431,7 @@ class PropertiesPanel(QWidget):
         # Mark as user assigned so styling doesn't get cleared on next edit
         widget.setProperty('user_assigned', True)
 
-        print(f"[Constraints] Created group {group_id} for {obj_type} {param_name} with {obj_label}")
+        logger.debug(f"[Constraints] Created group {group_id} for {obj_type} {param_name} with {obj_label}")
         self._apply_constraint_styling()
 
     def _add_to_constraint_group(self, widget, group_id):
@@ -4455,7 +4453,7 @@ class PropertiesPanel(QWidget):
             # Update the stored assignment
             self._update_assignment_from_widget(widget)
 
-        print(f"[Constraints] Added {obj_label} to group {group_id}")
+        logger.debug(f"[Constraints] Added {obj_label} to group {group_id}")
         self._apply_constraint_styling()
 
     def _remove_from_constraint_group(self, widget):
@@ -4465,12 +4463,12 @@ class PropertiesPanel(QWidget):
 
         if group_id and group_data:
             group_data['members'].remove(obj_label)
-            print(f"[Constraints] Removed {obj_label} from group {group_id}")
+            logger.debug(f"[Constraints] Removed {obj_label} from group {group_id}")
 
             # If group has only one member left, dissolve the group
             if len(group_data['members']) < 2:
                 del self.graphulator.scattering_constraint_groups[group_id]
-                print(f"[Constraints] Dissolved group {group_id} (fewer than 2 members)")
+                logger.debug(f"[Constraints] Dissolved group {group_id} (fewer than 2 members)")
 
         self._apply_constraint_styling()
 
@@ -4542,7 +4540,7 @@ class PropertiesPanel(QWidget):
                 # Update the stored assignment
                 self._update_assignment_from_widget(w)
 
-        print(f"[Constraints] Synced group {group_id} to value {new_value}")
+        logger.debug(f"[Constraints] Synced group {group_id} to value {new_value}")
 
     def _apply_constraint_styling(self):
         """Apply background color styling to all constrained spinboxes."""
@@ -4612,7 +4610,7 @@ class PropertiesPanel(QWidget):
         """Clear all constraint groups (nuclear option)."""
         self.graphulator.scattering_constraint_groups = {}
         self.graphulator._next_constraint_group_id = 1
-        print("[Constraints] Cleared all constraint groups")
+        logger.debug("[Constraints] Cleared all constraint groups")
         self._apply_constraint_styling()
 
     def _update_show_s_button_state(self):
@@ -4685,7 +4683,7 @@ class PropertiesPanel(QWidget):
             try:
                 with open(filename, 'w') as f:
                     f.write(code)
-                print(f"✓ Exported scattering calculation code to {filename}")
+                logger.info(f"✓ Exported scattering calculation code to {filename}")
                 QMessageBox.information(self.graphulator, "Export Successful",
                                        f"Code exported to:\n{filename}")
             except Exception as e:
@@ -4704,7 +4702,7 @@ class PropertiesPanel(QWidget):
         # Copy to clipboard
         clipboard = QApplication.clipboard()
         clipboard.setText(code)
-        print("✓ Exported scattering calculation code to clipboard")
+        logger.info("✓ Exported scattering calculation code to clipboard")
         QMessageBox.information(self.graphulator, "Export Successful",
                                "Code copied to clipboard!")
 
@@ -8882,7 +8880,6 @@ class Graphulator(QMainWindow):
             return set(), set()
 
         # Use GraphExtractor to compute spanning tree
-        from graphulator.autograph import GraphExtractor
         extractor = GraphExtractor()
 
         # Convert GUI nodes/edges to format expected by GraphExtractor
@@ -9310,8 +9307,6 @@ class Graphulator(QMainWindow):
             tuple: (is_valid, error_message)
         """
         try:
-            from graphulator.autograph import GraphExtractor
-
             # Build extractor with current parameters
             extractor = GraphExtractor()
 
@@ -9514,7 +9509,6 @@ class Graphulator(QMainWindow):
         For disconnected graphs with multiple components, computes S-parameters
         for each component separately and plots them together.
         """
-        from graphulator.autograph import GraphExtractor, GraphScatteringMatrix
 
         try:
             # Get frequency settings from GUI (shared across all components)
@@ -9594,7 +9588,6 @@ class Graphulator(QMainWindow):
         Returns:
             dict with S-parameter results, or None if computation fails
         """
-        from graphulator.autograph import GraphExtractor, GraphScatteringMatrix
 
         # Determine which nodes/edges to use
         if component is not None:
@@ -10558,7 +10551,7 @@ class Graphulator(QMainWindow):
         # Placeholder for selection and double-click handling
         if event.dblclick:
             # Double-click - show assignment dialog
-            print("Double-click on scattering canvas (dialog placeholder)")
+            logger.debug("Double-click on scattering canvas (dialog placeholder)")
         # TODO: Implement selection highlighting and dialog
 
     def _create_scattering_properties_tab(self):

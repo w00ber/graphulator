@@ -452,7 +452,6 @@ def plotnode(ax = None,
 
     # NEED TO ensure that the limits are scaled to match the rendered figure size
     # figwidth = plt.gcf().get_figwidth()
-    # # print(f'{figwidth=}')
     # plt.ylim(-figwidth,figwidth)
 
     if debug is True:
@@ -1210,7 +1209,7 @@ class GraphCircuit:
         None
         """
         for idx,node in enumerate(self.nodes):
-            print(f'{idx}: {node["nodelabel"]}: {node["nodecent"]};\t\tconj = {node["conj"]}')
+            logger.debug('%d: %s: %s;\t\tconj = %s', idx, node["nodelabel"], node["nodecent"], node["conj"])
 
     def _setminmaxnodecoords(self, overfrac=0.1, debug=False)->None:
         """
