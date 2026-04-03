@@ -126,7 +126,13 @@ SELFLOOP_LINEWIDTH_MIN = 0.2
 SELFLOOP_LINEWIDTH_MAX = 8.0
 
 # Self-loop angle adjustment via keyboard (Ctrl+Left/Right when self-loop selected)
-SELFLOOP_ANGLE_KEYBOARD_INCREMENT = 45  # degrees per keypress
+SELFLOOP_ANGLE_KEYBOARD_INCREMENT = 15  # degrees per keypress (must be multiple of 5)
+
+# Auto-adjust self-loop angle to avoid overlapping with existing edges
+AUTO_ADJUST_SELFLOOP_ANGLE = True  # When True, new self-loops auto-orient away from edges
+
+# Dynamically re-adjust unpinned self-loop angles when nodes are dragged
+DYNAMIC_ADJUST_SELFLOOP_ANGLE = True  # When True, unpinned self-loops reorient on drag-end
 
 # =============================================================================
 # REGULAR EDGE SPECIFIC DEFAULTS
