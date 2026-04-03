@@ -135,6 +135,11 @@ SETTINGS_PARAMS = {
             ('135° (Up-Left)', 135), ('180° (Left)', 180), ('225° (Down-Left)', 225),
             ('270° (Down)', 270), ('315° (Down-Right)', 315)
         ], None, None),
+        ('AUTO_ADJUST_SELFLOOP_ANGLE', 'Auto-Orient Away From Edges', 'bool', None, None, None),
+        ('SELFLOOP_ANGLE_KEYBOARD_INCREMENT', 'Angle Increment (°)', 'dropdown', [
+            ('5°', 5), ('10°', 10), ('15°', 15), ('20°', 20), ('25°', 25),
+            ('30°', 30), ('35°', 35), ('40°', 40), ('45°', 45),
+        ], None, None),
     ],
     'S-Parameter Plot': [
         ('SPARAMS_FONT_SCALE', 'Master Font Scale', 'float', 0.1, 3.0, 0.1),
@@ -11521,7 +11526,7 @@ class Graphulator(QMainWindow):
         self._update_plot()
 
     def _adjust_selfloop_angle(self, action):
-        """Adjust self-loop angle using Ctrl+Left/Right (15° increments)"""
+        """Adjust self-loop angle using Ctrl+Left/Right (configurable increments)"""
         if not self.selected_edges:
             return
 
@@ -11532,14 +11537,15 @@ class Graphulator(QMainWindow):
 
         self._save_state()
 
+        increment = config.SELFLOOP_ANGLE_KEYBOARD_INCREMENT
         for edge in selfloops:
             current = edge.get('selfloopangle', 0)
 
             # Reverse direction: Left increases (counter-clockwise), Right decreases (clockwise)
             if action == 'increase':
-                edge['selfloopangle'] = (current - 15) % 360
+                edge['selfloopangle'] = (current - increment) % 360
             elif action == 'decrease':
-                edge['selfloopangle'] = (current + 15) % 360
+                edge['selfloopangle'] = (current + increment) % 360
 
         if len(selfloops) == 1:
             print(f"Self-loop angle: {selfloops[0]['selfloopangle']}°")
@@ -11554,7 +11560,7 @@ class Graphulator(QMainWindow):
         self._update_plot()
 
     def _adjust_edge_looptheta_or_selfloop_angle(self, action):
-        """Adjust looptheta for regular edges or selfloopangle for self-loops using Ctrl+Left/Right (2° increments for looptheta, 15° for selfloop)"""
+        """Adjust looptheta for regular edges or selfloopangle for self-loops using Ctrl+Left/Right (2° increments for looptheta, configurable for selfloop)"""
         print(f"DEBUG: _adjust_edge_looptheta_or_selfloop_angle called with action={action}, selected_edges count={len(self.selected_edges)}")
         if not self.selected_edges:
             print("DEBUG: No edges selected, returning")
@@ -11571,14 +11577,15 @@ class Graphulator(QMainWindow):
 
         self._save_state()
 
-        # Adjust self-loop angles (15° increments)
+        # Adjust self-loop angles (configurable increments)
+        increment = config.SELFLOOP_ANGLE_KEYBOARD_INCREMENT
         for edge in selfloops:
             current = edge.get('selfloopangle', 0)
             # Reverse direction: Left increases (counter-clockwise), Right decreases (clockwise)
             if action == 'increase':
-                edge['selfloopangle'] = (current - 15) % 360
+                edge['selfloopangle'] = (current - increment) % 360
             elif action == 'decrease':
-                edge['selfloopangle'] = (current + 15) % 360
+                edge['selfloopangle'] = (current + increment) % 360
 
         # Adjust regular edge looptheta (2° increments)
         for edge in regular_edges:
@@ -13760,6 +13767,58 @@ class Graphulator(QMainWindow):
             self._update_conjugate_pair_constraints()
             self._update_plot()
 
+    def _compute_best_selfloop_angle(self, node):
+        """Compute the self-loop angle that is farthest from all existing edges on this node.
+
+        Uses the configurable SELFLOOP_ANGLE_KEYBOARD_INCREMENT to generate candidate
+        angles, then picks the one with the largest minimum angular distance from any
+        connected edge (including other self-loops).
+        """
+        node_id = node['node_id']
+        node_pos = np.array([node['x'], node['y']])
+
+        # Collect angles of all edges connected to this node
+        edge_angles = []
+        for edge in self.edges:
+            if edge.get('is_self_loop', False):
+                # Existing self-loop on this node
+                if edge.get('from_node_id') == node_id:
+                    edge_angles.append(edge.get('selfloopangle', 0) % 360)
+            else:
+                # Regular edge - compute angle from this node to the other node
+                if edge.get('from_node_id') == node_id:
+                    other = edge.get('to_node', {})
+                elif edge.get('to_node_id') == node_id:
+                    other = edge.get('from_node', {})
+                else:
+                    continue
+                other_pos = np.array([other['x'], other['y']])
+                diff = other_pos - node_pos
+                angle_deg = np.degrees(np.arctan2(diff[1], diff[0])) % 360
+                edge_angles.append(angle_deg)
+
+        # If no edges, return the default angle
+        if not edge_angles:
+            return config.DEFAULT_SELFLOOP_ANGLE
+
+        # Generate candidate angles based on configurable increment
+        increment = config.SELFLOOP_ANGLE_KEYBOARD_INCREMENT
+        candidates = list(range(0, 360, increment))
+
+        # Find candidate with largest minimum angular distance from any edge
+        best_angle = config.DEFAULT_SELFLOOP_ANGLE
+        best_min_dist = -1
+        for candidate in candidates:
+            min_dist = min(
+                min(abs(candidate - ea), 360 - abs(candidate - ea))
+                for ea in edge_angles
+            )
+            if min_dist > best_min_dist:
+                best_min_dist = min_dist
+                best_angle = candidate
+
+        return best_angle
+
     def _on_click_edge_mode(self, event):
         """Handle click in edge mode - connect two nodes."""
         clicked_node = self._find_node_at_position(event.xdata, event.ydata)
@@ -13815,6 +13874,9 @@ class Graphulator(QMainWindow):
                             'flip': config.DEFAULT_SELFLOOP_FLIP,
                             'arrowlengthsc': config.DEFAULT_SELFLOOP_ARROWLENGTH
                         }
+                    # Auto-adjust angle away from existing edges if enabled
+                    if config.AUTO_ADJUST_SELFLOOP_ANGLE:
+                        result['selfloopangle'] = self._compute_best_selfloop_angle(second_node)
                     # Store for next self-loop
                     self.last_selfloop_props = result.copy()
                 else:
