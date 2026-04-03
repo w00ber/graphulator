@@ -14136,6 +14136,11 @@ class Graphulator(QMainWindow):
                     self.placement_mode = None
                     print("Edge placed - exited edge mode")
 
+                    # Recompute unpinned self-loop angles on affected nodes
+                    if not is_self_loop and config.DYNAMIC_ADJUST_SELFLOOP_ANGLE:
+                        affected_ids = {self.edge_mode_first_node['node_id'], second_node['node_id']}
+                        self._recompute_unpinned_selfloop_angles(affected_ids)
+
                 # Reset for next edge
                 self.edge_mode_first_node = None
                 self._update_plot()
