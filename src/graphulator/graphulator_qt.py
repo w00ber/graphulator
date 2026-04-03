@@ -2936,12 +2936,17 @@ class Graphulator(QMainWindow):
 
         self._update_plot()
 
-    def _compute_best_selfloop_angle(self, node):
+    def _compute_best_selfloop_angle(self, node, exclude_edge=None):
         """Compute the self-loop angle that is farthest from all existing edges on this node.
 
         Uses the configurable SELFLOOP_ANGLE_KEYBOARD_INCREMENT to generate candidate
         angles, then picks the one with the largest minimum angular distance from any
-        connected edge (including other self-loops).
+        connected edge (including other self-loops, but excluding exclude_edge).
+
+        Args:
+            node: The node dict to compute the angle for.
+            exclude_edge: Optional edge dict to exclude from angle collection
+                (used when recomputing an existing self-loop's own angle).
         """
         node_id = node['node_id']
         node_pos = np.array(node['pos'])
@@ -2949,6 +2954,8 @@ class Graphulator(QMainWindow):
         # Collect angles of all edges connected to this node
         edge_angles = []
         for edge in self.edges:
+            if edge is exclude_edge:
+                continue
             if edge.get('is_self_loop', False):
                 # Existing self-loop on this node
                 if edge.get('from_node_id') == node_id:
@@ -2974,7 +2981,8 @@ class Graphulator(QMainWindow):
         increment = config.SELFLOOP_ANGLE_KEYBOARD_INCREMENT
         candidates = list(range(0, 360, increment))
 
-        # Find candidate with largest minimum angular distance from any edge
+        # Find candidate with largest minimum angular distance from any edge.
+        # On ties, prefer the default angle (90° = Up) for aesthetics.
         best_angle = config.DEFAULT_SELFLOOP_ANGLE
         best_min_dist = -1
         for candidate in candidates:
@@ -2982,7 +2990,9 @@ class Graphulator(QMainWindow):
                 min(abs(candidate - ea), 360 - abs(candidate - ea))
                 for ea in edge_angles
             )
-            if min_dist > best_min_dist:
+            if min_dist > best_min_dist or (
+                min_dist == best_min_dist and candidate == config.DEFAULT_SELFLOOP_ANGLE
+            ):
                 best_min_dist = min_dist
                 best_angle = candidate
 
@@ -3017,7 +3027,7 @@ class Graphulator(QMainWindow):
                     edge.get('from_node_id') in affected_node_ids):
                 node = edge.get('from_node')
                 if node:
-                    edge['selfloopangle'] = self._compute_best_selfloop_angle(node)
+                    edge['selfloopangle'] = self._compute_best_selfloop_angle(node, exclude_edge=edge)
 
     def _adjust_selfloop_angle(self, action):
         """Adjust self-loop angle using Ctrl+Left/Right (configurable increments)"""
