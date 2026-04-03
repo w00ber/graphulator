@@ -41,21 +41,28 @@ jobs:
           pip install -e .
 
       - name: Build with PyInstaller
-        run: >
-          python -m PyInstaller building/graphulator-win.spec
-          --noconfirm --clean
-          --distpath dist-graphulator-win
-          --workpath build-graphulator-win
+        working-directory: building
+        run: python -m PyInstaller graphulator-win.spec --noconfirm --clean
+
+      - name: List build output
+        working-directory: building
+        shell: bash
+        run: ls -la dist*/ || echo "No dist directories found"; find . -name "graphulator.exe" -type f 2>/dev/null || true
 
       - name: Zip artifact
         shell: pwsh
-        run: Compress-Archive -Path dist-graphulator-win\graphulator\* -DestinationPath graphulator-windows.zip
+        working-directory: building
+        run: |
+          $exeDir = Get-ChildItem -Recurse -Filter "graphulator.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $distDir = $exeDir.DirectoryName
+          Write-Host "Found exe at: $distDir"
+          Compress-Archive -Path "$distDir\*" -DestinationPath graphulator-windows.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: graphulator-windows
-          path: graphulator-windows.zip
+          path: building/graphulator-windows.zip
 
   build-graphulator-macos:
     name: Build graphulator (macOS)
@@ -75,16 +82,21 @@ jobs:
           pip install -e .
 
       - name: Build with PyInstaller
-        run: >
-          python -m PyInstaller building/graphulator-mac.spec
-          --noconfirm --clean
-          --distpath dist-graphulator-mac
-          --workpath build-graphulator-mac
+        working-directory: building
+        run: python -m PyInstaller graphulator-mac.spec --noconfirm --clean
+
+      - name: List build output
+        working-directory: building
+        run: ls -la dist*/ || echo "No dist directories found"; find . -name "graphulator.app" -maxdepth 3 -type d 2>/dev/null || true
 
       - name: Zip app bundle
+        working-directory: building
         run: |
-          cd dist-graphulator-mac
-          zip -r ../graphulator-macos.zip graphulator.app
+          APP_PATH=$(find . -name "graphulator.app" -maxdepth 3 -type d | head -1)
+          echo "Found app at: $APP_PATH"
+          APP_DIR=$(dirname "$APP_PATH")
+          cd "$APP_DIR"
+          zip -r "$GITHUB_WORKSPACE/graphulator-macos.zip" graphulator.app
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -111,21 +123,28 @@ jobs:
           pip install certifi markdown
 
       - name: Build with PyInstaller
-        run: >
-          python -m PyInstaller building/paragraphulator-win.spec
-          --noconfirm --clean
-          --distpath dist-win
-          --workpath build-win
+        working-directory: building
+        run: python -m PyInstaller paragraphulator-win.spec --noconfirm --clean
+
+      - name: List build output
+        working-directory: building
+        shell: bash
+        run: ls -la dist*/ || echo "No dist directories found"; find . -name "paragraphulator.exe" -type f 2>/dev/null || true
 
       - name: Zip artifact
         shell: pwsh
-        run: Compress-Archive -Path dist-win\paragraphulator\* -DestinationPath paragraphulator-windows.zip
+        working-directory: building
+        run: |
+          $exeDir = Get-ChildItem -Recurse -Filter "paragraphulator.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $distDir = $exeDir.DirectoryName
+          Write-Host "Found exe at: $distDir"
+          Compress-Archive -Path "$distDir\*" -DestinationPath paragraphulator-windows.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: paragraphulator-windows
-          path: paragraphulator-windows.zip
+          path: building/paragraphulator-windows.zip
 
   build-paragraphulator-macos:
     name: Build paragraphulator (macOS)
@@ -146,16 +165,20 @@ jobs:
           pip install certifi markdown
 
       - name: Build with PyInstaller
-        run: >
-          python -m PyInstaller building/paragraphulator-mac.spec
-          --noconfirm --clean
-          --distpath dist-mac
-          --workpath build-mac
+        working-directory: building
+        run: python -m PyInstaller paragraphulator-mac.spec --noconfirm --clean
+
+      - name: List build output
+        working-directory: building
+        run: ls -la dist*/ || echo "No dist directories found"; find . -name "paragraphulator.app" -maxdepth 3 -type d 2>/dev/null || true
 
       - name: Post-build optimization
+        working-directory: building
         run: |
-          APP_DIR="dist-mac/paragraphulator.app"
-          if [ -d "$APP_DIR" ]; then
+          APP_DIR=$(find . -name "paragraphulator.app" -maxdepth 3 -type d | head -1)
+          if [ -n "$APP_DIR" ]; then
+            echo "Optimizing: $APP_DIR"
+
             # Remove Qt translation files (~5MB savings)
             rm -rf "$APP_DIR/Contents/Frameworks/PySide6/Qt/translations" 2>/dev/null || true
             rm -rf "$APP_DIR/Contents/Resources/PySide6/Qt/translations" 2>/dev/null || true
@@ -180,12 +203,18 @@ jobs:
 
             # Re-sign after modifications
             codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
+          else
+            echo "WARNING: paragraphulator.app not found"
           fi
 
       - name: Zip app bundle
+        working-directory: building
         run: |
-          cd dist-mac
-          zip -r ../paragraphulator-macos.zip paragraphulator.app
+          APP_PATH=$(find . -name "paragraphulator.app" -maxdepth 3 -type d | head -1)
+          echo "Found app at: $APP_PATH"
+          APP_DIR=$(dirname "$APP_PATH")
+          cd "$APP_DIR"
+          zip -r "$GITHUB_WORKSPACE/paragraphulator-macos.zip" paragraphulator.app
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
