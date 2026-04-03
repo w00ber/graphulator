@@ -1,0 +1,206 @@
+name: Build Standalone Apps
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      python_version:
+        description: 'Python version to use'
+        required: false
+        default: '3.11'
+        type: choice
+        options:
+          - '3.10'
+          - '3.11'
+          - '3.12'
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: ${{ inputs.python_version || '3.11' }}
+
+jobs:
+  build-graphulator-windows:
+    name: Build graphulator (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -e .
+
+      - name: Build with PyInstaller
+        working-directory: building
+        run: python -m PyInstaller graphulator-win.spec --noconfirm
+
+      - name: Zip artifact
+        shell: pwsh
+        working-directory: building
+        run: Compress-Archive -Path dist-graphulator-win\graphulator\* -DestinationPath graphulator-windows.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: graphulator-windows
+          path: building/graphulator-windows.zip
+
+  build-graphulator-macos:
+    name: Build graphulator (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -e .
+
+      - name: Build with PyInstaller
+        working-directory: building
+        run: python -m PyInstaller graphulator-mac.spec --noconfirm
+
+      - name: Zip app bundle
+        working-directory: building
+        run: |
+          cd dist-graphulator-mac
+          zip -r ../graphulator-macos.zip graphulator.app
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: graphulator-macos
+          path: building/graphulator-macos.zip
+
+  build-paragraphulator-windows:
+    name: Build paragraphulator (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -e .
+          pip install certifi markdown
+
+      - name: Build with PyInstaller
+        working-directory: building
+        run: python -m PyInstaller paragraphulator-win.spec --noconfirm
+
+      - name: Zip artifact
+        shell: pwsh
+        working-directory: building
+        run: Compress-Archive -Path dist-win\paragraphulator\* -DestinationPath paragraphulator-windows.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: paragraphulator-windows
+          path: building/paragraphulator-windows.zip
+
+  build-paragraphulator-macos:
+    name: Build paragraphulator (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -e .
+          pip install certifi markdown
+
+      - name: Build with PyInstaller
+        working-directory: building
+        run: python -m PyInstaller paragraphulator-mac.spec --noconfirm
+
+      - name: Post-build optimization
+        working-directory: building
+        run: |
+          APP_DIR="dist-mac/paragraphulator.app"
+          if [ -d "$APP_DIR" ]; then
+            # Remove Qt translation files (~5MB savings)
+            find "$APP_DIR" -name "qt_*.qm" -delete 2>/dev/null || true
+            find "$APP_DIR" -name "qtbase_*.qm" -delete 2>/dev/null || true
+
+            # Remove non-English QtWebEngine locales (~20MB savings)
+            LOCALES_DIR=$(find "$APP_DIR" -name "qtwebengine_locales" -type d 2>/dev/null | head -1)
+            if [ -n "$LOCALES_DIR" ] && [ -d "$LOCALES_DIR" ]; then
+              find "$LOCALES_DIR" -name "*.pak" ! -name "en-US.pak" -delete 2>/dev/null || true
+            fi
+
+            # Remove unused Qt plugins
+            for plugin_dir in sqldrivers virtualkeyboard position sensors multimedia; do
+              find "$APP_DIR" -path "*/$plugin_dir" -type d -exec rm -rf {} + 2>/dev/null || true
+            done
+
+            # Re-sign after modifications
+            codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
+          fi
+
+      - name: Zip app bundle
+        working-directory: building
+        run: |
+          cd dist-mac
+          zip -r ../paragraphulator-macos.zip paragraphulator.app
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: paragraphulator-macos
+          path: building/paragraphulator-macos.zip
+
+  create-release:
+    name: Create Release
+    needs:
+      - build-graphulator-windows
+      - build-graphulator-macos
+      - build-paragraphulator-windows
+      - build-paragraphulator-macos
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/graphulator-windows/graphulator-windows.zip
+            artifacts/graphulator-macos/graphulator-macos.zip
+            artifacts/paragraphulator-windows/paragraphulator-windows.zip
+            artifacts/paragraphulator-macos/paragraphulator-macos.zip
