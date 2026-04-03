@@ -131,6 +131,9 @@ SELFLOOP_ANGLE_KEYBOARD_INCREMENT = 15  # degrees per keypress (must be multiple
 # Auto-adjust self-loop angle to avoid overlapping with existing edges
 AUTO_ADJUST_SELFLOOP_ANGLE = True  # When True, new self-loops auto-orient away from edges
 
+# Dynamically re-adjust unpinned self-loop angles when nodes are dragged
+DYNAMIC_ADJUST_SELFLOOP_ANGLE = True  # When True, unpinned self-loops reorient on drag-end
+
 # =============================================================================
 # REGULAR EDGE SPECIFIC DEFAULTS
 # =============================================================================

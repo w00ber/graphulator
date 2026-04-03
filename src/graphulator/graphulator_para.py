@@ -136,6 +136,7 @@ SETTINGS_PARAMS = {
             ('270° (Down)', 270), ('315° (Down-Right)', 315)
         ], None, None),
         ('AUTO_ADJUST_SELFLOOP_ANGLE', 'Auto-Orient Away From Edges', 'bool', None, None, None),
+        ('DYNAMIC_ADJUST_SELFLOOP_ANGLE', 'Re-Orient on Node Drag', 'bool', None, None, None),
         ('SELFLOOP_ANGLE_KEYBOARD_INCREMENT', 'Angle Increment (°)', 'dropdown', [
             ('5°', 5), ('10°', 10), ('15°', 15), ('20°', 20), ('25°', 25),
             ('30°', 30), ('35°', 35), ('40°', 40), ('45°', 45),
@@ -3230,20 +3231,29 @@ class PropertiesPanel(QWidget):
 
         # Self-loop specific properties
         if is_self_loop:
-            # Angle dropdown
-            self.angle_combo = QComboBox()
-            angle_options = ['0° (Right)', '45° (Up-Right)', '90° (Up)', '135° (Up-Left)',
-                           '180° (Left)', '225° (Down-Left)', '270° (Down)', '315° (Down-Right)']
-            self.angle_combo.addItems(angle_options)
-            # Set current angle
+            # Angle spinbox with compass label
+            angle_layout = QHBoxLayout()
+            self.angle_spinbox = QSpinBox()
+            self.angle_spinbox.setMinimum(0)
+            self.angle_spinbox.setMaximum(355)
+            self.angle_spinbox.setSingleStep(config.SELFLOOP_ANGLE_KEYBOARD_INCREMENT)
+            self.angle_spinbox.setWrapping(True)
             selfloopangle = edge.get('selfloopangle', 0)
-            for i, option in enumerate(angle_options):
-                if int(option.split('°')[0]) == selfloopangle:
-                    self.angle_combo.setCurrentIndex(i)
-                    break
-            self.angle_combo.currentTextChanged.connect(lambda: self._update_edge_angle())
-            self.angle_combo.setToolTip("Ctrl+Left/Right (when self-loop selected)")
-            form.addRow("Angle:", self.angle_combo)
+            self.angle_spinbox.setValue(selfloopangle)
+            self.angle_spinbox.setSuffix("°")
+            self.angle_spinbox.setToolTip("Ctrl+Left/Right (when self-loop selected)")
+            self.angle_spinbox.valueChanged.connect(lambda val: self._update_edge_angle_spinbox(val))
+            angle_layout.addWidget(self.angle_spinbox)
+            self.angle_compass_label = QLabel(self._compass_direction(selfloopangle))
+            angle_layout.addWidget(self.angle_compass_label)
+            form.addRow("Angle:", angle_layout)
+
+            # Angle pinned checkbox
+            self.angle_pinned_checkbox = QCheckBox()
+            self.angle_pinned_checkbox.setChecked(edge.get('angle_pinned', False))
+            self.angle_pinned_checkbox.setToolTip("When pinned, angle won't auto-adjust on node drag")
+            self.angle_pinned_checkbox.stateChanged.connect(lambda: self._update_angle_pinned())
+            form.addRow("Angle Pinned:", self.angle_pinned_checkbox)
 
             # Scale dropdown
             self.scale_combo = QComboBox()
@@ -3425,8 +3435,17 @@ class PropertiesPanel(QWidget):
             self.graphulator._save_last_edge_props(self.current_object)
             self.graphulator._update_plot()
 
+    @staticmethod
+    def _compass_direction(angle):
+        """Return compass direction label for an angle."""
+        compass = {
+            0: 'Right', 45: 'Up-Right', 90: 'Up', 135: 'Up-Left',
+            180: 'Left', 225: 'Down-Left', 270: 'Down', 315: 'Down-Right'
+        }
+        return compass.get(angle % 360, '')
+
     def _update_edge_angle(self):
-        """Update self-loop angle"""
+        """Update self-loop angle (legacy, kept for compatibility)"""
         if self.current_object and self.current_type == 'edge':
             angle_text = self.angle_combo.currentText()
             selfloopangle = int(angle_text.split('°')[0])
@@ -3434,6 +3453,28 @@ class PropertiesPanel(QWidget):
             # Save for inheritance
             self.graphulator._save_last_edge_props(self.current_object)
             self.graphulator._update_plot()
+
+    def _update_edge_angle_spinbox(self, value):
+        """Update self-loop angle from spinbox"""
+        if self.current_object and self.current_type == 'edge':
+            self.current_object['selfloopangle'] = value
+            self.current_object['angle_pinned'] = True
+            # Update compass label and pinned checkbox
+            if hasattr(self, 'angle_compass_label'):
+                self.angle_compass_label.setText(self._compass_direction(value))
+            if hasattr(self, 'angle_pinned_checkbox'):
+                self.angle_pinned_checkbox.blockSignals(True)
+                self.angle_pinned_checkbox.setChecked(True)
+                self.angle_pinned_checkbox.blockSignals(False)
+            # Save for inheritance
+            self.graphulator._save_last_edge_props(self.current_object)
+            self.graphulator._update_plot()
+
+    def _update_angle_pinned(self):
+        """Update angle_pinned flag from checkbox"""
+        if self.current_object and self.current_type == 'edge':
+            self.current_object['angle_pinned'] = self.angle_pinned_checkbox.isChecked()
+            self.graphulator._save_last_edge_props(self.current_object)
 
     def _update_edge_scale(self):
         """Update self-loop scale"""
@@ -6688,6 +6729,7 @@ class Graphulator(QMainWindow):
                 edge_data["selfloopscale"] = edge.get("selfloopscale", 1.0)
                 edge_data["arrowlengthsc"] = edge.get("arrowlengthsc", 1.0)
                 edge_data["flip"] = edge.get("flip", False)
+                edge_data["angle_pinned"] = edge.get("angle_pinned", False)
                 edge_data["selflooplabelnudge"] = list(edge.get("selflooplabelnudge", (0.0, 0.0)))
                 edge_data["label_bgcolor"] = edge.get("label_bgcolor", None)
             else:
@@ -6932,6 +6974,7 @@ class Graphulator(QMainWindow):
                     edge["selfloopscale"] = edge_data.get("selfloopscale", 1.0)
                     edge["arrowlengthsc"] = edge_data.get("arrowlengthsc", 1.0)
                     edge["flip"] = edge_data.get("flip", False)
+                    edge["angle_pinned"] = edge_data.get("angle_pinned", False)
                     edge["selflooplabelnudge"] = tuple(edge_data.get("selflooplabelnudge", (0.0, 0.0)))
                     edge["label_bgcolor"] = edge_data.get("label_bgcolor", None)
                 else:
@@ -11546,6 +11589,22 @@ class Graphulator(QMainWindow):
                 edge['selfloopangle'] = (current - increment) % 360
             elif action == 'decrease':
                 edge['selfloopangle'] = (current + increment) % 360
+            edge['angle_pinned'] = True
+
+        # Update properties panel spinbox if showing a single self-loop
+        if len(self.selected_edges) == 1 and hasattr(self, 'properties_panel'):
+            edge = self.selected_edges[0]
+            if edge.get('is_self_loop', False) and hasattr(self.properties_panel, 'angle_spinbox'):
+                self.properties_panel.angle_spinbox.blockSignals(True)
+                self.properties_panel.angle_spinbox.setValue(edge.get('selfloopangle', 0))
+                self.properties_panel.angle_spinbox.blockSignals(False)
+                if hasattr(self.properties_panel, 'angle_compass_label'):
+                    self.properties_panel.angle_compass_label.setText(
+                        PropertiesPanel._compass_direction(edge.get('selfloopangle', 0)))
+                if hasattr(self.properties_panel, 'angle_pinned_checkbox'):
+                    self.properties_panel.angle_pinned_checkbox.blockSignals(True)
+                    self.properties_panel.angle_pinned_checkbox.setChecked(True)
+                    self.properties_panel.angle_pinned_checkbox.blockSignals(False)
 
         if len(selfloops) == 1:
             print(f"Self-loop angle: {selfloops[0]['selfloopangle']}°")
@@ -11586,6 +11645,7 @@ class Graphulator(QMainWindow):
                 edge['selfloopangle'] = (current - increment) % 360
             elif action == 'decrease':
                 edge['selfloopangle'] = (current + increment) % 360
+            edge['angle_pinned'] = True
 
         # Adjust regular edge looptheta (2° increments)
         for edge in regular_edges:
@@ -11603,6 +11663,17 @@ class Graphulator(QMainWindow):
                 self.properties_panel.looptheta_spinbox.blockSignals(True)
                 self.properties_panel.looptheta_spinbox.setValue(edge.get('looptheta', 30))
                 self.properties_panel.looptheta_spinbox.blockSignals(False)
+            elif edge.get('is_self_loop', False) and hasattr(self.properties_panel, 'angle_spinbox'):
+                self.properties_panel.angle_spinbox.blockSignals(True)
+                self.properties_panel.angle_spinbox.setValue(edge.get('selfloopangle', 0))
+                self.properties_panel.angle_spinbox.blockSignals(False)
+                if hasattr(self.properties_panel, 'angle_compass_label'):
+                    self.properties_panel.angle_compass_label.setText(
+                        PropertiesPanel._compass_direction(edge.get('selfloopangle', 0)))
+                if hasattr(self.properties_panel, 'angle_pinned_checkbox'):
+                    self.properties_panel.angle_pinned_checkbox.blockSignals(True)
+                    self.properties_panel.angle_pinned_checkbox.setChecked(True)
+                    self.properties_panel.angle_pinned_checkbox.blockSignals(False)
 
         # Print feedback and save for inheritance
         if len(self.selected_edges) == 1:
@@ -11978,7 +12049,8 @@ class Graphulator(QMainWindow):
                 'selfloopangle': edge.get('selfloopangle', config.DEFAULT_SELFLOOP_ANGLE),
                 'selfloopscale': edge.get('selfloopscale', config.DEFAULT_SELFLOOP_SCALE),
                 'flip': edge.get('flip', config.DEFAULT_SELFLOOP_FLIP),
-                'arrowlengthsc': edge.get('arrowlengthsc', config.DEFAULT_SELFLOOP_ARROWLENGTH)
+                'arrowlengthsc': edge.get('arrowlengthsc', config.DEFAULT_SELFLOOP_ARROWLENGTH),
+                'angle_pinned': edge.get('angle_pinned', False)
             }
         else:
             self.last_edge_props = {
@@ -12341,7 +12413,8 @@ class Graphulator(QMainWindow):
             'linewidth_mult': edge.get('linewidth_mult', 1.5),
             'selfloopangle': edge.get('selfloopangle', 0),
             'selfloopscale': edge.get('selfloopscale', 1.0),
-            'flip': edge.get('flip', False)
+            'flip': edge.get('flip', False),
+            'angle_pinned': edge.get('angle_pinned', False)
         }
 
         # Create dialog with current values - pass edge and graphulator for live updates
@@ -12464,6 +12537,7 @@ class Graphulator(QMainWindow):
             edge['selfloopangle'] = original_state['selfloopangle']
             edge['selfloopscale'] = original_state['selfloopscale']
             edge['flip'] = original_state['flip']
+            edge['angle_pinned'] = original_state['angle_pinned']
             self._update_plot()
             print("✗ Edit canceled")
 
@@ -13819,6 +13893,37 @@ class Graphulator(QMainWindow):
 
         return best_angle
 
+    def _recompute_unpinned_selfloop_angles(self, moved_node_ids):
+        """Recompute angles for unpinned self-loops affected by moved nodes.
+
+        Args:
+            moved_node_ids: set of node_ids that were moved. Self-loops on these
+                nodes AND self-loops on nodes connected to these nodes are affected.
+        """
+        if not config.DYNAMIC_ADJUST_SELFLOOP_ANGLE:
+            return
+
+        # Find all affected node IDs (moved nodes + their neighbors)
+        affected_node_ids = set(moved_node_ids)
+        for edge in self.edges:
+            if edge.get('is_self_loop', False):
+                continue
+            fid = edge.get('from_node_id')
+            tid = edge.get('to_node_id')
+            if fid in moved_node_ids:
+                affected_node_ids.add(tid)
+            if tid in moved_node_ids:
+                affected_node_ids.add(fid)
+
+        # Recompute unpinned self-loops on affected nodes
+        for edge in self.edges:
+            if (edge.get('is_self_loop', False) and
+                    not edge.get('angle_pinned', False) and
+                    edge.get('from_node_id') in affected_node_ids):
+                node = edge.get('from_node')
+                if node:
+                    edge['selfloopangle'] = self._compute_best_selfloop_angle(node)
+
     def _on_click_edge_mode(self, event):
         """Handle click in edge mode - connect two nodes."""
         clicked_node = self._find_node_at_position(event.xdata, event.ydata)
@@ -13855,7 +13960,8 @@ class Graphulator(QMainWindow):
                             'selfloopangle': self.last_selfloop_props.get('selfloopangle', config.DEFAULT_SELFLOOP_ANGLE),
                             'selfloopscale': self.last_selfloop_props.get('selfloopscale', config.DEFAULT_SELFLOOP_SCALE),
                             'flip': self.last_selfloop_props.get('flip', config.DEFAULT_SELFLOOP_FLIP),
-                            'arrowlengthsc': self.last_selfloop_props.get('arrowlengthsc', config.DEFAULT_SELFLOOP_ARROWLENGTH)
+                            'arrowlengthsc': self.last_selfloop_props.get('arrowlengthsc', config.DEFAULT_SELFLOOP_ARROWLENGTH),
+                            'angle_pinned': False
                         }
                     else:
                         # Use defaults for first self-loop
@@ -13872,7 +13978,8 @@ class Graphulator(QMainWindow):
                             'selfloopangle': config.DEFAULT_SELFLOOP_ANGLE,
                             'selfloopscale': config.DEFAULT_SELFLOOP_SCALE,
                             'flip': config.DEFAULT_SELFLOOP_FLIP,
-                            'arrowlengthsc': config.DEFAULT_SELFLOOP_ARROWLENGTH
+                            'arrowlengthsc': config.DEFAULT_SELFLOOP_ARROWLENGTH,
+                            'angle_pinned': False
                         }
                     # Auto-adjust angle away from existing edges if enabled
                     if config.AUTO_ADJUST_SELFLOOP_ANGLE:
@@ -14500,6 +14607,8 @@ class Graphulator(QMainWindow):
                 for node, snap_x, snap_y in new_positions:
                     node['pos'] = (snap_x, snap_y)
                 print(f"✓ Moved {len(self.selected_nodes)} node(s)")
+                self._recompute_unpinned_selfloop_angles(
+                    {node['node_id'] for node in self.selected_nodes})
             else:
                 print(f"✗ Cannot move group - some positions occupied")
 
@@ -14538,6 +14647,7 @@ class Graphulator(QMainWindow):
                             break
 
                 print(f"✓ Moved node '{self.dragging_node['label']}' from ({old_pos[0]:.3f}, {old_pos[1]:.3f}) to ({snap_x:.3f}, {snap_y:.3f})")
+                self._recompute_unpinned_selfloop_angles({self.dragging_node['node_id']})
             else:
                 print(f"✗ Cannot move node '{self.dragging_node['label']}' - position occupied")
 
@@ -14910,6 +15020,7 @@ class Graphulator(QMainWindow):
                 edge_state['selfloopscale'] = edge.get('selfloopscale', 1.0)
                 edge_state['arrowlengthsc'] = edge.get('arrowlengthsc', 1.0)
                 edge_state['flip'] = edge.get('flip', False)
+                edge_state['angle_pinned'] = edge.get('angle_pinned', False)
             edges_state.append(edge_state)
 
         state = {'nodes': nodes_state, 'edges': edges_state}
@@ -14975,6 +15086,7 @@ class Graphulator(QMainWindow):
                     edge['selfloopscale'] = edge_state.get('selfloopscale', 1.0)
                     edge['arrowlengthsc'] = edge_state.get('arrowlengthsc', 1.0)
                     edge['flip'] = edge_state.get('flip', False)
+                    edge['angle_pinned'] = edge_state.get('angle_pinned', False)
                     edge['selflooplabelnudge'] = edge_state.get('selflooplabelnudge', (0.0, 0.0))
                 self.edges.append(edge)
 
@@ -15040,6 +15152,7 @@ class Graphulator(QMainWindow):
             edge_copy['selfloopscale'] = edge.get('selfloopscale', 1.0)
             edge_copy['arrowlengthsc'] = edge.get('arrowlengthsc', 1.0)
             edge_copy['flip'] = edge.get('flip', False)
+            edge_copy['angle_pinned'] = edge.get('angle_pinned', False)
             edge_copy['selflooplabelnudge'] = edge.get('selflooplabelnudge', (0.0, 0.0))
             edge_copy['label_bgcolor'] = edge.get('label_bgcolor', None)
         else:
@@ -15323,6 +15436,7 @@ class Graphulator(QMainWindow):
                     new_edge['selfloopscale'] = clip_edge.get('selfloopscale', 1.0)
                     new_edge['arrowlengthsc'] = clip_edge.get('arrowlengthsc', 1.0)
                     new_edge['flip'] = clip_edge.get('flip', False)
+                    new_edge['angle_pinned'] = clip_edge.get('angle_pinned', False)
                     new_edge['selflooplabelnudge'] = clip_edge.get('selflooplabelnudge', (0.0, 0.0))
                     new_edge['label_bgcolor'] = clip_edge.get('label_bgcolor', None)
                 else:
@@ -15529,6 +15643,7 @@ class Graphulator(QMainWindow):
                     new_edge['selfloopscale'] = clip_edge.get('selfloopscale', 1.0)
                     new_edge['arrowlengthsc'] = clip_edge.get('arrowlengthsc', 1.0)
                     new_edge['flip'] = clip_edge.get('flip', False)
+                    new_edge['angle_pinned'] = clip_edge.get('angle_pinned', False)
                     new_edge['selflooplabelnudge'] = clip_edge.get('selflooplabelnudge', (0.0, 0.0))
                     new_edge['label_bgcolor'] = clip_edge.get('label_bgcolor', None)
                 else:
