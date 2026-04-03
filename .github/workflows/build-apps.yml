@@ -41,19 +41,21 @@ jobs:
           pip install -e .
 
       - name: Build with PyInstaller
-        working-directory: building
-        run: python -m PyInstaller graphulator-win.spec --noconfirm
+        run: >
+          python -m PyInstaller building/graphulator-win.spec
+          --noconfirm --clean
+          --distpath dist-graphulator-win
+          --workpath build-graphulator-win
 
       - name: Zip artifact
         shell: pwsh
-        working-directory: building
         run: Compress-Archive -Path dist-graphulator-win\graphulator\* -DestinationPath graphulator-windows.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: graphulator-windows
-          path: building/graphulator-windows.zip
+          path: graphulator-windows.zip
 
   build-graphulator-macos:
     name: Build graphulator (macOS)
@@ -73,11 +75,13 @@ jobs:
           pip install -e .
 
       - name: Build with PyInstaller
-        working-directory: building
-        run: python -m PyInstaller graphulator-mac.spec --noconfirm
+        run: >
+          python -m PyInstaller building/graphulator-mac.spec
+          --noconfirm --clean
+          --distpath dist-graphulator-mac
+          --workpath build-graphulator-mac
 
       - name: Zip app bundle
-        working-directory: building
         run: |
           cd dist-graphulator-mac
           zip -r ../graphulator-macos.zip graphulator.app
@@ -86,7 +90,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: graphulator-macos
-          path: building/graphulator-macos.zip
+          path: graphulator-macos.zip
 
   build-paragraphulator-windows:
     name: Build paragraphulator (Windows)
@@ -107,19 +111,21 @@ jobs:
           pip install certifi markdown
 
       - name: Build with PyInstaller
-        working-directory: building
-        run: python -m PyInstaller paragraphulator-win.spec --noconfirm
+        run: >
+          python -m PyInstaller building/paragraphulator-win.spec
+          --noconfirm --clean
+          --distpath dist-win
+          --workpath build-win
 
       - name: Zip artifact
         shell: pwsh
-        working-directory: building
         run: Compress-Archive -Path dist-win\paragraphulator\* -DestinationPath paragraphulator-windows.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: paragraphulator-windows
-          path: building/paragraphulator-windows.zip
+          path: paragraphulator-windows.zip
 
   build-paragraphulator-macos:
     name: Build paragraphulator (macOS)
@@ -140,35 +146,43 @@ jobs:
           pip install certifi markdown
 
       - name: Build with PyInstaller
-        working-directory: building
-        run: python -m PyInstaller paragraphulator-mac.spec --noconfirm
+        run: >
+          python -m PyInstaller building/paragraphulator-mac.spec
+          --noconfirm --clean
+          --distpath dist-mac
+          --workpath build-mac
 
       - name: Post-build optimization
-        working-directory: building
         run: |
           APP_DIR="dist-mac/paragraphulator.app"
           if [ -d "$APP_DIR" ]; then
             # Remove Qt translation files (~5MB savings)
-            find "$APP_DIR" -name "qt_*.qm" -delete 2>/dev/null || true
-            find "$APP_DIR" -name "qtbase_*.qm" -delete 2>/dev/null || true
+            rm -rf "$APP_DIR/Contents/Frameworks/PySide6/Qt/translations" 2>/dev/null || true
+            rm -rf "$APP_DIR/Contents/Resources/PySide6/Qt/translations" 2>/dev/null || true
 
             # Remove non-English QtWebEngine locales (~20MB savings)
-            LOCALES_DIR=$(find "$APP_DIR" -name "qtwebengine_locales" -type d 2>/dev/null | head -1)
-            if [ -n "$LOCALES_DIR" ] && [ -d "$LOCALES_DIR" ]; then
-              find "$LOCALES_DIR" -name "*.pak" ! -name "en-US.pak" -delete 2>/dev/null || true
+            LOCALES_DIR="$APP_DIR/Contents/Frameworks/PySide6/Qt/lib/QtWebEngineCore.framework/Versions/A/Resources/qtwebengine_locales"
+            if [ -d "$LOCALES_DIR" ]; then
+              find "$LOCALES_DIR" -name "*.pak" ! -name "en-US.pak" ! -name "en-GB.pak" -delete 2>/dev/null || true
             fi
 
             # Remove unused Qt plugins
-            for plugin_dir in sqldrivers virtualkeyboard position sensors multimedia; do
-              find "$APP_DIR" -path "*/$plugin_dir" -type d -exec rm -rf {} + 2>/dev/null || true
-            done
+            PLUGINS_DIR="$APP_DIR/Contents/Frameworks/PySide6/Qt/plugins"
+            if [ -d "$PLUGINS_DIR" ]; then
+              rm -rf "$PLUGINS_DIR/sqldrivers" 2>/dev/null || true
+              rm -rf "$PLUGINS_DIR/virtualkeyboard" 2>/dev/null || true
+              rm -rf "$PLUGINS_DIR/position" 2>/dev/null || true
+              rm -rf "$PLUGINS_DIR/sensors" 2>/dev/null || true
+              rm -rf "$PLUGINS_DIR/texttospeech" 2>/dev/null || true
+              rm -rf "$PLUGINS_DIR/multimedia" 2>/dev/null || true
+              rm -rf "$PLUGINS_DIR/qmltooling" 2>/dev/null || true
+            fi
 
             # Re-sign after modifications
             codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
           fi
 
       - name: Zip app bundle
-        working-directory: building
         run: |
           cd dist-mac
           zip -r ../paragraphulator-macos.zip paragraphulator.app
@@ -177,7 +191,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: paragraphulator-macos
-          path: building/paragraphulator-macos.zip
+          path: paragraphulator-macos.zip
 
   create-release:
     name: Create Release
