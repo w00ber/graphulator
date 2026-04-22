@@ -1,0 +1,238 @@
+{
+  "version": "2.0",
+  "format": "pgraph",
+  "metadata": {
+    "created": "2025-11-17T08:53:07.882157",
+    "modified": "2025-11-17T08:53:07.882588"
+  },
+  "view": {
+    "grid_type": "triangular",
+    "grid_rotation": 0,
+    "zoom_level": 0.8333333333333334,
+    "xlim": [
+      -6.3523063257983665,
+      5.3523063257983665
+    ],
+    "ylim": [
+      -5.889161280832751,
+      7.621212088401628
+    ],
+    "use_latex": false
+  },
+  "nodes": [
+    {
+      "node_id": 0,
+      "label": "A",
+      "pos": [
+        -3.5,
+        2.598076211353316
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "freq": 5.0,
+      "B_int": 1.0,
+      "B_ext": 0.5
+    },
+    {
+      "node_id": 1,
+      "label": "B",
+      "pos": [
+        2.5,
+        2.598076211353316
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "freq": 5.0,
+      "B_int": 1.0,
+      "B_ext": 0.5
+    },
+    {
+      "node_id": 2,
+      "label": "C",
+      "pos": [
+        -0.5,
+        -2.598076211353316
+      ],
+      "color": "darkseagreen",
+      "color_key": "GREEN",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "freq": 5.0,
+      "B_int": 1.0
+    }
+  ],
+  "edges": [
+    {
+      "from_node_id": 0,
+      "to_node_id": 1,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 0.0,
+      "rate": 1.0,
+      "phase": 0.0
+    },
+    {
+      "from_node_id": 1,
+      "to_node_id": 2,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 0.0,
+      "rate": 1.0,
+      "phase": 0.0
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 0,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "rate": 1.0,
+      "phase": 0.0
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 0,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 135,
+      "selfloopscale": 1.2,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 1,
+      "to_node_id": 1,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 0.8,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 45,
+      "selfloopscale": 1.2,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    }
+  ],
+  "node_properties": {
+    "0": {},
+    "1": {},
+    "2": {}
+  },
+  "edge_properties": {
+    "0_1": {},
+    "1_2": {},
+    "2_0": {},
+    "0_0": {},
+    "1_1": {}
+  },
+  "code_properties": {
+    "imports": [],
+    "node_code": {
+      "0": {},
+      "1": {},
+      "2": {}
+    },
+    "edge_code": {
+      "0_1": {},
+      "1_2": {},
+      "2_0": {},
+      "0_0": {},
+      "1_1": {}
+    },
+    "global_code": {}
+  },
+  "scattering": {
+    "tree_edges": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ]
+    ],
+    "chord_edges": [
+      [
+        0,
+        2
+      ]
+    ],
+    "frequency": {
+      "start": -0.0,
+      "stop": 10.0,
+      "points": 100
+    }
+  }
+}

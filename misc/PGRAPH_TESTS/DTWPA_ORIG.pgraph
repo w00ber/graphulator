@@ -1,0 +1,286 @@
+{
+  "version": "2.0",
+  "format": "pgraph",
+  "metadata": {
+    "created": "2025-11-25T17:08:00.106798",
+    "modified": "2025-11-25T17:08:00.106806"
+  },
+  "view": {
+    "grid_type": "square",
+    "grid_rotation": 0,
+    "zoom_level": 1.0,
+    "xlim": [
+      -6.4626406871192845,
+      3.4626406871192845
+    ],
+    "ylim": [
+      -4.228265477558446,
+      7.228265477558446
+    ],
+    "use_latex": false
+  },
+  "nodes": [
+    {
+      "node_id": 0,
+      "label": "A",
+      "pos": [
+        -4.0,
+        4.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "freq": 5.0,
+      "B_int": 0.0,
+      "B_ext": 0.01
+    },
+    {
+      "node_id": 1,
+      "label": "B",
+      "pos": [
+        1.0,
+        4.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "freq": 5.0,
+      "B_int": 0.0,
+      "B_ext": 0.01
+    },
+    {
+      "node_id": 2,
+      "label": "C",
+      "pos": [
+        -4.0,
+        -1.0
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "freq": 6.0,
+      "B_int": 0.01
+    },
+    {
+      "node_id": 3,
+      "label": "D",
+      "pos": [
+        1.0,
+        -1.0
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "freq": 6.0,
+      "B_int": 0.01
+    }
+  ],
+  "edges": [
+    {
+      "from_node_id": 0,
+      "to_node_id": 0,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 0.9,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 180,
+      "selfloopscale": 1.0,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 1,
+      "to_node_id": 1,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 0,
+      "selfloopscale": 1.0,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 1,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 0.0,
+      "rate": 0.01,
+      "phase": 0.0
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 3,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 0.0,
+      "rate": 0.006900000000000011,
+      "phase": 35.0
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 2,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 11.0,
+      "rate": 0.007700000000000005,
+      "phase": 105.0
+    },
+    {
+      "from_node_id": 3,
+      "to_node_id": 1,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 11.0,
+      "rate": 0.008600000000000002,
+      "phase": 0.0
+    }
+  ],
+  "node_properties": {
+    "0": {},
+    "1": {},
+    "2": {},
+    "3": {}
+  },
+  "edge_properties": {
+    "0_0": {},
+    "1_1": {},
+    "0_1": {},
+    "2_3": {},
+    "0_2": {},
+    "3_1": {}
+  },
+  "code_properties": {
+    "imports": [],
+    "node_code": {
+      "0": {},
+      "1": {},
+      "2": {},
+      "3": {}
+    },
+    "edge_code": {
+      "0_0": {},
+      "1_1": {},
+      "0_1": {},
+      "2_3": {},
+      "0_2": {},
+      "3_1": {}
+    },
+    "global_code": {}
+  },
+  "scattering": {
+    "tree_edges": [
+      [
+        2,
+        3
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        1,
+        3
+      ]
+    ],
+    "chord_edges": [
+      [
+        0,
+        1
+      ]
+    ],
+    "injection_node_id": 0,
+    "frequency": {
+      "center": 5.0,
+      "span": 0.04,
+      "points": 801
+    }
+  }
+}

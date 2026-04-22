@@ -1,0 +1,741 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "created": "2025-10-21T11:40:59.071720",
+    "modified": "2025-10-21T11:40:59.071728"
+  },
+  "view": {
+    "grid_type": "square",
+    "grid_rotation": 0,
+    "zoom_level": 1.0,
+    "xlim": [
+      -20.126782637264316,
+      27.126782637264316
+    ],
+    "ylim": [
+      -14.856697944570243,
+      28.856697944570243
+    ],
+    "use_latex": false
+  },
+  "nodes": [
+    {
+      "node_id": 0,
+      "label": "0",
+      "pos": [
+        -14.0,
+        9.0
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.1999999999999997,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 1,
+      "label": "1",
+      "pos": [
+        -9.0,
+        9.0
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.1999999999999997,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 2,
+      "label": "0",
+      "pos": [
+        -14.0,
+        5.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.3999999999999995,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 3,
+      "label": "1",
+      "pos": [
+        -9.0,
+        5.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.3999999999999995,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 4,
+      "label": "2",
+      "pos": [
+        -4.0,
+        9.0
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.1999999999999997,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 5,
+      "label": "3",
+      "pos": [
+        1.0,
+        9.0
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.1999999999999997,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 6,
+      "label": "2",
+      "pos": [
+        -4.0,
+        5.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.1999999999999997,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 7,
+      "label": "3",
+      "pos": [
+        1.0,
+        5.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.1999999999999997,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 8,
+      "label": "4",
+      "pos": [
+        6.0,
+        9.0
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 9,
+      "label": "5",
+      "pos": [
+        11.0,
+        9.0
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 10,
+      "label": "4",
+      "pos": [
+        6.0,
+        5.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.1999999999999993,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 11,
+      "label": "5",
+      "pos": [
+        11.0,
+        5.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.1999999999999993,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 12,
+      "label": "6",
+      "pos": [
+        16.0,
+        9.0
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 13,
+      "label": "7",
+      "pos": [
+        21.0,
+        9.0
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 14,
+      "label": "6",
+      "pos": [
+        16.0,
+        5.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.1999999999999993,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 15,
+      "label": "7",
+      "pos": [
+        21.0,
+        5.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 2.1999999999999993,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from_node_id": 0,
+      "to_node_id": 1,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 3,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 2,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 1,
+      "to_node_id": 3,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 4,
+      "to_node_id": 5,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 6,
+      "to_node_id": 7,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 4,
+      "to_node_id": 6,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 5,
+      "to_node_id": 7,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 1,
+      "to_node_id": 4,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 3,
+      "to_node_id": 6,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 8,
+      "to_node_id": 9,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 10,
+      "to_node_id": 11,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 8,
+      "to_node_id": 10,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 9,
+      "to_node_id": 11,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 12,
+      "to_node_id": 13,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 14,
+      "to_node_id": 15,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 12,
+      "to_node_id": 14,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 13,
+      "to_node_id": 15,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 9,
+      "to_node_id": 12,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 11,
+      "to_node_id": 14,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.6499999999999999,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 5,
+      "to_node_id": 8,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.8,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 7,
+      "to_node_id": 10,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.4,
+      "label_offset_mult": 0.8,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 0,
+      "label1": "\\Delta_0",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 2.9000000000000012,
+      "label_offset_mult": 0.8,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 135,
+      "selfloopscale": 1.0,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.04800000000000001,
+        -0.144
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 2,
+      "label1": "-\\Delta_0^*",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 2.9000000000000012,
+      "label_offset_mult": 0.8,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 225,
+      "selfloopscale": 1.0,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 13,
+      "to_node_id": 13,
+      "label1": "\\Delta_7",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 3.0,
+      "label_offset_mult": 0.8,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 45,
+      "selfloopscale": 1.0,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 15,
+      "to_node_id": 15,
+      "label1": "-\\Delta_7^*",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 3.0,
+      "label_offset_mult": 0.8,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 315,
+      "selfloopscale": 1.0,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    }
+  ]
+}

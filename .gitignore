@@ -1,0 +1,118 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+
+# Platform-specific PyInstaller build directories
+build-mac/
+build-win/
+build-graphulator-mac/
+build-graphulator-win/
+dist-mac/
+dist-win/
+dist-graphulator-mac/
+dist-graphulator-win/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+
+# Windows
+Thumbs.db
+ehthumbs.db
+
+# Claude Code
+.claude/
+
+# Syncthing conflict files
+*.sync-conflict-*
+
+# Private dev notes (kept locally, not tracked)
+PARAGRAPHULATOR_REFACTORING_PLAN.md
+APPBUILD_notes.md
+misc/TODO_misc.md
+run_para.py
+
+# Local release reference (maintainer only, not part of the public repo)
+RELEASE_PROCESS.md

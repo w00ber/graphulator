@@ -1,0 +1,266 @@
+{
+  "version": "2.0",
+  "format": "pgraph",
+  "metadata": {
+    "created": "2025-11-26T16:59:27.280318",
+    "modified": "2025-11-26T16:59:27.280349"
+  },
+  "view": {
+    "grid_type": "triangular",
+    "grid_rotation": 120,
+    "zoom_level": 0.7561436672967864,
+    "xlim": [
+      -5.033474386019681,
+      6.033474386019681
+    ],
+    "ylim": [
+      -3.725047584903775,
+      7.766499469231157
+    ],
+    "use_latex": false
+  },
+  "nodes": [
+    {
+      "node_id": 0,
+      "label": "A",
+      "pos": [
+        -2.0,
+        3.4641016151377544
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "freq": 6.0,
+      "B_int": 0.0,
+      "B_ext": 0.06
+    },
+    {
+      "node_id": 1,
+      "label": "B",
+      "pos": [
+        3.0,
+        3.4641016151377544
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "freq": 6.0,
+      "B_int": 0.0,
+      "B_ext": 0.06
+    },
+    {
+      "node_id": 2,
+      "label": "C",
+      "pos": [
+        0.5,
+        -0.8660254037844386
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "freq": 8.0,
+      "B_int": 0.0,
+      "B_ext": 0.03
+    }
+  ],
+  "edges": [
+    {
+      "from_node_id": 0,
+      "to_node_id": 1,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 0.0,
+      "rate": 0.061,
+      "phase": 0.0
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 0,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 150,
+      "selfloopscale": 1.0,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 1,
+      "to_node_id": 1,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 30,
+      "selfloopscale": 1.0,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 2,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 14.0,
+      "rate": 0.039,
+      "phase": 0.0
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 1,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 14.0,
+      "rate": 0.039,
+      "phase": 90.0
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 2,
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 270,
+      "selfloopscale": 1.0,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    }
+  ],
+  "node_properties": {
+    "0": {},
+    "1": {},
+    "2": {}
+  },
+  "edge_properties": {
+    "0_1": {},
+    "0_0": {},
+    "1_1": {},
+    "0_2": {},
+    "2_1": {},
+    "2_2": {}
+  },
+  "code_properties": {
+    "imports": [],
+    "node_code": {
+      "0": {},
+      "1": {},
+      "2": {}
+    },
+    "edge_code": {
+      "0_1": {},
+      "0_0": {},
+      "1_1": {},
+      "0_2": {},
+      "2_1": {},
+      "2_2": {}
+    },
+    "global_code": {}
+  },
+  "scattering": {
+    "tree_edges": [
+      [
+        0,
+        2
+      ],
+      [
+        1,
+        2
+      ]
+    ],
+    "chord_edges": [
+      [
+        0,
+        1
+      ]
+    ],
+    "injection_node_id": 0,
+    "frequency": {
+      "center": 6.0,
+      "span": 0.1,
+      "points": 801
+    }
+  }
+}

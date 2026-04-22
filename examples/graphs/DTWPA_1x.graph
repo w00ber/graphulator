@@ -1,0 +1,249 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "created": "2025-10-29T22:31:44.798049",
+    "modified": "2025-10-29T22:31:44.798074"
+  },
+  "view": {
+    "grid_type": "triangular",
+    "grid_rotation": 0,
+    "zoom_level": 0.7561436672967864,
+    "xlim": [
+      -4.555114357868469,
+      16.55511435786847
+    ],
+    "ylim": [
+      7.112779297595056,
+      25.887220702404946
+    ],
+    "use_latex": false
+  },
+  "nodes": [
+    {
+      "node_id": 0,
+      "label": "A",
+      "pos": [
+        2.0,
+        20.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 1,
+      "label": "B",
+      "pos": [
+        10.0,
+        20.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 2,
+      "label": "C",
+      "pos": [
+        2.0,
+        13.0
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_id": 3,
+      "label": "D",
+      "pos": [
+        10.0,
+        13.0
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from_node_id": 1,
+      "to_node_id": 3,
+      "label1": "\\beta_{DB}",
+      "label2": "-\\beta_{DB}^*",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 2.500000000000001,
+      "label_offset_mult": 0.8,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 135,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 1,
+      "label1": "\\beta_{BA}",
+      "label2": "\\beta_{BA}^*",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 2.600000000000001,
+      "label_offset_mult": 0.7,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 3,
+      "label1": "-\\beta_{DC}^*",
+      "label2": "-\\beta_{DC}",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 2.5,
+      "label_offset_mult": 0.8,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 2,
+      "label1": "\\beta_{CA}",
+      "label2": "-\\beta_{CA}^*",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 2.3000000000000003,
+      "label_offset_mult": 0.8,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 135,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 0,
+      "label1": "\\Delta_A",
+      "label2": "",
+      "linewidth_mult": 0.9972489539872512,
+      "label_size_mult": 2.3000000000000003,
+      "label_offset_mult": 0.8,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 135,
+      "selfloopscale": 1.3823999999999999,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        -0.048,
+        0.024
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 1,
+      "to_node_id": 1,
+      "label1": "\\Delta_B",
+      "label2": "",
+      "linewidth_mult": 1.152,
+      "label_size_mult": 2.1,
+      "label_offset_mult": 0.8,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 45,
+      "selfloopscale": 1.44,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.048,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 2,
+      "label1": "-\\Delta_C^*",
+      "label2": "",
+      "linewidth_mult": 0.9000000000000001,
+      "label_size_mult": 2.3000000000000003,
+      "label_offset_mult": 0.8,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 225,
+      "selfloopscale": 1.3823999999999999,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        -0.144,
+        -0.26399999999999996
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 3,
+      "to_node_id": 3,
+      "label1": "-\\Delta_D^*",
+      "label2": "",
+      "linewidth_mult": 0.9000000000000001,
+      "label_size_mult": 2.3000000000000003,
+      "label_offset_mult": 0.8,
+      "style": "loopy",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 315,
+      "selfloopscale": 1.3823999999999999,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        -0.07200000000000001,
+        -0.21599999999999997
+      ],
+      "label_bgcolor": null
+    }
+  ]
+}

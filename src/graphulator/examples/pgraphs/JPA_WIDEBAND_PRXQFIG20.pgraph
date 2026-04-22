@@ -1,0 +1,473 @@
+{
+  "version": "2.0",
+  "format": "pgraph",
+  "metadata": {
+    "created": "2025-12-19T10:47:31.484705",
+    "modified": "2025-12-19T10:47:31.484721"
+  },
+  "view": {
+    "grid_type": "square",
+    "grid_rotation": 0,
+    "zoom_level": 1.3224999999999993,
+    "xlim": [
+      -9.927101583420386,
+      5.195771762515349
+    ],
+    "ylim": [
+      -9.495777620608344,
+      11.446044877463336
+    ],
+    "use_latex": false
+  },
+  "nodes": [
+    {
+      "node_id": 0,
+      "label": "A3",
+      "pos": [
+        -6.0,
+        3.0
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color_key": "BLACK",
+      "outline_color": "black",
+      "outline_width": 2.5,
+      "outline_alpha": 1.0,
+      "freq": 5.0,
+      "B_int": 0.0,
+      "B_ext": 1.476
+    },
+    {
+      "node_id": 1,
+      "label": "A2",
+      "pos": [
+        -2.0,
+        3.0
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color_key": "BLACK",
+      "outline_color": "black",
+      "outline_width": 2.5,
+      "outline_alpha": 1.0,
+      "freq": 5.0,
+      "B_int": 0.0
+    },
+    {
+      "node_id": 2,
+      "label": "A1",
+      "pos": [
+        2.0,
+        3.0
+      ],
+      "color": "indianred",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color_key": "BLACK",
+      "outline_color": "black",
+      "outline_width": 2.5,
+      "outline_alpha": 1.0,
+      "freq": 5.0,
+      "B_int": 0.0
+    },
+    {
+      "node_id": 3,
+      "label": "B1",
+      "pos": [
+        2.0,
+        -1.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color_key": "BLACK",
+      "outline_color": "black",
+      "outline_width": 2.5,
+      "outline_alpha": 1.0,
+      "freq": 7.0,
+      "B_int": 0.0
+    },
+    {
+      "node_id": 4,
+      "label": "B2",
+      "pos": [
+        -2.0,
+        -1.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color_key": "BLACK",
+      "outline_color": "black",
+      "outline_width": 2.5,
+      "outline_alpha": 1.0,
+      "freq": 7.0,
+      "B_int": 0.0
+    },
+    {
+      "node_id": 5,
+      "label": "B3",
+      "pos": [
+        -6.0,
+        -1.0
+      ],
+      "color": "cornflowerblue",
+      "color_key": "BLUE",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": true,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color_key": "BLACK",
+      "outline_color": "black",
+      "outline_width": 2.5,
+      "outline_alpha": 1.0,
+      "freq": 7.0,
+      "B_int": 0.0,
+      "B_ext": 1.476
+    }
+  ],
+  "edges": [
+    {
+      "from_node_id": 5,
+      "to_node_id": 5,
+      "from_to": "B3 (self-loop)",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 180,
+      "selfloopscale": 1.0,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 0,
+      "from_to": "A3 (self-loop)",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": true,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "selfloopangle": 180,
+      "selfloopscale": 1.0,
+      "arrowlengthsc": 1.0,
+      "flip": false,
+      "selflooplabelnudge": [
+        0.0,
+        0.0
+      ],
+      "label_bgcolor": null
+    },
+    {
+      "from_node_id": 0,
+      "to_node_id": 1,
+      "from_to": "A3 <-> A2",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 0.0,
+      "rate": 1.0,
+      "phase": 0.0
+    },
+    {
+      "from_node_id": 1,
+      "to_node_id": 2,
+      "from_to": "A2 <-> A1",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 0.0,
+      "rate": 0.797,
+      "phase": 0.0
+    },
+    {
+      "from_node_id": 2,
+      "to_node_id": 3,
+      "from_to": "A1 <-> B1",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "double",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 12.0,
+      "rate": 0.84722,
+      "phase": 0.0
+    },
+    {
+      "from_node_id": 3,
+      "to_node_id": 4,
+      "from_to": "B1 <-> B2",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 0.0,
+      "rate": 0.797,
+      "phase": 0.0
+    },
+    {
+      "from_node_id": 4,
+      "to_node_id": 5,
+      "from_to": "B2 <-> B3",
+      "label1": "",
+      "label2": "",
+      "linewidth_mult": 1.5,
+      "label_size_mult": 1.0,
+      "label_offset_mult": 1.0,
+      "style": "single",
+      "direction": "both",
+      "is_self_loop": false,
+      "flip_labels": false,
+      "label_rotation_offset": 0,
+      "label1_bgcolor": null,
+      "label2_bgcolor": null,
+      "f_p": 0.0,
+      "rate": 1.0,
+      "phase": 0.0
+    }
+  ],
+  "node_properties": {
+    "0": {},
+    "1": {},
+    "2": {},
+    "3": {},
+    "4": {},
+    "5": {}
+  },
+  "edge_properties": {
+    "5_5": {},
+    "0_0": {},
+    "0_1": {},
+    "1_2": {},
+    "2_3": {},
+    "3_4": {},
+    "4_5": {}
+  },
+  "code_properties": {
+    "imports": [],
+    "node_code": {
+      "0": {},
+      "1": {},
+      "2": {},
+      "3": {},
+      "4": {},
+      "5": {}
+    },
+    "edge_code": {
+      "5_5": {},
+      "0_0": {},
+      "0_1": {},
+      "1_2": {},
+      "2_3": {},
+      "3_4": {},
+      "4_5": {}
+    },
+    "global_code": {}
+  },
+  "scattering": {
+    "tree_edges": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        4,
+        5
+      ]
+    ],
+    "chord_edges": [],
+    "injection_node_id": 0,
+    "frequency": {
+      "center": 5.0,
+      "span": 2.000000000000001,
+      "points": 801
+    },
+    "sparams_plot": {
+      "xlim": [
+        3.9999999999999996,
+        6.0
+      ],
+      "ylim": [
+        -13.0,
+        25.0
+      ],
+      "x_autoscale": true,
+      "y_autoscale": false,
+      "conjugate_freqs": false,
+      "plot_mode": "dB",
+      "phase_autoscale": true,
+      "phase_ylim": [
+        -180.0,
+        180.0
+      ],
+      "phase_unwrap": false,
+      "selected": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ]
+    },
+    "constraint_groups": {
+      "1": {
+        "param_name": "rate",
+        "obj_type": "edge",
+        "members": [
+          "A3\u2192A2",
+          "B2*\u2192B3*"
+        ],
+        "value": 1000.0
+      },
+      "2": {
+        "param_name": "rate",
+        "obj_type": "edge",
+        "members": [
+          "A2\u2192A1",
+          "B1*\u2192B2*"
+        ],
+        "value": 797.0
+      },
+      "3": {
+        "param_name": "B_ext",
+        "obj_type": "node",
+        "members": [
+          "A3",
+          "B3"
+        ],
+        "value": 1476.0
+      },
+      "4": {
+        "param_name": "freq",
+        "obj_type": "node",
+        "members": [
+          "A3",
+          "A2",
+          "A1"
+        ],
+        "value": 5.0
+      },
+      "5": {
+        "param_name": "freq",
+        "obj_type": "node",
+        "members": [
+          "B1",
+          "B2",
+          "B3"
+        ],
+        "value": 7.0
+      }
+    },
+    "next_constraint_group_id": 6
+  },
+  "notes": "# WIDEBAND NONDEGENERATE PARAMETRIC AMPLIFIER\nThis example is taken from Section D.1 from PRXQ 3, 020201 (2022). It sets up and calculates a 6-mode graph using the following $\\beta$ coupling parameters:\n\n$$\n\\begin{align}\n\\beta_{12} &= 0.27\\\\\n\\beta_{23} &= 0.339\\\\\n\\beta_\\mathrm{PA} &= 0.287\n\\end{align}\n$$\n\nand symmetric port coupling rates $\\gamma_0/2\\pi = 1.476$ to obtain a 500 MHz bandwidth 3rd order Chebyshev gain profile. The scattering parameters shown here correspond to Figure 20 in the paper.\n\n\nThe original Chebyshev prototype immittance coefficients (Appendix E (Table III)) are \n\n$$\n\\{g_0, \\ldots, g_4\\} = \\{1.0, 0.5899, 0.6681, 0.3753, 0.9045\\}.\n$$\n\n\nTo derive the $\\beta$s from the coupling coefficients, we use Eqns (62) and (83):\n\n$$\n\\begin{align}\n\\beta_{jk} &= \\frac{\\Delta\\omega}{2\\gamma_0 \\sqrt{g_j g_k}} &= \\frac{\\mathbf{g}_{jk}}{2\\gamma_0}\\\\\n\\beta_\\mathrm{PA} &= \\frac{1}{2}\\frac{g_N g_{N+1}}{g_0 g_1} &= \\frac{\\mathbf{g}_\\mathrm{jk}}{2\\gamma_0}.\n\\end{align}\n$$\n\nNote that here, there's some notational redundancy. It's convention to use $g_k$ as normalized immittance prototype parameters, but physicists also use $g$s for coupling rates. In the above we distinguish coupling rates as `\\mathbf{g}`s, i.e., $\\mathbf{g}_{jk}$ for the coupling rate between modes $j$ and $k$.\n\nAlso keep in mind that we can drop all of the $2\\pi$ stuff and define all of the rates in arb units that can correspond to GHz or whatever you like. All of the factors for converting to radial rates drops out so it doesn't matter.\n\n\n",
+  "svg": "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"no\"?>\n<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\"\n  \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n<svg xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"695.52pt\" height=\"957.6pt\" viewBox=\"0 0 695.52 957.6\" xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\">\n <metadata>\n  <rdf:RDF xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:cc=\"http://creativecommons.org/ns#\" xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n   <cc:Work>\n    <dc:type rdf:resource=\"http://purl.org/dc/dcmitype/StillImage\"/>\n    <dc:date>2025-12-19T10:47:31.517469</dc:date>\n    <dc:format>image/svg+xml</dc:format>\n    <dc:creator>\n     <cc:Agent>\n      <dc:title>Matplotlib v3.10.6, https://matplotlib.org/</dc:title>\n     </cc:Agent>\n    </dc:creator>\n   </cc:Work>\n  </rdf:RDF>\n </metadata>\n <defs>\n  <style type=\"text/css\">*{stroke-linejoin: round; stroke-linecap: butt}</style>\n </defs>\n <g id=\"figure_1\">\n  <g id=\"patch_1\">\n   <path d=\"M 0 957.6 \nL 695.52 957.6 \nL 695.52 0 \nL 0 0 \nz\n\" style=\"fill: #ffffff\"/>\n  </g>\n  <g id=\"axes_1\">\n   <g id=\"patch_2\">\n    <path d=\"M 157.188831 549.624586 \nC 89.9785 504.290645 89.9785 631.225679 157.188831 585.891738 \n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: none; stroke: #000000; stroke-width: 3.14226; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_3\">\n    <path d=\"M 157.188831 369.468346 \nC 89.9785 324.134405 89.9785 451.069439 157.188831 405.735498 \n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: none; stroke: #000000; stroke-width: 3.14226; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_4\">\n    <path d=\"M 222.356165 387.601922 \nC 222.356165 387.601922 325.946003 387.601922 325.946003 387.601922 \n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: none; stroke: #000000; stroke-width: 9.42678; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_5\">\n    <path d=\"M 402.512405 387.601922 \nC 402.512405 387.601922 506.102243 387.601922 506.102243 387.601922 \n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: none; stroke: #000000; stroke-width: 9.42678; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_6\">\n    <path d=\"M 544.385444 425.885123 \nC 544.385444 425.885123 544.385444 529.474961 544.385444 529.474961 \n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: none; stroke: #000000; stroke-width: 18.85356; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_7\">\n    <path d=\"M 544.385444 425.119459 \nC 544.385444 425.119459 544.385444 530.240625 544.385444 530.240625 \n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: none; stroke: #ffffff; stroke-width: 6.221675; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_8\">\n    <path d=\"M 506.102243 567.758162 \nC 506.102243 567.758162 402.512405 567.758162 402.512405 567.758162 \n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: none; stroke: #000000; stroke-width: 9.42678; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"patch_9\">\n    <path d=\"M 325.946003 567.758162 \nC 325.946003 567.758162 222.356165 567.758162 222.356165 567.758162 \n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: none; stroke: #000000; stroke-width: 9.42678; stroke-linejoin: miter\"/>\n   </g>\n   <g id=\"line2d_1\">\n    <path d=\"M 148.434091 586.503929 \nL 157.188831 585.891738 \nL 153.341634 593.779661 \n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: none; stroke: #000000; stroke-width: 2.513808; stroke-linecap: square\"/>\n   </g>\n   <g id=\"line2d_2\">\n    <path d=\"M 148.434091 406.347689 \nL 157.188831 405.735498 \nL 153.341634 413.623421 \n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: none; stroke: #000000; stroke-width: 2.513808; stroke-linecap: square\"/>\n   </g>\n   <g id=\"patch_10\">\n    <path d=\"M 184.072964 414.625358 \nC 191.239663 414.625358 198.113797 411.777998 203.181419 406.710377 \nC 208.24904 401.642755 211.0964 394.768621 211.0964 387.601922 \nC 211.0964 380.435223 208.24904 373.561089 203.181419 368.493467 \nC 198.113797 363.425846 191.239663 360.578486 184.072964 360.578486 \nC 176.906265 360.578486 170.03213 363.425846 164.964509 368.493467 \nC 159.896888 373.561089 157.049528 380.435223 157.049528 387.601922 \nC 157.049528 394.768621 159.896888 401.642755 164.964509 406.710377 \nC 170.03213 411.777998 176.906265 414.625358 184.072964 414.625358 \nz\n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: #cd5c5c\"/>\n   </g>\n   <g id=\"patch_11\">\n    <path d=\"M 364.229204 414.625358 \nC 371.395903 414.625358 378.270037 411.777998 383.337659 406.710377 \nC 388.40528 401.642755 391.25264 394.768621 391.25264 387.601922 \nC 391.25264 380.435223 388.40528 373.561089 383.337659 368.493467 \nC 378.270037 363.425846 371.395903 360.578486 364.229204 360.578486 \nC 357.062505 360.578486 350.18837 363.425846 345.120749 368.493467 \nC 340.053128 373.561089 337.205768 380.435223 337.205768 387.601922 \nC 337.205768 394.768621 340.053128 401.642755 345.120749 406.710377 \nC 350.18837 411.777998 357.062505 414.625358 364.229204 414.625358 \nz\n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: #cd5c5c\"/>\n   </g>\n   <g id=\"patch_12\">\n    <path d=\"M 544.385444 414.625358 \nC 551.552143 414.625358 558.426277 411.777998 563.493899 406.710377 \nC 568.56152 401.642755 571.40888 394.768621 571.40888 387.601922 \nC 571.40888 380.435223 568.56152 373.561089 563.493899 368.493467 \nC 558.426277 363.425846 551.552143 360.578486 544.385444 360.578486 \nC 537.218745 360.578486 530.34461 363.425846 525.276989 368.493467 \nC 520.209368 373.561089 517.362008 380.435223 517.362008 387.601922 \nC 517.362008 394.768621 520.209368 401.642755 525.276989 406.710377 \nC 530.34461 411.777998 537.218745 414.625358 544.385444 414.625358 \nz\n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: #cd5c5c\"/>\n   </g>\n   <g id=\"patch_13\">\n    <path d=\"M 544.385444 594.781598 \nC 551.552143 594.781598 558.426277 591.934238 563.493899 586.866617 \nC 568.56152 581.798995 571.40888 574.924861 571.40888 567.758162 \nC 571.40888 560.591463 568.56152 553.717329 563.493899 548.649707 \nC 558.426277 543.582086 551.552143 540.734726 544.385444 540.734726 \nC 537.218745 540.734726 530.34461 543.582086 525.276989 548.649707 \nC 520.209368 553.717329 517.362008 560.591463 517.362008 567.758162 \nC 517.362008 574.924861 520.209368 581.798995 525.276989 586.866617 \nC 530.34461 591.934238 537.218745 594.781598 544.385444 594.781598 \nz\n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: #6495ed; opacity: 0.5\"/>\n   </g>\n   <g id=\"patch_14\">\n    <path d=\"M 364.229204 594.781598 \nC 371.395903 594.781598 378.270037 591.934238 383.337659 586.866617 \nC 388.40528 581.798995 391.25264 574.924861 391.25264 567.758162 \nC 391.25264 560.591463 388.40528 553.717329 383.337659 548.649707 \nC 378.270037 543.582086 371.395903 540.734726 364.229204 540.734726 \nC 357.062505 540.734726 350.18837 543.582086 345.120749 548.649707 \nC 340.053128 553.717329 337.205768 560.591463 337.205768 567.758162 \nC 337.205768 574.924861 340.053128 581.798995 345.120749 586.866617 \nC 350.18837 591.934238 357.062505 594.781598 364.229204 594.781598 \nz\n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: #6495ed; opacity: 0.5\"/>\n   </g>\n   <g id=\"patch_15\">\n    <path d=\"M 184.072964 594.781598 \nC 191.239663 594.781598 198.113797 591.934238 203.181419 586.866617 \nC 208.24904 581.798995 211.0964 574.924861 211.0964 567.758162 \nC 211.0964 560.591463 208.24904 553.717329 203.181419 548.649707 \nC 198.113797 543.582086 191.239663 540.734726 184.072964 540.734726 \nC 176.906265 540.734726 170.03213 543.582086 164.964509 548.649707 \nC 159.896888 553.717329 157.049528 560.591463 157.049528 567.758162 \nC 157.049528 574.924861 159.896888 581.798995 164.964509 586.866617 \nC 170.03213 591.934238 176.906265 594.781598 184.072964 594.781598 \nz\n\" clip-path=\"url(#p325435dbbb)\" style=\"fill: #6495ed; opacity: 0.5\"/>\n   </g>\n   <g id=\"text_1\">\n    <!-- $\\mathbf{\\mathsf{A3}}$ -->\n    <g style=\"fill: #ffffff\" transform=\"translate(168.315598 395.095774) scale(0.26483 -0.26483)\">\n     <defs>\n      <path id=\"STIXGeneral-Bold-1d5d4\" d=\"M 4256 0 \nL 3424 0 \nL 3002 1037 \nL 1414 1037 \nL 992 0 \nL 160 0 \nL 2118 4416 \nL 2298 4416 \nL 4256 0 \nz\nM 2739 1690 \nL 2208 2995 \nL 1677 1690 \nL 2739 1690 \nz\n\" transform=\"scale(0.015625)\"/>\n      <path id=\"STIXGeneral-Bold-1d7ef\" d=\"M 2432 2400 \nL 2432 2387 \nQ 2701 2259 2883 1993 \nQ 3066 1728 3066 1402 \nQ 3066 915 2813 566 \nQ 2560 218 2138 45 \nQ 1811 -83 1331 -83 \nQ 557 -83 115 384 \nL 486 877 \nQ 800 525 1376 525 \nQ 1850 525 2080 730 \nQ 2298 928 2298 1267 \nQ 2298 1594 1990 1805 \nQ 1677 2016 1056 2016 \nL 1056 2118 \nL 1434 2624 \nQ 1734 2624 1945 2809 \nQ 2157 2995 2157 3232 \nQ 2157 3507 1993 3651 \nQ 1830 3795 1562 3795 \nQ 1338 3795 1152 3651 \nQ 966 3507 883 3194 \nL 307 3392 \nQ 480 3859 832 4131 \nQ 1184 4403 1677 4403 \nQ 2182 4403 2537 4102 \nQ 2893 3802 2893 3322 \nQ 2893 3066 2771 2803 \nQ 2650 2541 2432 2400 \nz\n\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#STIXGeneral-Bold-1d5d4\"/>\n     <use xlink:href=\"#STIXGeneral-Bold-1d7ef\" transform=\"translate(68.999985 0)\"/>\n    </g>\n   </g>\n   <g id=\"text_2\">\n    <!-- $\\mathbf{\\mathsf{A2}}$ -->\n    <g style=\"fill: #ffffff\" transform=\"translate(348.471838 395.095774) scale(0.26483 -0.26483)\">\n     <defs>\n      <path id=\"STIXGeneral-Bold-1d7ee\" d=\"M 3034 608 \nL 2822 0 \nL 128 0 \nL 128 147 \nL 1677 2067 \nQ 2118 2611 2118 3136 \nQ 2118 3398 1955 3596 \nQ 1792 3795 1517 3795 \nQ 1280 3795 1088 3622 \nQ 896 3450 813 3085 \nL 205 3085 \nQ 320 3693 691 4048 \nQ 1062 4403 1632 4403 \nQ 2208 4403 2547 4051 \nQ 2886 3699 2886 3187 \nQ 2886 2797 2748 2505 \nQ 2611 2214 2221 1747 \nL 1280 608 \nL 3034 608 \nz\n\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#STIXGeneral-Bold-1d5d4\"/>\n     <use xlink:href=\"#STIXGeneral-Bold-1d7ee\" transform=\"translate(68.999985 0)\"/>\n    </g>\n   </g>\n   <g id=\"text_3\">\n    <!-- $\\mathbf{\\mathsf{A1}}$ -->\n    <g style=\"fill: #ffffff\" transform=\"translate(528.628078 395.095774) scale(0.26483 -0.26483)\">\n     <defs>\n      <path id=\"STIXGeneral-Bold-1d7ed\" d=\"M 2138 0 \nL 1370 0 \nL 1370 3469 \nL 525 3149 \nL 525 3725 \nL 2016 4403 \nL 2138 4403 \nL 2138 0 \nz\n\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#STIXGeneral-Bold-1d5d4\"/>\n     <use xlink:href=\"#STIXGeneral-Bold-1d7ed\" transform=\"translate(68.999985 0)\"/>\n    </g>\n   </g>\n   <g id=\"text_4\">\n    <!-- $\\mathbf{\\mathsf{B1}}\\ast$ -->\n    <g style=\"fill: #ffffff\" transform=\"translate(520.630222 574.652506) scale(0.243643 -0.243643)\">\n     <defs>\n      <path id=\"STIXGeneral-Bold-1d5d5\" d=\"M 2963 2387 \nL 2970 2362 \nQ 3450 2131 3626 1852 \nQ 3802 1574 3802 1203 \nQ 3802 685 3334 342 \nQ 2867 0 2176 0 \nL 512 0 \nL 512 4326 \nL 2029 4326 \nQ 2784 4326 3181 4051 \nQ 3578 3776 3578 3251 \nQ 3578 2989 3418 2755 \nQ 3258 2522 2963 2387 \nz\nM 1331 2643 \nL 1792 2643 \nQ 2694 2643 2694 3213 \nQ 2694 3450 2547 3562 \nQ 2400 3674 2054 3674 \nL 1331 3674 \nL 1331 2643 \nz\nM 1331 653 \nL 1990 653 \nQ 2502 653 2697 838 \nQ 2893 1024 2893 1350 \nQ 2893 1683 2576 1836 \nQ 2259 1990 1811 1990 \nL 1331 1990 \nL 1331 653 \nz\n\" transform=\"scale(0.015625)\"/>\n      <path id=\"STIXGeneral-Regular-2217\" d=\"M 2925 2157 \nQ 2925 2042 2784 1958 \nQ 2739 1933 2400 1843 \nQ 2061 1754 1792 1600 \nQ 2022 1466 2371 1370 \nQ 2720 1274 2778 1242 \nQ 2912 1165 2912 1037 \nQ 2912 934 2845 860 \nQ 2778 787 2662 787 \nQ 2554 787 2432 905 \nQ 2310 1024 2131 1213 \nQ 1952 1402 1747 1517 \nQ 1747 1267 1840 908 \nQ 1933 550 1933 480 \nQ 1933 378 1856 294 \nQ 1779 211 1689 211 \nQ 1600 211 1523 294 \nQ 1446 378 1446 480 \nQ 1446 550 1539 908 \nQ 1632 1267 1632 1517 \nQ 1440 1408 1174 1139 \nQ 909 870 858 845 \nQ 768 794 685 794 \nQ 576 794 512 854 \nQ 448 915 448 998 \nQ 448 1165 582 1248 \nQ 646 1280 1011 1385 \nQ 1376 1491 1562 1600 \nQ 1376 1709 1005 1814 \nQ 634 1920 557 1965 \nQ 429 2042 429 2157 \nQ 429 2259 496 2342 \nQ 563 2426 659 2426 \nQ 723 2426 800 2387 \nQ 864 2349 1145 2077 \nQ 1427 1805 1632 1696 \nQ 1632 1946 1539 2317 \nQ 1446 2688 1446 2758 \nQ 1446 2861 1523 2937 \nQ 1600 3014 1689 3014 \nQ 1779 3014 1856 2934 \nQ 1933 2854 1933 2758 \nQ 1933 2688 1840 2320 \nQ 1747 1952 1747 1702 \nQ 2016 1843 2262 2102 \nQ 2509 2362 2554 2387 \nQ 2630 2426 2694 2426 \nQ 2790 2426 2857 2342 \nQ 2925 2259 2925 2157 \nz\n\" transform=\"scale(0.015625)\"/>\n     </defs>\n     <use xlink:href=\"#STIXGeneral-Bold-1d5d5\" transform=\"translate(0 0.203125)\"/>\n     <use xlink:href=\"#STIXGeneral-Bold-1d7ed\" transform=\"translate(63.599991 0.203125)\"/>\n     <use xlink:href=\"#STIXGeneral-Regular-2217\" transform=\"translate(128.039972 0.203125)\"/>\n    </g>\n   </g>\n   <g id=\"text_5\">\n    <!-- $\\mathbf{\\mathsf{B2}}\\ast$ -->\n    <g style=\"fill: #ffffff\" transform=\"translate(340.473982 574.652506) scale(0.243643 -0.243643)\">\n     <use xlink:href=\"#STIXGeneral-Bold-1d5d5\" transform=\"translate(0 0.203125)\"/>\n     <use xlink:href=\"#STIXGeneral-Bold-1d7ee\" transform=\"translate(63.599991 0.203125)\"/>\n     <use xlink:href=\"#STIXGeneral-Regular-2217\" transform=\"translate(128.039972 0.203125)\"/>\n    </g>\n   </g>\n   <g id=\"text_6\">\n    <!-- $\\mathbf{\\mathsf{B3}}\\ast$ -->\n    <g style=\"fill: #ffffff\" transform=\"translate(160.317742 574.652506) scale(0.243643 -0.243643)\">\n     <use xlink:href=\"#STIXGeneral-Bold-1d5d5\" transform=\"translate(0 0.203125)\"/>\n     <use xlink:href=\"#STIXGeneral-Bold-1d7ef\" transform=\"translate(63.599991 0.203125)\"/>\n     <use xlink:href=\"#STIXGeneral-Regular-2217\" transform=\"translate(128.039972 0.203125)\"/>\n    </g>\n   </g>\n  </g>\n </g>\n <defs>\n  <clipPath id=\"p325435dbbb\">\n   <rect x=\"7.2\" y=\"7.2\" width=\"681.12\" height=\"943.2\"/>\n  </clipPath>\n </defs>\n</svg>\n"
+}
