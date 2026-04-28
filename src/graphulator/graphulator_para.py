@@ -6395,6 +6395,52 @@ class Graphulator(QMainWindow):
         tutorial_action.triggered.connect(self.properties_panel._show_tutorial_dialog)
         help_menu.addAction(tutorial_action)
 
+        help_menu.addSeparator()
+
+        # On macOS Qt automatically relocates any action whose text matches
+        # "About …" into the application menu, regardless of its menu role.
+        about_action = QAction("&About Paragraphulator", self)
+        about_action.setMenuRole(QAction.MenuRole.AboutRole)
+        about_action.triggered.connect(self._show_about)
+        help_menu.addAction(about_action)
+
+    def _show_about(self):
+        """Show the About dialog with version, logo, and project info."""
+        import PySide6
+        from PySide6.QtCore import Qt, qVersion
+        from PySide6.QtGui import QPixmap
+
+        from graphulator import __copyright__, __url__, __version__
+        from graphulator._resources import resource_path
+
+        py_version = ".".join(str(p) for p in sys.version_info[:3])
+        text = (
+            f"<h3>Paragraphulator {__version__}</h3>"
+            "<p>A very niche tool for parametric coupled mode theory.</p>"
+            f"<p><small>PySide6 {PySide6.__version__} &middot; "
+            f"Qt {qVersion()} &middot; Python {py_version}</small></p>"
+            f"<p><small>{__copyright__} &middot; "
+            f"<a href='{__url__}'>{__url__.replace('https://', '')}</a>"
+            "</small></p>"
+        )
+
+        box = QMessageBox(self)
+        box.setWindowTitle("About Paragraphulator")
+        box.setTextFormat(Qt.RichText)
+        box.setText(text)
+
+        icon_path = resource_path("assets", "paragraphulator_ICON.png")
+        if icon_path.is_file():
+            pixmap = QPixmap(str(icon_path))
+            if not pixmap.isNull():
+                box.setIconPixmap(pixmap.scaled(
+                    96, 96,
+                    Qt.KeepAspectRatio, Qt.SmoothTransformation,
+                ))
+
+        box.setStandardButtons(QMessageBox.Ok)
+        box.exec()
+
     def _update_window_title(self):
         """Update window title with filename and modified status"""
         title = "Paragraphulator"
@@ -16602,10 +16648,12 @@ class Graphulator(QMainWindow):
 
 
 def main():
+    from graphulator._resources import resource_path
+
     app = QApplication(sys.argv)
     app.setApplicationName("Paragraphulator")
-    icon_path = Path(__file__).resolve().parent.parent.parent / "misc" / "paragraphulator_ICON.png"
-    if icon_path.exists():
+    icon_path = resource_path("assets", "paragraphulator_ICON.png")
+    if icon_path.is_file():
         app.setWindowIcon(QIcon(str(icon_path)))
     window = Graphulator()
     window.show()

@@ -42,6 +42,7 @@ matplotlib_datas = collect_data_files("matplotlib")
 datas = [
     (str(PKG / "examples" / "graphs"), "graphulator/examples/graphs"),
     (str(ROOT / "examples" / "graphs"), "examples/graphs"),
+    (str(PKG / "assets"), "graphulator/assets"),
 ]
 datas.extend(matplotlib_datas)
 

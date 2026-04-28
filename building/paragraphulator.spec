@@ -63,6 +63,7 @@ datas = [
     (str(PKG / "examples" / "pgraphs"), "graphulator/examples/pgraphs"),
     (str(ROOT / "examples" / "pgraphs"), "examples/pgraphs"),
     (str(PKG / "katex"), "graphulator/katex"),
+    (str(PKG / "assets"), "graphulator/assets"),
 ]
 datas.extend(matplotlib_datas)
 datas.extend(certifi_datas)

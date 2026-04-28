@@ -58,4 +58,5 @@ graphulator = [
     "katex/*.css",
     "katex/fonts/*",
     "katex/contrib/*.js",
+    "assets/*.png",
 ]
