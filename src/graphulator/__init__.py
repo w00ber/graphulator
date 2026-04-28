@@ -5,7 +5,7 @@ A PySide6-based GUI application for creating coupled mode theory graphs
 and quantum circuit diagrams with matplotlib rendering.
 """
 
-__version__ = "0.9.0"
+__version__ = "0.9.1"
 __author__ = "J. Aumentado"
 __copyright__ = "© J Aumentado"
 __url__ = "https://github.com/w00ber/graphulator"

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "graphulator"
-version = "0.9.0"
+version = "0.9.1"
 description = "Interactive graph drawing tools for graph coupled mode theory, including frequency converters, amplifiers, and filters."
 readme = "README.md"
 authors = [
