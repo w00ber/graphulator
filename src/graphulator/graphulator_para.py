@@ -16602,14 +16602,8 @@ class Graphulator(QMainWindow):
 
 
 def main():
-    try:
-        from Foundation import NSBundle
-        bundle = NSBundle.mainBundle()
-        info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
-        info['CFBundleName'] = 'Paragraphulator'
-    except ImportError:
-        pass
     app = QApplication(sys.argv)
+    app.setApplicationName("Paragraphulator")
     icon_path = Path(__file__).resolve().parent.parent.parent / "misc" / "paragraphulator_ICON.png"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
