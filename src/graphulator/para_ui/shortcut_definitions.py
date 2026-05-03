@@ -62,6 +62,7 @@ SHORTCUT_CATEGORIES = [
     "Canvas Navigation",
     "Matrix Display",
     "Tabs",
+    "Notes",
     "Scattering & Analysis",
     "Help",
 ]
@@ -572,6 +573,15 @@ SHORTCUT_DEFINITIONS: List[ShortcutDefinition] = [
         category="Tabs",
         description="Switch to the fourth visible tab",
         default_keys={"default": "Ctrl+4"},
+    ),
+
+    # ===== NOTES =====
+    ShortcutDefinition(
+        action_id="notes.toggle_preview",
+        display_name="Toggle Notes Preview",
+        category="Notes",
+        description="Switch the Notes tab between Edit and Preview subtabs",
+        default_keys={"default": "Ctrl+/"},
     ),
 
     # ===== SCATTERING & ANALYSIS =====
