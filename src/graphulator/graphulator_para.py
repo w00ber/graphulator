@@ -576,8 +576,11 @@ class PropertiesPanel(QWidget):
         edit_layout.setContentsMargins(0, 0, 0, 0)
         edit_widget.setLayout(edit_layout)
 
-        self.notes_editor = LineNumberTextEdit()
-        self.notes_editor.setPlaceholderText("Enter notes here (supports Markdown and LaTeX math: $...$ or $$...$$)")
+        self.notes_editor = LineNumberTextEdit(markdown_mode=True)
+        self.notes_editor.setPlaceholderText(
+            "Enter notes here (Markdown + LaTeX math: $...$ / $$...$$). "
+            "Paste or drop images to embed them. Ctrl+/ toggles preview."
+        )
         edit_layout.addWidget(self.notes_editor)
 
         self.notes_subtabs.addTab(edit_widget, "Edit")
@@ -672,6 +675,15 @@ class PropertiesPanel(QWidget):
         # Unordered list: - item or * item
         text = re.sub(r'^[-*] (.+)$', r'<li>\1</li>', text, flags=re.MULTILINE)
         text = re.sub(r'(<li>.*</li>\n?)+', r'<ul>\g<0></ul>', text)
+
+        # Images: ![alt](url) - must come before links so the "!" isn't
+        # stranded in front of an <a> tag. Supports base64 data URIs inserted
+        # by paste/drop in the notes editor.
+        text = re.sub(
+            r'!\[([^\]]*)\]\(([^)]+)\)',
+            r'<img src="\2" alt="\1" style="max-width: 100%; height: auto; margin: 8px 0;">',
+            text,
+        )
 
         # Links: [text](url)
         text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
@@ -6168,6 +6180,9 @@ class Graphulator(QMainWindow):
         sm.bind_shortcut("tab.switch_4", lambda: self._switch_to_nth_visible_tab(4), self,
                         context=Qt.ShortcutContext.ApplicationShortcut)
 
+        # ===== NOTES =====
+        sm.bind_shortcut("notes.toggle_preview", self._toggle_notes_preview, self)
+
         # ===== SCATTERING & ANALYSIS =====
         sm.bind_shortcut("analysis.kron_mode_keyboard", self._enter_kron_mode, self)
 
@@ -10802,6 +10817,21 @@ class Graphulator(QMainWindow):
         """Show the Code subtab within the Symbolic tab (S shortcut)"""
         self.properties_panel.tabs.setCurrentIndex(2)  # Symbolic tab
         self.properties_panel.symbolic_subtabs.setCurrentIndex(2)  # Code subtab
+
+    def _toggle_notes_preview(self):
+        """Toggle the Notes tab between its Edit (0) and Preview (1) subtabs.
+
+        Switches the main panel to the Notes tab first if it isn't already
+        active, so the shortcut works from anywhere in the window.
+        """
+        pp = self.properties_panel
+        if not hasattr(pp, 'notes_subtabs'):
+            return
+        # Notes is the second top-level tab (index 1).
+        if pp.tabs.currentIndex() != 1:
+            pp.tabs.setCurrentIndex(1)
+        next_index = 1 if pp.notes_subtabs.currentIndex() == 0 else 0
+        pp.notes_subtabs.setCurrentIndex(next_index)
 
     def _toggle_flip_labels(self):
         """Toggle flip_labels for selected edges using 'f' key"""
