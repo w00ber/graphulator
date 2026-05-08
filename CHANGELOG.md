@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.10.0] - 2026-05-08
+### Changed
+- _TODO: describe changes._
+
 All notable changes to graphulator are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
