@@ -2472,7 +2472,7 @@ class PropertiesPanel(QWidget):
 <br>
 <b>Other:</b><br>
 • Ctrl+Shift+E: Export code<br>
-• Ctrl+Shift+C: Clear all<br>
+• Ctrl+Shift+Delete: Clear all<br>
 • Ctrl+L: Toggle LaTeX<br>
 • Ctrl+Q: Quit"""
 
@@ -6213,7 +6213,7 @@ class Graphulator(QMainWindow):
         print("  'Esc'           : Exit placement mode / Clear selection")
         print("  'r'             : Rotate grid (45° square, 30° triangular)")
         print("  't'             : Toggle grid type (square/triangular)")
-        print("  'Ctrl+Shift+C'  : Clear all nodes")
+        print("  'Ctrl+Shift+Delete' : Clear all nodes (Ctrl+Shift+Backspace on macOS)")
         print("  'a'             : Auto-fit view to nodes")
         print("  '+/-'           : Zoom in/out")
         print("  Mouse wheel     : Zoom in/out")
@@ -6305,8 +6305,13 @@ class Graphulator(QMainWindow):
 
         copy_clipboard_action = QAction("Copy Graph to Clipboard", self)
         sm.bind_action("clipboard.copy_graph_image", copy_clipboard_action)
-        copy_clipboard_action.triggered.connect(self._copy_graph_to_clipboard)
+        copy_clipboard_action.triggered.connect(lambda: self._copy_graph_to_clipboard())
         export_menu.addAction(copy_clipboard_action)
+
+        copy_vector_action = QAction("Copy Graph to Clipboard (Vector Only)", self)
+        sm.bind_action("clipboard.copy_graph_vector", copy_vector_action)
+        copy_vector_action.triggered.connect(self._copy_graph_to_clipboard_vector)
+        export_menu.addAction(copy_vector_action)
         export_menu.addSeparator()
 
         export_code_action = QAction("Python Code...", self)
@@ -7576,8 +7581,13 @@ class Graphulator(QMainWindow):
                     # Redraw without grid
                     self._update_plot_no_grid()
 
+                    # Crop tightly to the graph (labels included), not the full view.
+                    from . import clipboard_export
+                    bbox = clipboard_export.content_bbox_inches(self.canvas.fig)
+                    bbox_arg = bbox if bbox is not None else 'tight'
+
                     # Export
-                    self.canvas.fig.savefig(filepath, dpi=300, bbox_inches='tight')
+                    self.canvas.fig.savefig(filepath, dpi=300, bbox_inches=bbox_arg, transparent=True)
 
                     # Restore title and redraw with grid
                     self.canvas.ax.set_title(current_title)
@@ -7593,13 +7603,22 @@ class Graphulator(QMainWindow):
                 self.nodes = saved_nodes
                 self.edges = saved_edges
 
-    def _copy_graph_to_clipboard(self):
-        """Copy the whole graph to the clipboard as vector PDF/SVG + PNG.
+    def _copy_graph_to_clipboard_vector(self):
+        """Copy the graph as vector PDF/SVG only (no raster PNG fallback).
+
+        Forces vector-preferring apps that otherwise grab the PNG (Keynote,
+        PowerPoint) to paste the editable PDF/SVG instead.
+        """
+        self._copy_graph_to_clipboard(include_png=False)
+
+    def _copy_graph_to_clipboard(self, include_png=True):
+        """Copy the whole graph to the clipboard as vector PDF/SVG (+ PNG).
 
         Places several representations on the clipboard so it pastes with full
         vector fidelity into Keynote, PowerPoint, Illustrator, etc. Copies the
         currently displayed graph (including the Kron canvas when that subtab is
-        active).
+        active). When ``include_png`` is False the raster fallback is omitted
+        (see :func:`clipboard_export.copy_figure_to_clipboard`).
         """
         from . import clipboard_export
 
@@ -7633,13 +7652,17 @@ class Graphulator(QMainWindow):
                 self.canvas.ax.set_title('')
                 self._update_plot_no_grid()
 
-                backend, formats = clipboard_export.copy_figure_to_clipboard(self.canvas.fig)
+                backend, formats = clipboard_export.copy_figure_to_clipboard(
+                    self.canvas.fig, include_png=include_png
+                )
 
                 self.canvas.ax.set_title(current_title)
                 self._update_plot()
 
                 print(f"Copied graph to clipboard via {backend}: {formats}")
-                self.statusBar().showMessage("Graph copied to clipboard", 3000)
+                msg = "Graph copied to clipboard (vector only)" if not include_png \
+                    else "Graph copied to clipboard"
+                self.statusBar().showMessage(msg, 3000)
             except Exception as e:
                 QMessageBox.critical(
                     self, "Copy Error", f"Could not copy graph to clipboard:\n{e}"
@@ -7694,8 +7717,19 @@ class Graphulator(QMainWindow):
                     # Redraw without grid
                     self._update_plot_no_grid()
 
-                    # Export
-                    self.canvas.fig.savefig(filepath, format='svg', bbox_inches='tight')
+                    # Crop tightly to the graph (labels included), not the full view.
+                    from . import clipboard_export
+                    bbox = clipboard_export.content_bbox_inches(self.canvas.fig)
+                    bbox_arg = bbox if bbox is not None else 'tight'
+
+                    # Render glyphs as outlined paths (svg.fonttype="path") so the
+                    # file is self-contained -- no CM/LaTeX fonts needed to view it.
+                    original_svg_fonttype = matplotlib.rcParams.get('svg.fonttype', 'path')
+                    matplotlib.rcParams['svg.fonttype'] = 'path'
+                    try:
+                        self.canvas.fig.savefig(filepath, format='svg', bbox_inches=bbox_arg, transparent=True)
+                    finally:
+                        matplotlib.rcParams['svg.fonttype'] = original_svg_fonttype
 
                     # Restore title and redraw with grid
                     self.canvas.ax.set_title(current_title)
@@ -7743,9 +7777,20 @@ class Graphulator(QMainWindow):
             # Redraw without grid
             self._update_plot_no_grid()
 
-            # Generate SVG to string buffer
+            # Crop tightly to the graph (labels included), not the full view.
+            from . import clipboard_export
+            bbox = clipboard_export.content_bbox_inches(canvas_to_use.fig)
+            bbox_arg = bbox if bbox is not None else 'tight'
+
+            # Generate SVG to string buffer with glyphs outlined as paths so it
+            # is self-contained (no CM/LaTeX fonts needed to view it).
             svg_buffer = io.StringIO()
-            canvas_to_use.fig.savefig(svg_buffer, format='svg', bbox_inches='tight')
+            original_svg_fonttype = matplotlib.rcParams.get('svg.fonttype', 'path')
+            matplotlib.rcParams['svg.fonttype'] = 'path'
+            try:
+                canvas_to_use.fig.savefig(svg_buffer, format='svg', bbox_inches=bbox_arg)
+            finally:
+                matplotlib.rcParams['svg.fonttype'] = original_svg_fonttype
             svg_string = svg_buffer.getvalue()
             svg_buffer.close()
 
@@ -7802,36 +7847,38 @@ class Graphulator(QMainWindow):
                     # Redraw without grid
                     self._update_plot_no_grid()
 
-                    # For LaTeX mode, save as SVG first, then convert to PDF to get outlined text
-                    # SVG naturally stores LaTeX text as paths, which Illustrator can read
-                    if self.use_latex:
-                        print("LaTeX mode: Exporting via SVG for text-as-paths compatibility")
-                        # Save as SVG (text will be paths)
-                        svg_filepath = filepath.replace('.pdf', '_temp.svg')
-                        self.canvas.fig.savefig(svg_filepath, format='svg', bbox_inches='tight')
+                    # Crop tightly to the graph (labels included), not the full view.
+                    from . import clipboard_export
+                    bbox = clipboard_export.content_bbox_inches(self.canvas.fig)
+                    bbox_arg = bbox if bbox is not None else 'tight'
 
-                        # Try to convert SVG to PDF using cairosvg or similar
-                        try:
-                            import cairosvg
-                            cairosvg.svg2pdf(url=svg_filepath, write_to=filepath)
-                            os.remove(svg_filepath)  # Clean up temp file
-                            print(f"Exported PDF with outlined text to {filepath}")
-                        except ImportError:
-                            print("Note: cairosvg not installed. Saved as SVG instead.")
-                            print("Install with: pip install cairosvg")
-                            print("Or use the SVG export which already has text as paths.")
-                            # Fall back to regular PDF export
-                            original_fonttype = matplotlib.rcParams.get('pdf.fonttype', 42)
-                            matplotlib.rcParams['pdf.fonttype'] = 42
-                            self.canvas.fig.savefig(filepath, format='pdf', bbox_inches='tight', dpi=300)
-                            matplotlib.rcParams['pdf.fonttype'] = original_fonttype
-                            print(f"Exported PDF (fonts embedded) to {filepath}")
+                    # Build the PDF from the *outlined* SVG so its text is paths,
+                    # not font-referencing glyphs. This is what lets Illustrator
+                    # (which imports the PDF) show the labels without Computer
+                    # Modern installed. Falls back to matplotlib's font-embedded
+                    # PDF if no SVG->PDF converter is available.
+                    svg_buffer = io.BytesIO()
+                    original_svg_fonttype = matplotlib.rcParams.get('svg.fonttype', 'path')
+                    matplotlib.rcParams['svg.fonttype'] = 'path'
+                    try:
+                        self.canvas.fig.savefig(svg_buffer, format='svg', bbox_inches=bbox_arg, transparent=True)
+                    finally:
+                        matplotlib.rcParams['svg.fonttype'] = original_svg_fonttype
+
+                    pdf_bytes = clipboard_export.svg_bytes_to_pdf(svg_buffer.getvalue())
+                    if pdf_bytes is not None:
+                        with open(filepath, 'wb') as f:
+                            f.write(pdf_bytes)
+                        print(f"Exported PDF with outlined text to {filepath}")
                     else:
-                        # Non-LaTeX mode: standard PDF export
+                        # No SVG->PDF converter available: matplotlib PDF (fonts embedded)
                         original_fonttype = matplotlib.rcParams.get('pdf.fonttype', 42)
                         matplotlib.rcParams['pdf.fonttype'] = 42
-                        self.canvas.fig.savefig(filepath, format='pdf', bbox_inches='tight', dpi=300)
-                        matplotlib.rcParams['pdf.fonttype'] = original_fonttype
+                        try:
+                            self.canvas.fig.savefig(filepath, format='pdf', bbox_inches=bbox_arg, dpi=300, transparent=True)
+                        finally:
+                            matplotlib.rcParams['pdf.fonttype'] = original_fonttype
+                        print(f"Exported PDF (fonts embedded) to {filepath}")
 
                     # Restore title and redraw with grid
                     self.canvas.ax.set_title(current_title)
@@ -16579,6 +16626,14 @@ class Graphulator(QMainWindow):
         # No title for export
         self.canvas.ax.set_title('')
         self.canvas.ax.axis('off')
+
+        # Disable per-artist clipping so the SVG/PDF carries no full-canvas clip
+        # rectangle. matplotlib clips every artist to the axes box (the whole
+        # 12x12 figure); Illustrator imports that clip as a second, canvas-sized
+        # bounding box that dwarfs the graph when zoomed out. The export is
+        # cropped to content via bbox_inches, so clipping is unnecessary here.
+        for artist in self.canvas.ax.findobj():
+            artist.set_clip_on(False)
 
         # Update properties panel
         if self.selected_nodes and len(self.selected_nodes) == 1:

@@ -166,7 +166,9 @@ SHORTCUT_DEFINITIONS: List[ShortcutDefinition] = [
         display_name="Clear All Nodes",
         category="Edit",
         description="Clear all nodes from the graph",
-        default_keys={"default": "Ctrl+Shift+C"},
+        # Moved off Ctrl+Shift+C (too close to Ctrl+C copy for a destructive
+        # action); mirrors the delete-selected key mapping per platform.
+        default_keys={"darwin": "Ctrl+Shift+Backspace", "default": "Ctrl+Shift+Delete"},
     ),
     ShortcutDefinition(
         action_id="edit.toggle_latex",
@@ -323,6 +325,15 @@ SHORTCUT_DEFINITIONS: List[ShortcutDefinition] = [
         description="Copy the whole graph to the clipboard (vector PDF/SVG + PNG) "
         "for pasting into Keynote, PowerPoint, Illustrator, etc.",
         default_keys={"default": "Ctrl+Shift+I"},
+        is_menu_action=True,
+    ),
+    ShortcutDefinition(
+        action_id="clipboard.copy_graph_vector",
+        display_name="Copy Graph to Clipboard (Vector Only)",
+        category="Selection & Clipboard",
+        description="Copy the graph as vector PDF/SVG only (no raster fallback) so "
+        "apps like Keynote/PowerPoint paste editable vector art instead of an image.",
+        default_keys={"default": "Ctrl+Shift+J"},
         is_menu_action=True,
     ),
 
