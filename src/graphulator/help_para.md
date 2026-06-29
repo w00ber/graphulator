@@ -124,6 +124,7 @@ With a node selected (red ring around it):
 | Shortcut | Action |
 |----------|--------|
 | {{shortcut:file.export_code}} | Export graph drawing code |
+| {{shortcut:clipboard.copy_graph_image}} | Copy graph to clipboard (paste into Keynote/PowerPoint/Illustrator) |
 | {{shortcut:edit.toggle_latex}} | Toggle LaTeX rendering |
 | {{shortcut:clipboard.copy_matrix_latex}} | Copy matrix LaTeX to clipboard |
 | {{shortcut:clipboard.export_sympy}} | Export SymPy code to clipboard |

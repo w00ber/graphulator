@@ -316,6 +316,15 @@ SHORTCUT_DEFINITIONS: List[ShortcutDefinition] = [
         description="Export SymPy code to clipboard",
         default_keys={"default": "Alt+E"},
     ),
+    ShortcutDefinition(
+        action_id="clipboard.copy_graph_image",
+        display_name="Copy Graph to Clipboard",
+        category="Selection & Clipboard",
+        description="Copy the whole graph to the clipboard (vector PDF/SVG + PNG) "
+        "for pasting into Keynote, PowerPoint, Illustrator, etc.",
+        default_keys={"default": "Ctrl+Shift+I"},
+        is_menu_action=True,
+    ),
 
     # ===== GRID CONTROLS =====
     ShortcutDefinition(

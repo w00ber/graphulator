@@ -1672,6 +1672,16 @@ class Graphulator(QMainWindow):
         # Export submenu
         export_menu = file_menu.addMenu("&Export")
 
+        copy_clipboard_action = QAction("Copy Graph to Clipboard", self)
+        copy_clipboard_action.setShortcut("Ctrl+Shift+I")
+        copy_clipboard_action.setStatusTip(
+            "Copy the whole graph to the clipboard (vector PDF/SVG + PNG) for "
+            "pasting into Keynote, PowerPoint, Illustrator, etc."
+        )
+        copy_clipboard_action.triggered.connect(self._copy_graph_to_clipboard)
+        export_menu.addAction(copy_clipboard_action)
+        export_menu.addSeparator()
+
         export_code_action = QAction("Python Code...", self)
         export_code_action.setShortcut("Ctrl+Shift+E")
         export_code_action.triggered.connect(self._export_code)
@@ -2215,6 +2225,38 @@ class Graphulator(QMainWindow):
                 logger.info(f"Exported PNG to {filepath}")
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Could not export PNG:\n{e}")
+
+    def _copy_graph_to_clipboard(self):
+        """Copy the whole graph to the clipboard as vector PDF/SVG + PNG.
+
+        Places several representations on the clipboard so it pastes with full
+        vector fidelity into Keynote, PowerPoint, Illustrator, etc.
+        """
+        from . import clipboard_export
+
+        if not self.nodes:
+            logger.info("No nodes to copy")
+            self.statusBar().showMessage("No graph to copy", 3000)
+            return
+
+        try:
+            # Match the look of the file exports: drop the title and grid.
+            current_title = self.canvas.ax.get_title()
+            self.canvas.ax.set_title('')
+            self._update_plot_no_grid()
+
+            backend, formats = clipboard_export.copy_figure_to_clipboard(self.canvas.fig)
+
+            self.canvas.ax.set_title(current_title)
+            self._update_plot()
+
+            logger.info("Copied graph to clipboard via %s: %s", backend, formats)
+            self.statusBar().showMessage("Graph copied to clipboard", 3000)
+        except Exception as e:
+            logger.error("Could not copy graph to clipboard: %s", e)
+            QMessageBox.critical(
+                self, "Copy Error", f"Could not copy graph to clipboard:\n{e}"
+            )
 
     def _export_svg(self):
         """Export graph as SVG image"""

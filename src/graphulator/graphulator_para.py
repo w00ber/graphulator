@@ -6303,6 +6303,12 @@ class Graphulator(QMainWindow):
         # Export submenu
         export_menu = file_menu.addMenu("&Export")
 
+        copy_clipboard_action = QAction("Copy Graph to Clipboard", self)
+        sm.bind_action("clipboard.copy_graph_image", copy_clipboard_action)
+        copy_clipboard_action.triggered.connect(self._copy_graph_to_clipboard)
+        export_menu.addAction(copy_clipboard_action)
+        export_menu.addSeparator()
+
         export_code_action = QAction("Python Code...", self)
         sm.bind_action("file.export_code", export_code_action)
         export_code_action.triggered.connect(self._export_code)
@@ -7583,6 +7589,64 @@ class Graphulator(QMainWindow):
         finally:
             # Restore original canvas/nodes/edges if we swapped to Kron
             if export_kron:
+                self.canvas = saved_canvas
+                self.nodes = saved_nodes
+                self.edges = saved_edges
+
+    def _copy_graph_to_clipboard(self):
+        """Copy the whole graph to the clipboard as vector PDF/SVG + PNG.
+
+        Places several representations on the clipboard so it pastes with full
+        vector fidelity into Keynote, PowerPoint, Illustrator, etc. Copies the
+        currently displayed graph (including the Kron canvas when that subtab is
+        active).
+        """
+        from . import clipboard_export
+
+        # Determine which canvas to copy based on currently displayed tab.
+        copy_kron = False
+        saved_canvas = None
+        saved_nodes = None
+        saved_edges = None
+
+        if hasattr(self, 'graph_subtabs') and hasattr(self, 'kron_graph') and self.kron_graph:
+            current_tab = self.graph_subtabs.currentIndex()
+            tab_text = self.graph_subtabs.tabText(current_tab) if current_tab >= 0 else ""
+            if tab_text == "Kron":
+                copy_kron = True
+                saved_canvas = self.canvas
+                saved_nodes = self.nodes
+                saved_edges = self.edges
+                self.canvas = self.kron_canvas
+                self.nodes = self.kron_graph['nodes']
+                self.edges = self.kron_graph['edges']
+
+        try:
+            if not self.nodes:
+                print("No nodes to copy")
+                self.statusBar().showMessage("No graph to copy", 3000)
+                return
+
+            try:
+                # Match the look of the file exports: drop the title and grid.
+                current_title = self.canvas.ax.get_title()
+                self.canvas.ax.set_title('')
+                self._update_plot_no_grid()
+
+                backend, formats = clipboard_export.copy_figure_to_clipboard(self.canvas.fig)
+
+                self.canvas.ax.set_title(current_title)
+                self._update_plot()
+
+                print(f"Copied graph to clipboard via {backend}: {formats}")
+                self.statusBar().showMessage("Graph copied to clipboard", 3000)
+            except Exception as e:
+                QMessageBox.critical(
+                    self, "Copy Error", f"Could not copy graph to clipboard:\n{e}"
+                )
+        finally:
+            # Restore original canvas/nodes/edges if we swapped to Kron
+            if copy_kron:
                 self.canvas = saved_canvas
                 self.nodes = saved_nodes
                 self.edges = saved_edges
