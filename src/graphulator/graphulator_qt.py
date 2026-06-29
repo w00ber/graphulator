@@ -467,6 +467,8 @@ class PropertiesPanel(QWidget):
         self.graphulator = parent
         self.current_object = None  # Currently displayed object (node or edge)
         self.current_type = None  # 'node', 'edge', or None
+        self.displayed_single = None  # Object whose property widgets are currently built (avoids rebuilding/focus-loss while editing)
+        self.displayed_multi = None  # Selection signature whose multi-edit widgets are currently built (avoids rebuilding/focus-loss while editing)
 
         # Create main layout
         main_layout = QVBoxLayout()
@@ -542,7 +544,7 @@ class PropertiesPanel(QWidget):
 <br>
 <b>Other:</b><br>
 • Ctrl+Shift+E: Export code<br>
-• Ctrl+Shift+C: Clear all<br>
+• Ctrl+Shift+Delete: Clear all<br>
 • Ctrl+L: Toggle LaTeX<br>
 • Ctrl+Q: Quit"""
 
@@ -829,6 +831,7 @@ class PropertiesPanel(QWidget):
         self.clear_properties()
         self.current_object = node
         self.current_type = 'node'
+        self.displayed_multi = None
         self.title_label.setText(f"Node: {node['label']}")
 
         # Create form layout for properties
@@ -875,12 +878,14 @@ class PropertiesPanel(QWidget):
         form.addRow("Conjugate:", self.conj_checkbox)
 
         self.properties_layout.addLayout(form)
+        self.displayed_single = node
 
     def show_edge_properties(self, edge):
         """Show properties for an edge or self-loop"""
         self.clear_properties()
         self.current_object = edge
         self.current_type = 'edge'
+        self.displayed_multi = None
         from_label = edge['from_node']['label']
         to_label = edge['to_node']['label']
         is_self_loop = edge.get('is_self_loop', False)
@@ -1021,17 +1026,248 @@ class PropertiesPanel(QWidget):
                 form.addRow("", clear_label2_bg_btn)
 
         self.properties_layout.addLayout(form)
+        self.displayed_single = edge
 
     def show_no_selection(self):
         """Show message when nothing is selected"""
         self.clear_properties()
         self.current_object = None
         self.current_type = None
+        self.displayed_single = None
+        self.displayed_multi = None
         self.title_label.setText("No Selection")
 
         info = QLabel("Select a node or edge to edit its properties.\n\nShift+click to select multiple objects.")
         info.setWordWrap(True)
         self.properties_layout.addWidget(info)
+
+    # ---- Multi-selection editing -------------------------------------------------
+
+    @staticmethod
+    def selection_signature(nodes, edges):
+        """A hashable signature identifying the current multi-selection by object identity."""
+        return (frozenset(id(n) for n in nodes), frozenset(id(e) for e in edges))
+
+    def _make_multi_int_spinbox(self, values, apply_fn, minimum, maximum, suffix=""):
+        """Spinbox for a common integer property across a multi-selection.
+
+        When the selected objects share one value it is shown normally; when they
+        differ the smallest value is shown in gray (indeterminate) and is only
+        written to all objects once the user changes it or presses Enter in it.
+        """
+        sb = QSpinBox()
+        sb.setMinimum(minimum)
+        sb.setMaximum(maximum)
+        if suffix:
+            sb.setSuffix(suffix)
+        distinct = set(values)
+        sb._indeterminate = len(distinct) > 1
+        sb.blockSignals(True)
+        sb.setValue(int(min(values)) if sb._indeterminate else int(next(iter(distinct))))
+        sb.blockSignals(False)
+        sb.setStyleSheet("color: gray;" if sb._indeterminate else "")
+
+        def commit(val):
+            sb._indeterminate = False
+            sb.setStyleSheet("")
+            apply_fn(int(val))
+        sb.valueChanged.connect(commit)
+        sb.lineEdit().returnPressed.connect(lambda: commit(sb.value()) if sb._indeterminate else None)
+        return sb
+
+    def _make_multi_double_spinbox(self, values, apply_fn, minimum, maximum, step, suffix="x", decimals=3):
+        """Spinbox for a common float property across a multi-selection (see _make_multi_int_spinbox)."""
+        sb = QDoubleSpinBox()
+        sb.setMinimum(minimum)
+        sb.setMaximum(maximum)
+        sb.setSingleStep(step)
+        sb.setDecimals(decimals)
+        if suffix:
+            sb.setSuffix(suffix)
+        distinct = set(values)
+        sb._indeterminate = len(distinct) > 1
+        sb.blockSignals(True)
+        sb.setValue(float(min(values)) if sb._indeterminate else float(next(iter(distinct))))
+        sb.blockSignals(False)
+        sb.setStyleSheet("color: gray;" if sb._indeterminate else "")
+
+        def commit(val):
+            sb._indeterminate = False
+            sb.setStyleSheet("")
+            apply_fn(float(val))
+        sb.valueChanged.connect(commit)
+        sb.lineEdit().returnPressed.connect(lambda: commit(sb.value()) if sb._indeterminate else None)
+        return sb
+
+    def _make_multi_combo(self, items, current_values, apply_fn):
+        """Combo for a common discrete property; blank when the values differ.
+
+        Uses the user-only `activated` signal so a programmatic build never commits.
+        """
+        cb = QComboBox()
+        cb.addItems(items)
+        distinct = set(current_values)
+        if len(distinct) == 1 and next(iter(distinct)) in items:
+            cb.setCurrentText(next(iter(distinct)))
+        else:
+            cb.setCurrentIndex(-1)  # blank == indeterminate
+        cb.activated.connect(lambda: apply_fn(cb.currentText()))
+        return cb
+
+    def _make_multi_checkbox(self, values, apply_fn):
+        """Tri-state checkbox for a common boolean property; partially-checked when values differ."""
+        cb = QCheckBox()
+        distinct = set(bool(v) for v in values)
+        if len(distinct) == 1:
+            cb.setChecked(next(iter(distinct)))
+        else:
+            cb.setTristate(True)
+            cb.setCheckState(Qt.PartiallyChecked)
+
+        def on_click():
+            cb.setTristate(False)
+            apply_fn(cb.isChecked())
+        cb.clicked.connect(on_click)
+        return cb
+
+    def show_multi_properties(self, nodes, edges):
+        """Show editable common properties for a multi-selection of nodes and/or edges."""
+        self.clear_properties()
+        self.current_object = None
+        self.current_type = None
+        self.displayed_single = None
+        self.displayed_multi = self.selection_signature(nodes, edges)
+
+        count_text = []
+        if nodes:
+            count_text.append(f"{len(nodes)} node(s)")
+        if edges:
+            count_text.append(f"{len(edges)} edge(s)")
+        self.title_label.setText(f"Multiple Selection ({' + '.join(count_text)})")
+
+        form = QFormLayout()
+
+        # Node properties (only when nodes are selected)
+        if nodes:
+            size_sb = self._make_multi_double_spinbox(
+                [n.get('node_size_mult', 1.0) for n in nodes],
+                lambda val: self._apply_to_nodes('node_size_mult', val),
+                0.5, 2.0, 0.1)
+            form.addRow("Node Size:", size_sb)
+
+            nlbl_sb = self._make_multi_double_spinbox(
+                [n.get('label_size_mult', 1.0) for n in nodes],
+                lambda val: self._apply_to_nodes('label_size_mult', val),
+                0.5, 2.0, 0.1)
+            form.addRow("Node Label Size:", nlbl_sb)
+
+            conj_cb = self._make_multi_checkbox(
+                [n.get('conj', False) for n in nodes],
+                lambda val: self._apply_to_nodes('conj', val))
+            form.addRow("Conjugate:", conj_cb)
+
+            color_btn = QPushButton("Choose Color (all nodes)")
+            color_btn.clicked.connect(self._choose_multi_node_color)
+            form.addRow("Color:", color_btn)
+
+        # Edge properties (only when edges are selected)
+        if edges:
+            lw_map = {'Thin': 1.0, 'Medium': 1.5, 'Thick': 2.0, 'X-Thick': 2.5}
+            lw_reverse = {v: k for k, v in lw_map.items()}
+            lw_sb = self._make_multi_combo(
+                ['Thin', 'Medium', 'Thick', 'X-Thick'],
+                [lw_reverse.get(e.get('linewidth_mult', 1.5)) for e in edges
+                 if e.get('linewidth_mult', 1.5) in lw_reverse],
+                lambda text: self._apply_to_edges('linewidth_mult', lw_map[text]))
+            form.addRow("Line Width:", lw_sb)
+
+            regular_edges = [e for e in edges if not e.get('is_self_loop', False)]
+            selfloops = [e for e in edges if e.get('is_self_loop', False)]
+
+            # Style/Direction/Loop Theta only when every selected edge is a regular edge
+            if regular_edges and not selfloops:
+                style_cb = self._make_multi_combo(
+                    ['loopy', 'single', 'double'],
+                    [e.get('style', 'loopy') for e in regular_edges],
+                    lambda text: self._apply_to_edges('style', text))
+                form.addRow("Style:", style_cb)
+
+                dir_cb = self._make_multi_combo(
+                    ['both', 'forward', 'backward'],
+                    [e.get('direction', 'both') for e in regular_edges],
+                    lambda text: self._apply_to_edges('direction', text))
+                form.addRow("Direction:", dir_cb)
+
+                looptheta_sb = self._make_multi_int_spinbox(
+                    [e.get('looptheta', 30) for e in regular_edges],
+                    lambda val: self._apply_to_edges('looptheta', val),
+                    -180, 180, "°")
+                form.addRow("Loop Theta:", looptheta_sb)
+
+            # Loop Size/Flip only when every selected edge is a self-loop
+            if selfloops and not regular_edges:
+                scale_map = {'Small (0.7x)': 0.7, 'Medium (1.0x)': 1.0,
+                             'Large (1.3x)': 1.3, 'X-Large (1.6x)': 1.6}
+                scale_reverse = {v: k for k, v in scale_map.items()}
+                scale_cb = self._make_multi_combo(
+                    ['Small (0.7x)', 'Medium (1.0x)', 'Large (1.3x)', 'X-Large (1.6x)'],
+                    [scale_reverse.get(e.get('selfloopscale', 1.0)) for e in selfloops
+                     if e.get('selfloopscale', 1.0) in scale_reverse],
+                    lambda text: self._apply_to_edges('selfloopscale', scale_map[text]))
+                form.addRow("Loop Size:", scale_cb)
+
+                flip_cb = self._make_multi_checkbox(
+                    [e.get('flip', False) for e in selfloops],
+                    lambda val: self._apply_to_edges('flip', val))
+                form.addRow("Flip Direction:", flip_cb)
+
+        self.properties_layout.addLayout(form)
+
+        hint = QLabel("Gray values differ across the selection; edit a field to apply it to all.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: gray; font-size: 10px;")
+        self.properties_layout.addWidget(hint)
+
+    def _apply_to_nodes(self, key, value):
+        """Write a property to every selected node (single undo step)."""
+        g = self.graphulator
+        if not g.selected_nodes:
+            return
+        g._save_state()
+        for node in g.selected_nodes:
+            node[key] = value
+        g._update_plot()
+
+    def _apply_to_edges(self, key, value):
+        """Write a property to every selected edge (single undo step)."""
+        g = self.graphulator
+        if not g.selected_edges:
+            return
+        g._save_state()
+        for edge in g.selected_edges:
+            edge[key] = value
+        g._update_plot()
+
+    def _choose_multi_node_color(self):
+        """Choose a color and apply it to all selected nodes."""
+        g = self.graphulator
+        if not g.selected_nodes:
+            return
+        start = QColor(g.selected_nodes[0].get('color', '#1f77b4'))
+        color = QColorDialog.getColor(start, self.graphulator, "Choose Node Color (all selected)")
+        if not color.isValid():
+            return
+        # Find a matching named color key, if any
+        color_key = g.selected_nodes[0].get('color_key', 'BLUE')
+        for key, val in config.MYCOLORS.items():
+            if val.lower() == color.name().lower():
+                color_key = key
+                break
+        g._save_state()
+        for node in g.selected_nodes:
+            node['color'] = color.name()
+            node['color_key'] = color_key
+        g._update_plot()
 
     # Update methods
     def _update_node_label(self):
@@ -1503,7 +1739,11 @@ class Graphulator(QMainWindow):
         # View controls
         QShortcut(QKeySequence("a"), self).activated.connect(self._auto_fit_view)
         QShortcut(QKeySequence("c"), self).activated.connect(self._toggle_conjugation_mode)
-        QShortcut(QKeySequence("Ctrl+Shift+C"), self).activated.connect(self._clear_nodes)
+        # Clear-all moved off Ctrl+Shift+C: too close to Ctrl+C (copy) for a
+        # destructive action. Mirror the Delete/Backspace pair used for deleting
+        # the current selection.
+        QShortcut(QKeySequence("Ctrl+Shift+Delete"), self).activated.connect(self._clear_nodes)
+        QShortcut(QKeySequence("Ctrl+Shift+Backspace"), self).activated.connect(self._clear_nodes)
 
         # Flip edge labels shortcut
         QShortcut(QKeySequence("f"), self).activated.connect(self._toggle_flip_labels)
@@ -1583,7 +1823,7 @@ class Graphulator(QMainWindow):
         logger.debug("  'Esc'           : Exit placement mode / Clear selection")
         logger.debug("  'r'             : Rotate grid (45° square, 30° triangular)")
         logger.debug("  't'             : Toggle grid type (square/triangular)")
-        logger.debug("  'Ctrl+Shift+C'  : Clear all nodes")
+        logger.debug("  'Ctrl+Shift+Delete' : Clear all nodes")
         logger.debug("  'a'             : Auto-fit view to nodes")
         logger.debug("  '+/-'           : Zoom in/out")
         logger.debug("  Mouse wheel     : Zoom in/out")
@@ -1671,6 +1911,25 @@ class Graphulator(QMainWindow):
 
         # Export submenu
         export_menu = file_menu.addMenu("&Export")
+
+        copy_clipboard_action = QAction("Copy Graph to Clipboard", self)
+        copy_clipboard_action.setShortcut("Ctrl+Shift+I")
+        copy_clipboard_action.setStatusTip(
+            "Copy the whole graph to the clipboard (vector PDF/SVG + PNG) for "
+            "pasting into Keynote, PowerPoint, Illustrator, etc."
+        )
+        copy_clipboard_action.triggered.connect(lambda: self._copy_graph_to_clipboard())
+        export_menu.addAction(copy_clipboard_action)
+
+        copy_vector_action = QAction("Copy Graph to Clipboard (Vector Only)", self)
+        copy_vector_action.setShortcut("Ctrl+Shift+J")
+        copy_vector_action.setStatusTip(
+            "Copy the graph as vector PDF/SVG only (no raster fallback) so apps "
+            "like Keynote/PowerPoint paste editable vector art instead of an image."
+        )
+        copy_vector_action.triggered.connect(self._copy_graph_to_clipboard_vector)
+        export_menu.addAction(copy_vector_action)
+        export_menu.addSeparator()
 
         export_code_action = QAction("Python Code...", self)
         export_code_action.setShortcut("Ctrl+Shift+E")
@@ -1949,7 +2208,8 @@ class Graphulator(QMainWindow):
                 "direction": edge["direction"],
                 "is_self_loop": edge["is_self_loop"],
                 "flip_labels": edge.get("flip_labels", False),
-                "label_rotation_offset": edge.get("label_rotation_offset", 0)
+                "label_rotation_offset": edge.get("label_rotation_offset", 0),
+                "looptheta": edge.get("looptheta", 30)
             }
             # Add self-loop specific parameters
             if edge["is_self_loop"]:
@@ -2205,8 +2465,13 @@ class Graphulator(QMainWindow):
                 # Redraw without grid
                 self._update_plot_no_grid()
 
+                # Crop tightly to the graph (labels included), not the full view.
+                from . import clipboard_export
+                bbox = clipboard_export.content_bbox_inches(self.canvas.fig)
+                bbox_arg = bbox if bbox is not None else 'tight'
+
                 # Export
-                self.canvas.fig.savefig(filepath, dpi=300, bbox_inches='tight')
+                self.canvas.fig.savefig(filepath, dpi=300, bbox_inches=bbox_arg, transparent=True)
 
                 # Restore title and redraw with grid
                 self.canvas.ax.set_title(current_title)
@@ -2215,6 +2480,52 @@ class Graphulator(QMainWindow):
                 logger.info(f"Exported PNG to {filepath}")
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Could not export PNG:\n{e}")
+
+    def _copy_graph_to_clipboard_vector(self):
+        """Copy the graph as vector PDF/SVG only (no raster PNG fallback).
+
+        Forces vector-preferring apps that otherwise grab the PNG (Keynote,
+        PowerPoint) to paste the editable PDF/SVG instead.
+        """
+        self._copy_graph_to_clipboard(include_png=False)
+
+    def _copy_graph_to_clipboard(self, include_png=True):
+        """Copy the whole graph to the clipboard as vector PDF/SVG (+ PNG).
+
+        Places several representations on the clipboard so it pastes with full
+        vector fidelity into Keynote, PowerPoint, Illustrator, etc. When
+        ``include_png`` is False the raster fallback is omitted (see
+        :func:`clipboard_export.copy_figure_to_clipboard`).
+        """
+        from . import clipboard_export
+
+        if not self.nodes:
+            logger.info("No nodes to copy")
+            self.statusBar().showMessage("No graph to copy", 3000)
+            return
+
+        try:
+            # Match the look of the file exports: drop the title and grid.
+            current_title = self.canvas.ax.get_title()
+            self.canvas.ax.set_title('')
+            self._update_plot_no_grid()
+
+            backend, formats = clipboard_export.copy_figure_to_clipboard(
+                self.canvas.fig, include_png=include_png
+            )
+
+            self.canvas.ax.set_title(current_title)
+            self._update_plot()
+
+            logger.info("Copied graph to clipboard via %s: %s", backend, formats)
+            msg = "Graph copied to clipboard (vector only)" if not include_png \
+                else "Graph copied to clipboard"
+            self.statusBar().showMessage(msg, 3000)
+        except Exception as e:
+            logger.error("Could not copy graph to clipboard: %s", e)
+            QMessageBox.critical(
+                self, "Copy Error", f"Could not copy graph to clipboard:\n{e}"
+            )
 
     def _export_svg(self):
         """Export graph as SVG image"""
@@ -2239,8 +2550,19 @@ class Graphulator(QMainWindow):
                 # Redraw without grid
                 self._update_plot_no_grid()
 
-                # Export
-                self.canvas.fig.savefig(filepath, format='svg', bbox_inches='tight')
+                # Crop tightly to the graph (labels included), not the full view.
+                from . import clipboard_export
+                bbox = clipboard_export.content_bbox_inches(self.canvas.fig)
+                bbox_arg = bbox if bbox is not None else 'tight'
+
+                # Render glyphs as outlined paths (svg.fonttype="path") so the
+                # file is self-contained -- no CM/LaTeX fonts needed to view it.
+                original_svg_fonttype = matplotlib.rcParams.get('svg.fonttype', 'path')
+                matplotlib.rcParams['svg.fonttype'] = 'path'
+                try:
+                    self.canvas.fig.savefig(filepath, format='svg', bbox_inches=bbox_arg, transparent=True)
+                finally:
+                    matplotlib.rcParams['svg.fonttype'] = original_svg_fonttype
 
                 # Restore title and redraw with grid
                 self.canvas.ax.set_title(current_title)
@@ -2273,37 +2595,39 @@ class Graphulator(QMainWindow):
                 # Redraw without grid
                 self._update_plot_no_grid()
 
-                # For LaTeX mode, save as SVG first, then convert to PDF to get outlined text
-                # SVG naturally stores LaTeX text as paths, which Illustrator can read
-                if self.use_latex:
-                    logger.debug("LaTeX mode: Exporting via SVG for text-as-paths compatibility")
-                    # Save as SVG (text will be paths)
-                    svg_filepath = filepath.replace('.pdf', '_temp.svg')
-                    self.canvas.fig.savefig(svg_filepath, format='svg', bbox_inches='tight')
+                # Crop tightly to the graph (labels included), not the full view.
+                from . import clipboard_export
+                bbox = clipboard_export.content_bbox_inches(self.canvas.fig)
+                bbox_arg = bbox if bbox is not None else 'tight'
 
-                    # Try to convert SVG to PDF using cairosvg or similar
-                    try:
-                        import cairosvg
-                        cairosvg.svg2pdf(url=svg_filepath, write_to=filepath)
-                        import os
-                        os.remove(svg_filepath)  # Clean up temp file
-                        logger.info(f"Exported PDF with outlined text to {filepath}")
-                    except ImportError:
-                        logger.info("Note: cairosvg not installed. Saved as SVG instead.")
-                        logger.debug("Install with: pip install cairosvg")
-                        logger.debug("Or use the SVG export which already has text as paths.")
-                        # Fall back to regular PDF export
-                        original_fonttype = matplotlib.rcParams.get('pdf.fonttype', 42)
-                        matplotlib.rcParams['pdf.fonttype'] = 42
-                        self.canvas.fig.savefig(filepath, format='pdf', bbox_inches='tight', dpi=300)
-                        matplotlib.rcParams['pdf.fonttype'] = original_fonttype
-                        logger.info(f"Exported PDF (fonts embedded) to {filepath}")
+                # Build the PDF from the *outlined* SVG so its text is paths, not
+                # font-referencing glyphs. This is what lets Illustrator (which
+                # imports the PDF) show the labels without Computer Modern
+                # installed. Falls back to matplotlib's font-embedded PDF if no
+                # SVG->PDF converter is available.
+                import io
+                svg_buffer = io.BytesIO()
+                original_svg_fonttype = matplotlib.rcParams.get('svg.fonttype', 'path')
+                matplotlib.rcParams['svg.fonttype'] = 'path'
+                try:
+                    self.canvas.fig.savefig(svg_buffer, format='svg', bbox_inches=bbox_arg, transparent=True)
+                finally:
+                    matplotlib.rcParams['svg.fonttype'] = original_svg_fonttype
+
+                pdf_bytes = clipboard_export.svg_bytes_to_pdf(svg_buffer.getvalue())
+                if pdf_bytes is not None:
+                    with open(filepath, 'wb') as f:
+                        f.write(pdf_bytes)
+                    logger.info(f"Exported PDF with outlined text to {filepath}")
                 else:
-                    # Non-LaTeX mode: standard PDF export
+                    # No SVG->PDF converter available: matplotlib PDF (fonts embedded)
                     original_fonttype = matplotlib.rcParams.get('pdf.fonttype', 42)
                     matplotlib.rcParams['pdf.fonttype'] = 42
-                    self.canvas.fig.savefig(filepath, format='pdf', bbox_inches='tight', dpi=300)
-                    matplotlib.rcParams['pdf.fonttype'] = original_fonttype
+                    try:
+                        self.canvas.fig.savefig(filepath, format='pdf', bbox_inches=bbox_arg, dpi=300, transparent=True)
+                    finally:
+                        matplotlib.rcParams['pdf.fonttype'] = original_fonttype
+                    logger.info(f"Exported PDF (fonts embedded) to {filepath}")
 
                 # Restore title and redraw with grid
                 self.canvas.ax.set_title(current_title)
@@ -5761,22 +6085,21 @@ class Graphulator(QMainWindow):
         """Update the properties panel based on current selection"""
         # Single node selected
         if len(self.selected_nodes) == 1 and len(self.selected_edges) == 0:
-            self.properties_panel.show_node_properties(self.selected_nodes[0])
+            # Skip rebuilding if this object's widgets are already shown; rebuilding
+            # destroys/recreates the input fields and kicks focus out while typing.
+            if self.properties_panel.displayed_single is not self.selected_nodes[0]:
+                self.properties_panel.show_node_properties(self.selected_nodes[0])
         # Single edge selected
         elif len(self.selected_edges) == 1 and len(self.selected_nodes) == 0:
-            self.properties_panel.show_edge_properties(self.selected_edges[0])
+            if self.properties_panel.displayed_single is not self.selected_edges[0]:
+                self.properties_panel.show_edge_properties(self.selected_edges[0])
         # Multiple or mixed selection
         elif len(self.selected_nodes) > 1 or len(self.selected_edges) > 1:
-            self.properties_panel.clear_properties()
-            self.properties_panel.title_label.setText(f"Multiple Selection")
-            count_text = []
-            if self.selected_nodes:
-                count_text.append(f"{len(self.selected_nodes)} node(s)")
-            if self.selected_edges:
-                count_text.append(f"{len(self.selected_edges)} edge(s)")
-            info = QLabel(f"Selected: {' and '.join(count_text)}\n\nSelect a single object to edit properties.")
-            info.setWordWrap(True)
-            self.properties_panel.properties_layout.addWidget(info)
+            # Skip rebuilding if the same selection's widgets are already shown, so
+            # fields keep focus while editing (same reasoning as the single-object case).
+            signature = PropertiesPanel.selection_signature(self.selected_nodes, self.selected_edges)
+            if self.properties_panel.displayed_multi != signature:
+                self.properties_panel.show_multi_properties(self.selected_nodes, self.selected_edges)
         # No selection
         else:
             self.properties_panel.show_no_selection()
@@ -5829,6 +6152,14 @@ class Graphulator(QMainWindow):
         # No title for export
         self.canvas.ax.set_title('')
         self.canvas.ax.axis('off')
+
+        # Disable per-artist clipping so the SVG/PDF carries no full-canvas clip
+        # rectangle. matplotlib clips every artist to the axes box (the whole
+        # 12x12 figure); Illustrator imports that clip as a second, canvas-sized
+        # bounding box that dwarfs the graph when zoomed out. The export is
+        # cropped to content via bbox_inches, so clipping is unnecessary here.
+        for artist in self.canvas.ax.findobj():
+            artist.set_clip_on(False)
 
         # Update properties panel
         if self.selected_nodes and len(self.selected_nodes) == 1:
