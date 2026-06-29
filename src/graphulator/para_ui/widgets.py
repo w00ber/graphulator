@@ -6,6 +6,7 @@ application logic.
 """
 
 import base64
+import hashlib
 import os
 import re
 
@@ -34,6 +35,52 @@ EXT_TO_MIME = {
     ".svg": "image/svg+xml",
     ".bmp": "image/bmp",
 }
+
+
+# Notes editor uses Jupyter-style attachment refs in markdown image links so
+# the editor never displays the raw base64 payload. The actual data URIs live
+# in a side-table that round-trips through the graph file.
+ATTACHMENT_URI_RE = re.compile(r'attachment:([A-Za-z0-9_-]+)')
+_ATTACHMENT_LINK_RE = re.compile(
+    r'(!\[[^\]]*\]\()(data:image/[A-Za-z0-9.+-]+;base64,[^)\s]+)(\))'
+)
+
+
+def resolve_attachment_uris(text: str, attachments: dict) -> str:
+    """Replace ``attachment:<id>`` URLs in markdown with their data URIs.
+
+    Unknown ids are left as-is so the renderer surfaces a broken-image rather
+    than silently rewriting them.
+    """
+    if not attachments:
+        return text
+
+    def repl(match: re.Match) -> str:
+        return attachments.get(match.group(1), match.group(0))
+
+    return ATTACHMENT_URI_RE.sub(repl, text)
+
+
+def migrate_inline_data_uris(text: str) -> tuple:
+    """Extract inline ``data:image/...;base64,...`` URIs into an attachments map.
+
+    Used for backward compatibility when loading legacy notes that embedded
+    images directly. Returns ``(rewritten_text, attachments)``.
+    """
+    attachments: dict = {}
+
+    def repl(match: re.Match) -> str:
+        prefix, data_uri, suffix = match.group(1), match.group(2), match.group(3)
+        att_id = _attachment_id_for(data_uri.encode("ascii", errors="ignore"))
+        attachments[att_id] = data_uri
+        return f"{prefix}attachment:{att_id}{suffix}"
+
+    return _ATTACHMENT_LINK_RE.sub(repl, text), attachments
+
+
+def _attachment_id_for(payload: bytes) -> str:
+    # Content-addressable so pasting the same image twice dedupes naturally.
+    return hashlib.sha256(payload).hexdigest()[:12]
 
 
 class ConsoleRedirector:
@@ -146,6 +193,9 @@ class LineNumberTextEdit(QPlainTextEdit):
         super().__init__(parent)
         self.markdown_mode = markdown_mode
         self.line_number_area = LineNumberArea(self)
+        # Side-table mapping attachment id -> full data URI. Keeps the editor
+        # showing short ``attachment:<id>`` refs instead of raw base64 blobs.
+        self.attachments: dict = {}
 
         # Connect signals for updating line numbers
         self.blockCountChanged.connect(self.update_line_number_area_width)
@@ -438,8 +488,8 @@ class LineNumberTextEdit(QPlainTextEdit):
         raw = bytes(buffer.data())
         if not self._confirm_image_size(len(raw)):
             return
-        b64 = base64.b64encode(raw).decode("ascii")
-        self._insert_image_markdown(f"data:{mime};base64,{b64}", alt="pasted-image")
+        att_id = self._register_attachment(raw, mime)
+        self._insert_image_markdown(f"attachment:{att_id}", alt="pasted-image")
 
     def _insert_image_file(self, path: str):
         ext = os.path.splitext(path)[1].lower()
@@ -453,13 +503,40 @@ class LineNumberTextEdit(QPlainTextEdit):
             return
         if not self._confirm_image_size(len(raw)):
             return
-        b64 = base64.b64encode(raw).decode("ascii")
+        att_id = self._register_attachment(raw, mime)
         alt = os.path.splitext(os.path.basename(path))[0] or "image"
-        self._insert_image_markdown(f"data:{mime};base64,{b64}", alt=alt)
+        self._insert_image_markdown(f"attachment:{att_id}", alt=alt)
+
+    def _register_attachment(self, raw: bytes, mime: str) -> str:
+        att_id = _attachment_id_for(raw)
+        if att_id not in self.attachments:
+            b64 = base64.b64encode(raw).decode("ascii")
+            self.attachments[att_id] = f"data:{mime};base64,{b64}"
+        return att_id
 
     def _insert_image_markdown(self, src: str, alt: str = "image"):
         cursor = self.textCursor()
         cursor.insertText(f"![{alt}]({src})")
+
+    # --- Attachments side-table API ---
+
+    def set_attachments(self, attachments) -> None:
+        """Replace the attachments map (called when loading a graph file)."""
+        self.attachments = dict(attachments) if attachments else {}
+
+    def get_attachments(self) -> dict:
+        """Return only attachments still referenced by the current text.
+
+        Pruning at read-time avoids accumulating orphans across edits and
+        keeps the saved graph file from growing every time an image is
+        inserted and then deleted.
+        """
+        used = set(ATTACHMENT_URI_RE.findall(self.toPlainText()))
+        return {k: v for k, v in self.attachments.items() if k in used}
+
+    def clear(self):  # type: ignore[override]
+        super().clear()
+        self.attachments.clear()
 
     def _confirm_image_size(self, raw_bytes: int) -> bool:
         if raw_bytes <= IMAGE_SIZE_WARN_BYTES:
