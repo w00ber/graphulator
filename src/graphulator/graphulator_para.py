@@ -65,7 +65,8 @@ from . import graphulator_para_config as config
 # Import refactored modules
 from .para_ui.widgets import (
     ConsoleRedirector, FineControlSpinBox, LineNumberArea,
-    LineNumberTextEdit, AspectRatioWidget
+    LineNumberTextEdit, AspectRatioWidget,
+    migrate_inline_data_uris, resolve_attachment_uris,
 )
 from .para_features.sympy_utils import (
     CustomLaTeXPrinter, latex_custom, latex_matrix_factored, normalize_matrix_latex
@@ -611,6 +612,11 @@ class PropertiesPanel(QWidget):
         """Render markdown notes with KaTeX LaTeX support (fast, offline-capable)"""
 
         markdown_text = self.notes_editor.toPlainText()
+        # Expand attachment: refs to data URIs so the markdown→HTML stage emits
+        # standalone <img> tags the WebView can render without further lookups.
+        markdown_text = resolve_attachment_uris(
+            markdown_text, self.notes_editor.attachments
+        )
 
         # Protect math blocks from HTML escaping and markdown processing
         # Extract and replace with placeholders, then restore after processing
@@ -6905,8 +6911,13 @@ class Graphulator(QMainWindow):
                 data["scattering"]["constraint_groups"] = self.scattering_constraint_groups
                 data["scattering"]["next_constraint_group_id"] = self._next_constraint_group_id
 
-        # Save notes content
+        # Save notes content. Image data lives in a side-table so the markdown
+        # source stays readable and the on-disk format matches the editor's
+        # ``attachment:<id>`` references.
         data["notes"] = self.properties_panel.notes_editor.toPlainText()
+        notes_attachments = self.properties_panel.notes_editor.get_attachments()
+        if notes_attachments:
+            data["notes_attachments"] = notes_attachments
 
         # Generate and embed SVG representation of the graph
         svg_string = self._generate_svg_string(use_kron_canvas=False)
@@ -7272,9 +7283,17 @@ class Graphulator(QMainWindow):
         # Update conjugate pair constraints (ensures consistency after load)
         self._update_conjugate_pair_constraints()
 
-        # Load notes content (backward compatible - default to empty string)
+        # Load notes content (backward compatible - default to empty string).
+        # Legacy files embed full ``data:image/...;base64,...`` URIs inline; we
+        # extract those into the attachments side-table on load so the editor
+        # only ever displays short ``attachment:<id>`` refs.
         notes = data.get("notes", "")
+        notes_attachments = data.get("notes_attachments")
+        if notes and not notes_attachments:
+            notes, migrated = migrate_inline_data_uris(notes)
+            notes_attachments = migrated or None
         if hasattr(self, 'properties_panel') and hasattr(self.properties_panel, 'notes_editor'):
+            self.properties_panel.notes_editor.set_attachments(notes_attachments or {})
             self.properties_panel.notes_editor.setPlainText(notes)
             # Reset preview - if notes are empty, show placeholder; otherwise render will happen on tab switch
             if hasattr(self.properties_panel, 'notes_preview'):
