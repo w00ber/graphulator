@@ -82,15 +82,16 @@ def _prepend_changelog(new: str) -> None:
         CHANGELOG.write_text(f"# Changelog\n\n{stub}")
         return
     text = CHANGELOG.read_text()
-    # Insert after the first blank line so "# Changelog" header stays on top.
-    marker = "\n\n"
-    idx = text.find(marker)
-    if idx == -1:
-        CHANGELOG.write_text(text + "\n\n" + stub)
+    # Insert right before the first versioned heading (## [x.y.z] - …) so the
+    # file's header (title + description paragraph) stays on top. If no prior
+    # version section exists, append after the existing content.
+    match = re.search(r"^## \[", text, flags=re.MULTILINE)
+    if match is None:
+        sep = "" if text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
+        CHANGELOG.write_text(text + sep + stub)
     else:
-        head = text[: idx + len(marker)]
-        tail = text[idx + len(marker) :]
-        CHANGELOG.write_text(head + stub + tail)
+        idx = match.start()
+        CHANGELOG.write_text(text[:idx] + stub + text[idx:])
 
 
 def main(argv: list[str]) -> int:
