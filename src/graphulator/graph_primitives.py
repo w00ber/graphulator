@@ -483,7 +483,9 @@ def edge(ax = None,
         lw = 1.5,
         loopkwargs = {},
         reverse = False,
-        debug = False
+        debug = False,
+        label_cache = None,  # optional LabelPathCache for fast cached-glyph labels
+        usetex = False,      # forwarded to the cache (LaTeX vs mathtext)
         ):
     '''Draw a connecting edge between nodes.
     '''
@@ -656,20 +658,36 @@ def edge(ax = None,
         # forward label
         if label[0] is not None:
             labelvecpos = [voffsetmid[0] + labelvecpos[0],voffsetmid[1] + labelvecpos[1]]
-            bbox_props_0 = None
-            if labelbgcolor[0] is not None:
-                bbox_props_0 = dict(boxstyle='round,pad=0.1', facecolor=labelbgcolor[0], edgecolor='none', alpha=1.0)
-            ax.annotate(label[0],xy=labelvecpos,
-                        ha='center',va='center',
-                        fontsize=scaled_labelfontsize,color=labelcolor,rotation=labeltheta,bbox=bbox_props_0)
+            if label_cache is not None:
+                label_cache.draw(ax, label[0], labelvecpos[0], labelvecpos[1],
+                                 fontsize_points=scaled_labelfontsize,
+                                 points_per_data_unit=points_per_data_unit,
+                                 color=labelcolor, rotation=labeltheta,
+                                 ha='center', va='center', usetex=usetex,
+                                 zorder=20, bgcolor=labelbgcolor[0])
+            else:
+                bbox_props_0 = None
+                if labelbgcolor[0] is not None:
+                    bbox_props_0 = dict(boxstyle='round,pad=0.1', facecolor=labelbgcolor[0], edgecolor='none', alpha=1.0)
+                ax.annotate(label[0],xy=labelvecpos,
+                            ha='center',va='center',
+                            fontsize=scaled_labelfontsize,color=labelcolor,rotation=labeltheta,bbox=bbox_props_0)
         if label[1] is not None:
             labelvecneg = [voffsetmid[0] + labelvecneg[0],voffsetmid[1] + labelvecneg[1]]
-            bbox_props_1 = None
-            if labelbgcolor[1] is not None:
-                bbox_props_1 = dict(boxstyle='round,pad=0.1', facecolor=labelbgcolor[1], edgecolor='none', alpha=1.0)
-            ax.annotate(label[1],xy=labelvecneg,
-                        ha='center',va='center',
-                        fontsize=scaled_labelfontsize,color=labelcolor,rotation=labeltheta,bbox=bbox_props_1)
+            if label_cache is not None:
+                label_cache.draw(ax, label[1], labelvecneg[0], labelvecneg[1],
+                                 fontsize_points=scaled_labelfontsize,
+                                 points_per_data_unit=points_per_data_unit,
+                                 color=labelcolor, rotation=labeltheta,
+                                 ha='center', va='center', usetex=usetex,
+                                 zorder=20, bgcolor=labelbgcolor[1])
+            else:
+                bbox_props_1 = None
+                if labelbgcolor[1] is not None:
+                    bbox_props_1 = dict(boxstyle='round,pad=0.1', facecolor=labelbgcolor[1], edgecolor='none', alpha=1.0)
+                ax.annotate(label[1],xy=labelvecneg,
+                            ha='center',va='center',
+                            fontsize=scaled_labelfontsize,color=labelcolor,rotation=labeltheta,bbox=bbox_props_1)
 
 
     if debug:
