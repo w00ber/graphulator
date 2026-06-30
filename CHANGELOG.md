@@ -2,7 +2,18 @@
 
 ## [0.11.0] - 2026-06-30
 ### Changed
-- _TODO: describe changes._
+- Canvas text labels (node, edge, and self-loop) are now rendered from cached
+  vector glyph paths: each unique LaTeX/MathText label is compiled once and
+  reused across pan/zoom/rescale via cheap transforms. LaTeX-quality labels stay
+  crisp at any zoom, and the fast/slow MathText↔LaTeX debounce toggle is gone.
+- Pan and zoom no longer rebuild the whole scene each frame. View changes update
+  only the axis limits (and zoom-dependent stroke widths) on the existing
+  artists, making interaction dramatically smoother in both Graphulator and
+  Paragraphulator.
+
+### Fixed
+- A node could begin dragging on plain cursor movement after a click+release;
+  dragging now requires the left mouse button to be held (a real click-drag).
 
 ## [0.10.0] - 2026-05-08
 ### Changed
