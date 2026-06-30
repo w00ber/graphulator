@@ -41,6 +41,7 @@ import matplotlib.patches as patches
 # Import modules (relative imports for package)
 from . import graph_primitives as gp
 from . import graphulator_config as config
+from .para_rendering.label_cache import LabelPathCache
 
 
 EXPORT_RESCALE_DEFAULTS = {
@@ -1502,6 +1503,14 @@ class Graphulator(QMainWindow):
 
         # Rendering mode
         self.use_latex = False  # Toggle between MathText and LaTeX rendering
+        # Cached vector glyph-paths for labels: each unique label string is
+        # compiled once (mathtext or LaTeX) and reused across pan/zoom/rescale via
+        # cheap affine transforms, so the layout engine is never re-run per frame.
+        self._label_cache = LabelPathCache()
+        # Fast pan/zoom path state (scene built once; zoom only updates the view).
+        self._build_ppu = None            # points-per-data-unit at last full build
+        self._zoom_lw_snapshot = None     # [(artist, base_linewidth), ...] (grid excluded)
+        self._grid_built_extent = None    # half-extent the grid currently covers
         self.latex_debounce_timer = QTimer()
         self.latex_debounce_timer.setSingleShot(True)
         self.latex_debounce_timer.timeout.connect(self._render_with_latex)
@@ -3671,7 +3680,10 @@ class Graphulator(QMainWindow):
 
         xlim = self._get_xlim()
         ylim = self._get_ylim()
-        max_extent = max(abs(xlim[0]), abs(xlim[1]), abs(ylim[0]), abs(ylim[1])) * 1.5
+        # Build over a generous extent so ordinary zoom-out stays covered without
+        # a rebuild (the fast view path rebuilds it only if the view grows beyond).
+        max_extent = max(abs(xlim[0]), abs(xlim[1]), abs(ylim[0]), abs(ylim[1])) * 3.0
+        self._grid_built_extent = max_extent
         n = int(max_extent / spacing) + 2
 
         for i in range(-n, n + 1):
@@ -3682,14 +3694,16 @@ class Graphulator(QMainWindow):
             y1 = offset * np.sin(rot_rad) + max_extent * np.cos(rot_rad)
             x2 = offset * np.cos(rot_rad) + max_extent * np.sin(rot_rad)
             y2 = offset * np.sin(rot_rad) - max_extent * np.cos(rot_rad)
-            self.canvas.ax.plot([x1, x2], [y1, y2], 'lightgray', lw=0.5, zorder=0)
+            line, = self.canvas.ax.plot([x1, x2], [y1, y2], 'lightgray', lw=0.5, zorder=0)
+            line.set_gid('grid')
 
             # Horizontal lines
             x1 = -max_extent * np.cos(rot_rad) + offset * np.sin(rot_rad)
             y1 = -max_extent * np.sin(rot_rad) - offset * np.cos(rot_rad)
             x2 = max_extent * np.cos(rot_rad) + offset * np.sin(rot_rad)
             y2 = max_extent * np.sin(rot_rad) - offset * np.cos(rot_rad)
-            self.canvas.ax.plot([x1, x2], [y1, y2], 'lightgray', lw=0.5, zorder=0)
+            line, = self.canvas.ax.plot([x1, x2], [y1, y2], 'lightgray', lw=0.5, zorder=0)
+            line.set_gid('grid')
 
     def _draw_triangular_grid(self):
         """Draw rotated triangular grid"""
@@ -3699,7 +3713,9 @@ class Graphulator(QMainWindow):
 
         xlim = self._get_xlim()
         ylim = self._get_ylim()
-        max_extent = max(abs(xlim[0]), abs(xlim[1]), abs(ylim[0]), abs(ylim[1])) * 1.5
+        # Generous extent so ordinary zoom-out stays covered without a rebuild.
+        max_extent = max(abs(xlim[0]), abs(xlim[1]), abs(ylim[0]), abs(ylim[1])) * 3.0
+        self._grid_built_extent = max_extent
         n = int(max_extent / spacing * 2) + 5
 
         # Three sets of lines
@@ -3712,7 +3728,8 @@ class Graphulator(QMainWindow):
             y1r = x1 * np.sin(rot_rad) + y1 * np.cos(rot_rad)
             x2r = x2 * np.cos(rot_rad) - y2 * np.sin(rot_rad)
             y2r = x2 * np.sin(rot_rad) + y2 * np.cos(rot_rad)
-            self.canvas.ax.plot([x1r, x2r], [y1r, y2r], 'lightgray', lw=0.5, zorder=0)
+            line, = self.canvas.ax.plot([x1r, x2r], [y1r, y2r], 'lightgray', lw=0.5, zorder=0)
+            line.set_gid('grid')
 
         for i in range(-n, n + 1):
             # 60° lines
@@ -3727,7 +3744,8 @@ class Graphulator(QMainWindow):
             y1r = x1 * np.sin(rot_rad) + y1 * np.cos(rot_rad)
             x2r = x2 * np.cos(rot_rad) - y2 * np.sin(rot_rad)
             y2r = x2 * np.sin(rot_rad) + y2 * np.cos(rot_rad)
-            self.canvas.ax.plot([x1r, x2r], [y1r, y2r], 'lightgray', lw=0.5, zorder=0)
+            line, = self.canvas.ax.plot([x1r, x2r], [y1r, y2r], 'lightgray', lw=0.5, zorder=0)
+            line.set_gid('grid')
 
         for i in range(-n, n + 1):
             # 120° lines
@@ -3742,7 +3760,8 @@ class Graphulator(QMainWindow):
             y1r = x1 * np.sin(rot_rad) + y1 * np.cos(rot_rad)
             x2r = x2 * np.cos(rot_rad) - y2 * np.sin(rot_rad)
             y2r = x2 * np.sin(rot_rad) + y2 * np.cos(rot_rad)
-            self.canvas.ax.plot([x1r, x2r], [y1r, y2r], 'lightgray', lw=0.5, zorder=0)
+            line, = self.canvas.ax.plot([x1r, x2r], [y1r, y2r], 'lightgray', lw=0.5, zorder=0)
+            line.set_gid('grid')
 
     def _snap_to_grid(self, x, y):
         """Snap coordinates to nearest grid point"""
@@ -4136,13 +4155,15 @@ class Graphulator(QMainWindow):
             label_x = node['pos'][0] + nudge[0]
             label_y = node['pos'][1] + nudge[1] - vertical_adjustment_data
 
-            # Create bbox dict for label background if specified
-            self.canvas.ax.text(
-                label_x, label_y, formatted_text,
-                ha='center', va='center',
-                fontsize=font_size_points,
+            # Draw the label via the cached vector glyph-path renderer so it stays
+            # crisp and fast across pan/zoom (no per-frame layout recompilation).
+            self._label_cache.draw(
+                self.canvas.ax, formatted_text, label_x, label_y,
+                fontsize_points=font_size_points,
+                points_per_data_unit=points_per_data_unit,
                 color=node.get('label_color', config.DEFAULT_NODE_LABEL_COLOR),
-                zorder=11
+                ha='center', va='center',
+                usetex=self.use_latex, zorder=11,
             )
 
             # Draw selection indicator
@@ -4250,22 +4271,15 @@ class Graphulator(QMainWindow):
                     base_font_size = 12
                     scaled_font_size = base_font_size * edge['label_size_mult'] * (points_per_data_unit / reference_points_per_data_unit)
 
-                    # Create bbox for label background if specified
-                    bbox_props = None
-                    if edge.get('label_bgcolor'):
-                        bbox_props = dict(boxstyle='round,pad=0.1',
-                                        facecolor=edge['label_bgcolor'],
-                                        edgecolor='none',
-                                        alpha=1.0)
-
-                    self.canvas.ax.text(
-                        label_x, label_y, formatted_label,
-                        fontsize=scaled_font_size,
+                    # Draw self-loop label via the cached vector glyph-path renderer.
+                    self._label_cache.draw(
+                        self.canvas.ax, formatted_label, label_x, label_y,
+                        fontsize_points=scaled_font_size,
+                        points_per_data_unit=points_per_data_unit,
                         color=edge.get('label_color', 'black'),
                         ha='center', va='center',
-                        bbox=bbox_props,
-                        zorder=20,
-                        usetex=self.use_latex
+                        usetex=self.use_latex, zorder=20,
+                        bgcolor=edge.get('label_bgcolor') or None,
                     )
 
                 # Calculate the Bezier curve control points (matching graph_primitives selfloop)
@@ -4388,7 +4402,9 @@ class Graphulator(QMainWindow):
                     style=style,
                     whichedges=edge['direction'],
                     theta=edge.get('looptheta', 30),  # Looptheta parameter (adjustable via Ctrl+Left/Right)
-                    loopkwargs={'lw': final_lw, 'arrowlength': 0.4}  # Add arrowheads
+                    loopkwargs={'lw': final_lw, 'arrowlength': 0.4},  # Add arrowheads
+                    label_cache=self._label_cache,
+                    usetex=self.use_latex,
                 )
 
                 # Draw selection indicator for selected edges
@@ -5241,7 +5257,8 @@ class Graphulator(QMainWindow):
         elif event.button == 'down':
             self.zoom_level /= config.ZOOM_SCROLL_FACTOR
 
-        self._update_plot()
+        # Fast view-only update (no scene rebuild)
+        self._apply_view_fast()
 
     def _save_state(self):
         """Save current state to undo stack"""
@@ -5691,6 +5708,9 @@ class Graphulator(QMainWindow):
             matplotlib.rcParams['text.latex.preamble'] = ''
             matplotlib.rcParams['mathtext.fontset'] = 'stix'
             matplotlib.rcParams['font.family'] = 'STIXGeneral'
+
+        # Drop cached glyph paths (the global LaTeX preamble/fontset just changed).
+        self._label_cache.clear()
 
         render_mode = "LaTeX" if self.use_latex else "MathText"
         logger.info(f"Rendering mode: {render_mode}")
@@ -6172,45 +6192,25 @@ class Graphulator(QMainWindow):
         self.canvas.draw()
 
     def _update_plot(self, force_latex=False):
-        """Redraw the plot with debounced LaTeX rendering
+        """Redraw the plot.
+
+        Labels are rendered from the cached vector glyph-path renderer
+        (:class:`LabelPathCache`), so LaTeX-quality output stays crisp and fast
+        across pan/zoom/rescale without re-invoking the layout engine.  The old
+        fast/slow MathText<->LaTeX debounce hack is therefore no longer needed.
 
         Args:
-            force_latex: If True, render with LaTeX immediately without debouncing
+            force_latex: Retained for backwards compatibility; no longer affects
+                behaviour (rendering is always immediate and crisp).
         """
-        # If in LaTeX mode and not forcing, use fast rendering with debounce
-        if self.use_latex and not force_latex:
-            # Stop any pending LaTeX render
-            self.latex_debounce_timer.stop()
-
-            # Temporarily switch to MathText for fast rendering
-            # Always reset font params to ensure consistency, even if already in fast mode
-            self.is_fast_rendering = True
-            # Switch to MathText with same styling as non-LaTeX mode
-            matplotlib.rcParams['text.usetex'] = False
-            matplotlib.rcParams['text.latex.preamble'] = ''
-            matplotlib.rcParams['mathtext.fontset'] = 'stix'
-            matplotlib.rcParams['font.family'] = 'STIXGeneral'
-
-            # Do the fast render
-            self._do_plot_render()
-
-            # Schedule LaTeX render after timeout
-            self.latex_debounce_timer.start(self.latex_debounce_timeout)
-        else:
-            # Normal render (MathText mode or forced LaTeX)
-            self._do_plot_render()
+        self._do_plot_render()
 
     def _render_with_latex(self):
-        """Called by timer to render with LaTeX after changes settle"""
-        if self.is_fast_rendering:
-            self.is_fast_rendering = False
-            # Switch back to LaTeX
-            matplotlib.rcParams['text.usetex'] = True
-            matplotlib.rcParams['text.latex.preamble'] = r'\usepackage{amsmath}\usepackage{sfmath}\renewcommand{\familydefault}{\sfdefault}'
+        """Deprecated: the debounced LaTeX re-render is no longer used.
 
-            logger.debug("Rendering with LaTeX...")
-            # Re-render with LaTeX
-            self._do_plot_render()
+        Kept as a no-op so the (now-unused) debounce timer connection is safe.
+        """
+        return
 
     def _do_plot_render(self):
         """Actually perform the plot rendering"""
@@ -6251,15 +6251,7 @@ class Graphulator(QMainWindow):
             self.canvas.ax.add_patch(highlight_circle)
 
         # Update status bar instead of title
-        mode_str = f" | Mode: {self.placement_mode}" if self.placement_mode else ""
-        edge_str = f" | Edges: {len(self.edges)}" if self.edges else ""
-        latex_str = " | LaTeX" if self.use_latex else ""
-        fast_str = " (fast)" if self.is_fast_rendering else ""
-        status_text = (
-            f'{self.grid_type.capitalize()} Grid (rotation={self.grid_rotation}°, '
-            f'zoom={self.zoom_level:.3f}x) | Nodes: {len(self.nodes)}{edge_str}{mode_str}{latex_str}{fast_str}'
-        )
-        self.status_label.setText(status_text)
+        self._update_status_label()
 
         # No title on plot
         self.canvas.ax.set_title('')
@@ -6271,6 +6263,86 @@ class Graphulator(QMainWindow):
 
         # Update properties panel based on selection
         self._update_properties_panel()
+
+        # Snapshot the scene for the fast pan/zoom path: current ppu + per-artist
+        # base linewidths (grid excluded; it has fixed width and is rebuilt only
+        # when the view grows past its extent).
+        self._build_ppu = self._points_per_data_unit(
+            self.canvas.ax.get_xlim(), self.canvas.ax.get_ylim())
+        self._zoom_lw_snapshot = [
+            (a, a.get_linewidth())
+            for a in (list(self.canvas.ax.lines) + list(self.canvas.ax.patches))
+            if a.get_gid() != 'grid' and a.get_linewidth()
+        ]
+
+    def _points_per_data_unit(self, xlim, ylim):
+        """Points per data unit for the current figure size and view limits."""
+        fig = self.canvas.fig
+        data_width = xlim[1] - xlim[0]
+        data_height = ylim[1] - ylim[0]
+        if data_width <= 0 or data_height <= 0:
+            return None
+        return min(fig.get_figwidth() * 72 / data_width,
+                   fig.get_figheight() * 72 / data_height)
+
+    def _update_status_label(self):
+        """Refresh the status bar text (cheap; used by both full and fast renders)."""
+        mode_str = f" | Mode: {self.placement_mode}" if self.placement_mode else ""
+        edge_str = f" | Edges: {len(self.edges)}" if self.edges else ""
+        latex_str = " | LaTeX" if self.use_latex else ""
+        fast_str = " (fast)" if self.is_fast_rendering else ""
+        self.status_label.setText(
+            f'{self.grid_type.capitalize()} Grid (rotation={self.grid_rotation}°, '
+            f'zoom={self.zoom_level:.3f}x) | Nodes: {len(self.nodes)}'
+            f'{edge_str}{mode_str}{latex_str}{fast_str}'
+        )
+
+    def _rebuild_grid_only(self):
+        """Remove just the grid line artists and redraw the grid for the current view."""
+        for artist in [a for a in self.canvas.ax.lines if a.get_gid() == 'grid']:
+            try:
+                artist.remove()
+            except Exception:
+                pass
+        self._draw_grid()
+
+    def _apply_view_fast(self):
+        """Fast pan/zoom: update axis limits and rescale zoom-dependent linewidths
+        on the EXISTING artists instead of rebuilding the scene.
+
+        Node circles, edge paths and the cached label glyphs all live in data
+        coordinates, so they rescale/reposition for free when the limits change;
+        only stroke widths (which scale with zoom) and the grid extent need
+        touching. Falls back to a full render if the scene hasn't been built yet.
+        """
+        ax = self.canvas.ax
+        if self._zoom_lw_snapshot is None or self._build_ppu is None:
+            self._update_plot()
+            return
+
+        new_xlim = self._get_xlim()
+        new_ylim = self._get_ylim()
+
+        # Keep strokes proportional to zoom (grid excluded; it has fixed width).
+        new_ppu = self._points_per_data_unit(new_xlim, new_ylim)
+        if new_ppu and self._build_ppu:
+            factor = new_ppu / self._build_ppu
+            for artist, base_lw in self._zoom_lw_snapshot:
+                try:
+                    artist.set_linewidth(base_lw * factor)
+                except Exception:
+                    pass
+
+        # Rebuild the grid only if the view grew beyond the extent it covers.
+        new_extent = max(abs(new_xlim[0]), abs(new_xlim[1]),
+                         abs(new_ylim[0]), abs(new_ylim[1])) * 1.5
+        if self._grid_built_extent is not None and new_extent > self._grid_built_extent:
+            self._rebuild_grid_only()
+
+        ax.set_xlim(*new_xlim)
+        ax.set_ylim(*new_ylim)
+        self._update_status_label()
+        self.canvas.draw_idle()
 
 
 def main():
