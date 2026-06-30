@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.11.0] - 2026-06-30
+### Changed
+- _TODO: describe changes._
+
 ## [0.10.0] - 2026-05-08
 ### Changed
 - _TODO: describe changes._
