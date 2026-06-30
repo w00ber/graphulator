@@ -5442,6 +5442,12 @@ class Graphulator(QMainWindow):
         # cheap affine transforms, so the layout engine is never re-run per frame.
         # This makes LaTeX-quality labels stay crisp without the old fast/slow hack.
         self._label_cache = LabelPathCache()
+        # Fast pan/zoom path: the scene is built once by _do_plot_render; pure view
+        # changes (zoom) then only update axis limits and rescale zoom-dependent
+        # linewidths on the existing artists instead of rebuilding everything.
+        self._build_ppu = None            # points-per-data-unit at last full build
+        self._zoom_lw_snapshot = None     # [(artist, base_linewidth), ...] (grid excluded)
+        self._grid_built_extent = None    # half-extent the grid currently covers
         self.latex_debounce_timer = QTimer()
         self.latex_debounce_timer.setSingleShot(True)
         self.latex_debounce_timer.timeout.connect(self._render_with_latex)
@@ -12075,7 +12081,11 @@ class Graphulator(QMainWindow):
 
         xlim = self._get_xlim()
         ylim = self._get_ylim()
-        max_extent = max(abs(xlim[0]), abs(xlim[1]), abs(ylim[0]), abs(ylim[1])) * 1.5
+        # Build the grid over a generous extent so ordinary zoom-out stays covered
+        # without a rebuild (the fast view path rebuilds it only if the view grows
+        # beyond this).
+        max_extent = max(abs(xlim[0]), abs(xlim[1]), abs(ylim[0]), abs(ylim[1])) * 3.0
+        self._grid_built_extent = max_extent
         n = int(max_extent / spacing) + 2
 
         for i in range(-n, n + 1):
@@ -12086,14 +12096,16 @@ class Graphulator(QMainWindow):
             y1 = offset * np.sin(rot_rad) + max_extent * np.cos(rot_rad)
             x2 = offset * np.cos(rot_rad) + max_extent * np.sin(rot_rad)
             y2 = offset * np.sin(rot_rad) - max_extent * np.cos(rot_rad)
-            self.canvas.ax.plot([x1, x2], [y1, y2], 'lightgray', lw=0.5, zorder=0)
+            line, = self.canvas.ax.plot([x1, x2], [y1, y2], 'lightgray', lw=0.5, zorder=0)
+            line.set_gid('grid')
 
             # Horizontal lines
             x1 = -max_extent * np.cos(rot_rad) + offset * np.sin(rot_rad)
             y1 = -max_extent * np.sin(rot_rad) - offset * np.cos(rot_rad)
             x2 = max_extent * np.cos(rot_rad) + offset * np.sin(rot_rad)
             y2 = max_extent * np.sin(rot_rad) - offset * np.cos(rot_rad)
-            self.canvas.ax.plot([x1, x2], [y1, y2], 'lightgray', lw=0.5, zorder=0)
+            line, = self.canvas.ax.plot([x1, x2], [y1, y2], 'lightgray', lw=0.5, zorder=0)
+            line.set_gid('grid')
 
     def _draw_triangular_grid(self):
         """Draw rotated triangular grid"""
@@ -12103,7 +12115,9 @@ class Graphulator(QMainWindow):
 
         xlim = self._get_xlim()
         ylim = self._get_ylim()
-        max_extent = max(abs(xlim[0]), abs(xlim[1]), abs(ylim[0]), abs(ylim[1])) * 1.5
+        # Generous extent so ordinary zoom-out stays covered without a rebuild.
+        max_extent = max(abs(xlim[0]), abs(xlim[1]), abs(ylim[0]), abs(ylim[1])) * 3.0
+        self._grid_built_extent = max_extent
         n = int(max_extent / spacing * 2) + 5
 
         # Three sets of lines
@@ -12116,7 +12130,8 @@ class Graphulator(QMainWindow):
             y1r = x1 * np.sin(rot_rad) + y1 * np.cos(rot_rad)
             x2r = x2 * np.cos(rot_rad) - y2 * np.sin(rot_rad)
             y2r = x2 * np.sin(rot_rad) + y2 * np.cos(rot_rad)
-            self.canvas.ax.plot([x1r, x2r], [y1r, y2r], 'lightgray', lw=0.5, zorder=0)
+            line, = self.canvas.ax.plot([x1r, x2r], [y1r, y2r], 'lightgray', lw=0.5, zorder=0)
+            line.set_gid('grid')
 
         for i in range(-n, n + 1):
             # 60° lines
@@ -12131,7 +12146,8 @@ class Graphulator(QMainWindow):
             y1r = x1 * np.sin(rot_rad) + y1 * np.cos(rot_rad)
             x2r = x2 * np.cos(rot_rad) - y2 * np.sin(rot_rad)
             y2r = x2 * np.sin(rot_rad) + y2 * np.cos(rot_rad)
-            self.canvas.ax.plot([x1r, x2r], [y1r, y2r], 'lightgray', lw=0.5, zorder=0)
+            line, = self.canvas.ax.plot([x1r, x2r], [y1r, y2r], 'lightgray', lw=0.5, zorder=0)
+            line.set_gid('grid')
 
         for i in range(-n, n + 1):
             # 120° lines
@@ -12146,7 +12162,8 @@ class Graphulator(QMainWindow):
             y1r = x1 * np.sin(rot_rad) + y1 * np.cos(rot_rad)
             x2r = x2 * np.cos(rot_rad) - y2 * np.sin(rot_rad)
             y2r = x2 * np.sin(rot_rad) + y2 * np.cos(rot_rad)
-            self.canvas.ax.plot([x1r, x2r], [y1r, y2r], 'lightgray', lw=0.5, zorder=0)
+            line, = self.canvas.ax.plot([x1r, x2r], [y1r, y2r], 'lightgray', lw=0.5, zorder=0)
+            line.set_gid('grid')
 
     def _snap_to_grid(self, x, y):
         """Snap coordinates to nearest grid point"""
@@ -14989,8 +15006,8 @@ class Graphulator(QMainWindow):
                 self.base_xlim = saved_base_xlim
                 self.base_ylim = saved_base_ylim
         else:
-            # Event from original canvas - update original view
-            self._update_plot(use_idle=True)
+            # Event from original canvas - fast view-only update (no scene rebuild)
+            self._apply_view_fast(use_idle=True)
 
     def _invalidate_kron_reduction(self):
         """Reset/invalidate any existing Kron reduction when the graph is modified"""
@@ -16773,17 +16790,7 @@ class Graphulator(QMainWindow):
             self.canvas.ax.add_patch(highlight_circle)
 
         # Update status bar instead of title
-        mode_str = f" | Mode: {self.placement_mode}" if self.placement_mode else ""
-        edge_str = f" | Edges: {len(self.edges)}" if self.edges else ""
-        latex_str = " | LaTeX" if self.use_latex else ""
-        basis_str = " | BASIS ORDERING" if self.basis_ordering_mode else ""
-        kron_str = " | KRON REDUCTION MODE" if self.kron_mode else ""
-        fast_str = " (fast)" if self.is_fast_rendering else ""
-        status_text = (
-            f'{self.grid_type.capitalize()} Grid (rotation={self.grid_rotation}°, '
-            f'zoom={self.zoom_level:.3f}x) | Nodes: {len(self.nodes)}{edge_str}{mode_str}{latex_str}{basis_str}{kron_str}{fast_str}'
-        )
-        self.status_label.setText(status_text)
+        self._update_status_label()
 
         # No title on plot
         self.canvas.ax.set_title('')
@@ -16809,6 +16816,91 @@ class Graphulator(QMainWindow):
 
         # Update SymPy code display to reflect any changes
         self.properties_panel._update_sympy_code_display()
+
+        # Snapshot the scene for the fast pan/zoom path. Only the editable original
+        # canvas uses that path, so only snapshot for it (kron/scattering renders
+        # reuse this method via a temporary canvas swap).
+        if self.canvas is getattr(self, 'original_canvas', None):
+            self._build_ppu = self._points_per_data_unit(
+                self.canvas.ax.get_xlim(), self.canvas.ax.get_ylim())
+            self._zoom_lw_snapshot = [
+                (a, a.get_linewidth())
+                for a in (list(self.canvas.ax.lines) + list(self.canvas.ax.patches))
+                if a.get_gid() != 'grid' and a.get_linewidth()
+            ]
+
+    def _points_per_data_unit(self, xlim, ylim):
+        """Points per data unit for the current figure size and view limits."""
+        fig = self.canvas.fig
+        data_width = xlim[1] - xlim[0]
+        data_height = ylim[1] - ylim[0]
+        if data_width <= 0 or data_height <= 0:
+            return None
+        return min(fig.get_figwidth() * 72 / data_width,
+                   fig.get_figheight() * 72 / data_height)
+
+    def _update_status_label(self):
+        """Refresh the status bar text (cheap; used by both full and fast renders)."""
+        mode_str = f" | Mode: {self.placement_mode}" if self.placement_mode else ""
+        edge_str = f" | Edges: {len(self.edges)}" if self.edges else ""
+        latex_str = " | LaTeX" if self.use_latex else ""
+        basis_str = " | BASIS ORDERING" if self.basis_ordering_mode else ""
+        kron_str = " | KRON REDUCTION MODE" if self.kron_mode else ""
+        fast_str = " (fast)" if self.is_fast_rendering else ""
+        self.status_label.setText(
+            f'{self.grid_type.capitalize()} Grid (rotation={self.grid_rotation}°, '
+            f'zoom={self.zoom_level:.3f}x) | Nodes: {len(self.nodes)}'
+            f'{edge_str}{mode_str}{latex_str}{basis_str}{kron_str}{fast_str}'
+        )
+
+    def _rebuild_grid_only(self):
+        """Remove just the grid line artists and redraw the grid for the current view."""
+        for artist in [a for a in self.canvas.ax.lines if a.get_gid() == 'grid']:
+            try:
+                artist.remove()
+            except Exception:
+                pass
+        self._draw_grid()
+
+    def _apply_view_fast(self, use_idle=True):
+        """Fast pan/zoom for the main canvas: update axis limits and rescale
+        zoom-dependent linewidths on the EXISTING artists instead of rebuilding
+        the scene.
+
+        Node circles, edge paths and the cached label glyphs all live in data
+        coordinates, so they rescale/reposition for free when the limits change;
+        only stroke widths (which scale with zoom) and the grid extent need
+        touching. Falls back to a full render if the scene hasn't been built yet.
+        """
+        ax = self.canvas.ax
+        if (self._zoom_lw_snapshot is None or self._build_ppu is None
+                or self.canvas is not getattr(self, 'original_canvas', None)):
+            self._update_plot(use_idle=use_idle)
+            return
+
+        new_xlim = self._get_xlim()
+        new_ylim = self._get_ylim()
+
+        # Keep strokes proportional to zoom (grid excluded; it has fixed width).
+        new_ppu = self._points_per_data_unit(new_xlim, new_ylim)
+        if new_ppu and self._build_ppu:
+            factor = new_ppu / self._build_ppu
+            for artist, base_lw in self._zoom_lw_snapshot:
+                try:
+                    artist.set_linewidth(base_lw * factor)
+                except Exception:
+                    pass
+
+        # Rebuild the grid only if the view grew beyond the extent it covers.
+        new_extent = max(abs(new_xlim[0]), abs(new_xlim[1]),
+                         abs(new_ylim[0]), abs(new_ylim[1])) * 1.5
+        if self._grid_built_extent is not None and new_extent > self._grid_built_extent:
+            self._rebuild_grid_only()
+
+        ax.set_xlim(*new_xlim)
+        ax.set_ylim(*new_ylim)
+        self._update_status_label()
+        self.canvas.draw_idle()
 
 
 def main():
