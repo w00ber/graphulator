@@ -11414,7 +11414,8 @@ class Graphulator(QMainWindow):
             elif direction == 'down':
                 self.base_ylim = (self.base_ylim[0] - pan_amount_y, self.base_ylim[1] - pan_amount_y)
 
-            self._update_plot()
+            # Fast view-only update (pan doesn't change zoom, so no scene rebuild)
+            self._apply_view_fast()
 
     def _adjust_node_size(self, direction):
         """Adjust node size or label size for selected nodes"""
