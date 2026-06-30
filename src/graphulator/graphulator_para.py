@@ -13512,8 +13512,13 @@ class Graphulator(QMainWindow):
         if event.inaxes not in valid_axes:
             return
 
-        # Check for pending drag - activate if motion threshold exceeded
-        if (self.drag_pending_node or self.drag_pending_group) and self.drag_start_pos is not None:
+        # Check for pending drag - activate only while the left button is actually
+        # held (event.button is the button held during the motion, or None on a
+        # bare hover). This prevents a stale pending-drag from turning post-release
+        # cursor movement into an unwanted drag: only a real click-drag drags.
+        if ((self.drag_pending_node or self.drag_pending_group)
+                and self.drag_start_pos is not None
+                and event.button == 1):
             dx = event.xdata - self.drag_start_pos[0]
             dy = event.ydata - self.drag_start_pos[1]
             distance = np.sqrt(dx**2 + dy**2)
