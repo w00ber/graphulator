@@ -72,6 +72,7 @@ from .para_features.sympy_utils import (
     CustomLaTeXPrinter, latex_custom, latex_matrix_factored, normalize_matrix_latex
 )
 from .para_rendering.latex_render import MatrixRenderWorker
+from .para_rendering.label_cache import LabelPathCache
 from .para_rendering.katex_templates import (
     render_matrix_html, render_basis_html, render_placeholder_html
 )
@@ -5436,6 +5437,11 @@ class Graphulator(QMainWindow):
 
         # Rendering mode
         self.use_latex = False  # Toggle between MathText and LaTeX rendering
+        # Cached vector glyph-paths for labels: each unique label string is
+        # compiled once (mathtext or LaTeX) and reused across pan/zoom/rescale via
+        # cheap affine transforms, so the layout engine is never re-run per frame.
+        # This makes LaTeX-quality labels stay crisp without the old fast/slow hack.
+        self._label_cache = LabelPathCache()
         self.latex_debounce_timer = QTimer()
         self.latex_debounce_timer.setSingleShot(True)
         self.latex_debounce_timer.timeout.connect(self._render_with_latex)
@@ -5710,10 +5716,14 @@ class Graphulator(QMainWindow):
             self.preview_patch = None
 
         if self.preview_text:
-            try:
-                self.preview_text.remove()
-            except:
-                pass
+            # preview_text may be a single artist or a list of artists (from the
+            # cached label renderer).
+            artists = self.preview_text if isinstance(self.preview_text, (list, tuple)) else [self.preview_text]
+            for artist in artists:
+                try:
+                    artist.remove()
+                except Exception:
+                    pass
             self.preview_text = None
 
         if self.preview_outline:
@@ -13134,13 +13144,15 @@ class Graphulator(QMainWindow):
             label_x = node['pos'][0] + nudge[0]
             label_y = node['pos'][1] + nudge[1] - vertical_adjustment_data
 
-            # Create bbox dict for label background if specified
-            self.canvas.ax.text(
-                label_x, label_y, formatted_text,
-                ha='center', va='center',
-                fontsize=font_size_points,
+            # Draw the label via the cached vector glyph-path renderer so it stays
+            # crisp and fast across pan/zoom (no per-frame layout recompilation).
+            self._label_cache.draw(
+                self.canvas.ax, formatted_text, label_x, label_y,
+                fontsize_points=font_size_points,
+                points_per_data_unit=points_per_data_unit,
                 color=node.get('label_color', config.DEFAULT_NODE_LABEL_COLOR),
-                zorder=11
+                ha='center', va='center',
+                usetex=self.use_latex, zorder=11,
             )
 
             # Draw selection indicator
@@ -13297,22 +13309,15 @@ class Graphulator(QMainWindow):
                     base_font_size = 12
                     scaled_font_size = base_font_size * edge['label_size_mult'] * (points_per_data_unit / reference_points_per_data_unit)
 
-                    # Create bbox for label background if specified
-                    bbox_props = None
-                    if edge.get('label_bgcolor'):
-                        bbox_props = dict(boxstyle='round,pad=0.1',
-                                        facecolor=edge['label_bgcolor'],
-                                        edgecolor='none',
-                                        alpha=1.0)
-
-                    self.canvas.ax.text(
-                        label_x, label_y, formatted_label,
-                        fontsize=scaled_font_size,
+                    # Draw self-loop label via the cached vector glyph-path renderer.
+                    self._label_cache.draw(
+                        self.canvas.ax, formatted_label, label_x, label_y,
+                        fontsize_points=scaled_font_size,
+                        points_per_data_unit=points_per_data_unit,
                         color=edge.get('label_color', 'black'),
                         ha='center', va='center',
-                        bbox=bbox_props,
-                        zorder=20,
-                        usetex=self.use_latex
+                        usetex=self.use_latex, zorder=20,
+                        bgcolor=edge.get('label_bgcolor') or None,
                     )
 
                 # Calculate the Bezier curve control points (matching graph_primitives selfloop)
@@ -13461,7 +13466,9 @@ class Graphulator(QMainWindow):
                     style=style,
                     whichedges=edge['direction'],
                     theta=edge.get('looptheta', 30),  # Looptheta parameter (adjustable via Ctrl+Left/Right)
-                    loopkwargs={'lw': final_lw, 'arrowlength': 0.4, 'color': edge_color, 'alpha': edge_alpha}  # Add arrowheads, color, and alpha
+                    loopkwargs={'lw': final_lw, 'arrowlength': 0.4, 'color': edge_color, 'alpha': edge_alpha},  # Add arrowheads, color, and alpha
+                    label_cache=self._label_cache,
+                    usetex=self.use_latex,
                 )
 
                 # Draw selection indicator for selected edges
@@ -13765,12 +13772,14 @@ class Graphulator(QMainWindow):
                 conj_scale = 0.92 if conj else 1.0
                 font_size = ghost_radius * 2 * points_per_data_unit * config.PLOT_NODE_LABEL_FONT_SCALE * label_size_mult * conj_scale
 
-                preview_text = target_canvas.ax.text(
-                    snap_x, snap_y, display_text,
-                    ha='center', va='center', fontsize=font_size,
-                    color='white', alpha=0.8, zorder=16
+                preview_artists = self._label_cache.draw(
+                    target_canvas.ax, display_text, snap_x, snap_y,
+                    fontsize_points=font_size,
+                    points_per_data_unit=points_per_data_unit,
+                    color='white', ha='center', va='center',
+                    usetex=self.use_latex, zorder=16, alpha=0.8,
                 )
-                self.drag_preview_texts.append(preview_text)
+                self.drag_preview_texts.extend(preview_artists)
 
             target_canvas.draw_idle()
             return
@@ -13834,14 +13843,15 @@ class Graphulator(QMainWindow):
             for node in self.nodes
         )
 
-        # Remove old preview elements
+        # Remove old preview elements (preview_text may be a list of artists)
         for attr in ('preview_patch', 'preview_text', 'preview_outline'):
             obj = getattr(self, attr, None)
             if obj:
-                try:
-                    obj.remove()
-                except:
-                    pass
+                for artist in (obj if isinstance(obj, (list, tuple)) else [obj]):
+                    try:
+                        artist.remove()
+                    except Exception:
+                        pass
 
         ghost_props = self._get_ghost_node_properties()
         ghost_radius = self.node_radius * ghost_props['node_size_mult']
@@ -13922,10 +13932,12 @@ class Graphulator(QMainWindow):
             conj_scale = 0.92 if ghost_props['conj'] else 1.0
             font_size = ghost_radius * 2 * points_per_data_unit * config.PLOT_NODE_LABEL_FONT_SCALE * ghost_props['label_size_mult'] * conj_scale
 
-            self.preview_text = self.canvas.ax.text(
-                snap_x, snap_y, display_text,
-                ha='center', va='center', fontsize=font_size,
-                color='white', alpha=0.8, zorder=16
+            self.preview_text = self._label_cache.draw(
+                self.canvas.ax, display_text, snap_x, snap_y,
+                fontsize_points=font_size,
+                points_per_data_unit=points_per_data_unit,
+                color='white', ha='center', va='center',
+                usetex=self.use_latex, zorder=16, alpha=0.8,
             )
 
         self.canvas.draw_idle()
@@ -16037,6 +16049,10 @@ class Graphulator(QMainWindow):
             matplotlib.rcParams['mathtext.fontset'] = 'stix'
             matplotlib.rcParams['font.family'] = 'STIXGeneral'
 
+        # The label cache keys include the usetex flag, but the global LaTeX
+        # preamble/fontset just changed, so drop cached paths to be safe.
+        self._label_cache.clear()
+
         render_mode = "LaTeX" if self.use_latex else "MathText"
         print(f"Rendering mode: {render_mode}")
         self._update_plot()
@@ -16672,46 +16688,26 @@ class Graphulator(QMainWindow):
             self.properties_panel._update_sympy_code_display()
 
     def _update_plot(self, force_latex=False, use_idle=False):
-        """Redraw the plot with debounced LaTeX rendering
+        """Redraw the plot.
+
+        Labels are rendered from the cached vector glyph-path renderer
+        (:class:`LabelPathCache`), so LaTeX-quality output stays crisp and fast
+        across pan/zoom/rescale without re-invoking the layout engine.  The old
+        fast/slow MathText<->LaTeX debounce hack is therefore no longer needed.
 
         Args:
-            force_latex: If True, render with LaTeX immediately without debouncing
-            use_idle: If True, use non-blocking draw_idle() for smoother scrolling
+            force_latex: Retained for backwards compatibility; no longer affects
+                behaviour (rendering is always immediate and crisp).
+            use_idle: If True, use non-blocking draw_idle() for smoother scrolling.
         """
-        # If in LaTeX mode and not forcing, use fast rendering with debounce
-        if self.use_latex and not force_latex:
-            # Stop any pending LaTeX render
-            self.latex_debounce_timer.stop()
-
-            # Temporarily switch to MathText for fast rendering
-            # Always reset font params to ensure consistency, even if already in fast mode
-            self.is_fast_rendering = True
-            # Switch to MathText with same styling as non-LaTeX mode
-            matplotlib.rcParams['text.usetex'] = False
-            matplotlib.rcParams['text.latex.preamble'] = ''
-            matplotlib.rcParams['mathtext.fontset'] = 'stix'
-            matplotlib.rcParams['font.family'] = 'STIXGeneral'
-
-            # Do the fast render
-            self._do_plot_render(use_idle=use_idle)
-
-            # Schedule LaTeX render after timeout
-            self.latex_debounce_timer.start(self.latex_debounce_timeout)
-        else:
-            # Normal render (MathText mode or forced LaTeX)
-            self._do_plot_render(use_idle=use_idle)
+        self._do_plot_render(use_idle=use_idle)
 
     def _render_with_latex(self):
-        """Called by timer to render with LaTeX after changes settle"""
-        if self.is_fast_rendering:
-            self.is_fast_rendering = False
-            # Switch back to LaTeX
-            matplotlib.rcParams['text.usetex'] = True
-            matplotlib.rcParams['text.latex.preamble'] = r'\usepackage{amsmath}\usepackage{sfmath}\renewcommand{\familydefault}{\sfdefault}'
+        """Deprecated: the debounced LaTeX re-render is no longer used.
 
-            print("Rendering with LaTeX...")
-            # Re-render with LaTeX
-            self._do_plot_render()
+        Kept as a no-op so the (now-unused) debounce timer connection is safe.
+        """
+        return
 
     def _do_plot_render(self, use_idle=False):
         """Actually perform the plot rendering
