@@ -90,6 +90,31 @@ from .autograph import GraphExtractor, GraphScatteringMatrix
 
 logger = logging.getLogger(__name__)
 
+
+def _node_key(node):
+    """Stable scattering-assignment key for a node (survives undo/paste/load)."""
+    return node['node_id']
+
+
+def _edge_key(edge):
+    """Stable scattering-assignment key for an edge.
+
+    Duplicate edges between a node pair are prevented at creation, so the
+    ordered (from, to) pair uniquely identifies an edge. Int node keys and
+    tuple edge keys cannot collide in the same dict.
+    """
+    return (edge['from_node_id'], edge['to_node_id'])
+
+
+def _edge_key_from_property(value):
+    """Recover an edge key read back from a Qt widget property.
+
+    Qt's QVariant round-trip can return a stored tuple as a list; edge keys
+    must be hashable tuples.
+    """
+    return tuple(value) if isinstance(value, list) else value
+
+
 EXPORT_RESCALE_DEFAULTS = {
     'NODELABELSCALE': 1.000,
     'SLCC': 0.650,
@@ -3695,7 +3720,7 @@ class PropertiesPanel(QWidget):
         # Add node parameter rows
         for i, node in enumerate(node_list):
             row = i + 1
-            node_id = id(node)
+            node_id = _node_key(node)
 
             # Node label (bold)
             label_text = node['label']
@@ -3892,7 +3917,7 @@ class PropertiesPanel(QWidget):
         # Find the node
         node = None
         for n in self.graphulator.nodes:
-            if id(n) == node_id:
+            if _node_key(n) == node_id:
                 node = n
                 break
 
@@ -4030,7 +4055,7 @@ class PropertiesPanel(QWidget):
             for node in self.graphulator.nodes:
                 node_data = {'node_id': node['node_id'], 'label': node['label'], 'pos': node['pos'], 'conj': node.get('conj', False)}
                 # Add scattering parameters if assigned
-                node_id_key = id(node)
+                node_id_key = _node_key(node)
                 if node_id_key in self.graphulator.scattering_assignments:
                     params = self.graphulator.scattering_assignments[node_id_key]
                     node_data['freq'] = params.get('freq', None)
@@ -4050,7 +4075,7 @@ class PropertiesPanel(QWidget):
                     'is_self_loop': edge['is_self_loop']
                 }
                 # Add scattering parameters if assigned
-                edge_id_key = id(edge)
+                edge_id_key = _edge_key(edge)
                 if edge_id_key in self.graphulator.scattering_assignments:
                     params = self.graphulator.scattering_assignments[edge_id_key]
                     edge_data['f_p'] = params.get('f_p', None)
@@ -4063,19 +4088,18 @@ class PropertiesPanel(QWidget):
                 edges.append(edge_data)
 
             # Create scattering_assignments dict mapping id() to params
+            # (the GraphExtractor API keys by id() of the plain dicts built above)
             scattering_assignments = {}
-            for node in self.graphulator.nodes:
-                node_id_key = id(node)
+            for node_data in nodes:
+                node_id_key = node_data['node_id']
                 if node_id_key in self.graphulator.scattering_assignments:
-                    scattering_assignments[id(next(n for n in nodes if n['node_id'] == node['node_id']))] = \
+                    scattering_assignments[id(node_data)] = \
                         self.graphulator.scattering_assignments[node_id_key]
 
-            for edge in self.graphulator.edges:
-                edge_id_key = id(edge)
+            for edge_data in edges:
+                edge_id_key = (edge_data['from_node_id'], edge_data['to_node_id'])
                 if edge_id_key in self.graphulator.scattering_assignments:
-                    matching_edge = next((e for e in edges if e['from_node_id'] == edge['from_node_id'] and e['to_node_id'] == edge['to_node_id']), None)
-                    if matching_edge:
-                        scattering_assignments[id(matching_edge)] = self.graphulator.scattering_assignments[edge_id_key]
+                    scattering_assignments[id(edge_data)] = self.graphulator.scattering_assignments[edge_id_key]
 
             # Extract graph data with pre-computed tree/chord
             tree_edges_list = [[from_id, to_id] for from_id, to_id in self.graphulator.scattering_tree_edges]
@@ -4103,9 +4127,9 @@ class PropertiesPanel(QWidget):
             for i in range(self.edges_param_layout.count()):
                 widget = self.edges_param_layout.itemAt(i).widget()
                 if widget and widget.property('is_chord_fp_display'):
-                    edge_id = widget.property('edge_id')
+                    edge_id = _edge_key_from_property(widget.property('edge_id'))
                     # Find the corresponding edge
-                    edge = next((e for e in self.graphulator.edges if id(e) == edge_id), None)
+                    edge = next((e for e in self.graphulator.edges if _edge_key(e) == edge_id), None)
                     if edge:
                         edge_key = (edge['from_node_id'], edge['to_node_id'])
                         edge_key_reversed = (edge_key[1], edge_key[0])
@@ -4164,7 +4188,7 @@ class PropertiesPanel(QWidget):
         # Add tree edge parameter rows
         for i, edge in enumerate(tree_edges):
             row = i + 1
-            edge_id = id(edge)
+            edge_id = _edge_key(edge)
 
             # Edge label (from -> to)
             from_label = edge['from_node']['label']
@@ -4268,7 +4292,7 @@ class PropertiesPanel(QWidget):
         # Add chord edge rows (with non-editable f_p)
         for i, edge in enumerate(chord_edges):
             row = len(tree_edges) + i + 1
-            edge_id = id(edge)
+            edge_id = _edge_key(edge)
 
             # Edge label (from -> to) - indicate it's a chord
             from_label = edge['from_node']['label']
@@ -4553,7 +4577,7 @@ class PropertiesPanel(QWidget):
             else:
                 self.graphulator.scattering_assignments[node_id][param_name] = value
         else:  # edge
-            edge_id = widget.property('edge_id')
+            edge_id = _edge_key_from_property(widget.property('edge_id'))
             if edge_id not in self.graphulator.scattering_assignments:
                 self.graphulator.scattering_assignments[edge_id] = {}
             # Convert milliarb. to arb. units for rate
@@ -4812,7 +4836,7 @@ class PropertiesPanel(QWidget):
         # Get port node labels (nodes with B_ext > 0), including conjugation indicator
         port_node_labels = []
         for node in self.graphulator.nodes:
-            node_id = id(node)
+            node_id = _node_key(node)
             params = self.graphulator.scattering_assignments.get(node_id, {})
             B_ext = params.get('B_ext', None)
             if B_ext is not None and B_ext > 0:
@@ -4876,7 +4900,7 @@ class PropertiesPanel(QWidget):
         node_id_to_label_map = {node['node_id']: node['label'] for node in self.graphulator.nodes}
 
         for idx, node in enumerate(self.graphulator.nodes):
-            node_id = id(node)
+            node_id = _node_key(node)
             params = self.graphulator.scattering_assignments.get(node_id, {})
 
             freq = params.get('freq', None)
@@ -4908,7 +4932,7 @@ class PropertiesPanel(QWidget):
         edge_assignments_code = []
 
         for idx, edge in enumerate(self.graphulator.edges):
-            edge_id = id(edge)
+            edge_id = _edge_key(edge)
             params = self.graphulator.scattering_assignments.get(edge_id, {})
 
             f_p = params.get('f_p', None)
@@ -6768,8 +6792,8 @@ class Graphulator(QMainWindow):
                 for edge in self.edges
             )
 
-            # Add scattering parameters if they exist (convert from id() to node_id)
-            node_id_key = id(node)
+            # Add scattering parameters if they exist
+            node_id_key = _node_key(node)
             if node_id_key in self.scattering_assignments:
                 scattering_params = self.scattering_assignments[node_id_key]
                 if 'freq' in scattering_params:
@@ -6831,8 +6855,8 @@ class Graphulator(QMainWindow):
                 edge_data["label1_bgcolor"] = edge.get("label1_bgcolor", None)
                 edge_data["label2_bgcolor"] = edge.get("label2_bgcolor", None)
 
-            # Add scattering parameters if they exist (convert from id() to edge tuple)
-            edge_id_key = id(edge)
+            # Add scattering parameters if they exist
+            edge_id_key = _edge_key(edge)
             if edge_id_key in self.scattering_assignments:
                 scattering_params = self.scattering_assignments[edge_id_key]
                 if 'f_p' in scattering_params:
@@ -7028,9 +7052,9 @@ class Graphulator(QMainWindow):
             node_id_map[node_data["node_id"]] = node
             max_node_id = max(max_node_id, node_data["node_id"])
 
-            # Load scattering parameters if present (stored using node_id, need to convert to id())
+            # Load scattering parameters if present
             if 'freq' in node_data or 'B_int' in node_data or 'B_ext' in node_data:
-                node_obj_id = id(node)
+                node_obj_id = _node_key(node)
                 if node_obj_id not in self.scattering_assignments:
                     self.scattering_assignments[node_obj_id] = {}
                 if 'freq' in node_data:
@@ -7092,9 +7116,9 @@ class Graphulator(QMainWindow):
 
                 self.edges.append(edge)
 
-                # Load scattering parameters if present (stored using edge tuple, need to convert to id())
+                # Load scattering parameters if present
                 if 'f_p' in edge_data or 'rate' in edge_data or 'phase' in edge_data:
-                    edge_obj_id = id(edge)
+                    edge_obj_id = _edge_key(edge)
                     if edge_obj_id not in self.scattering_assignments:
                         self.scattering_assignments[edge_obj_id] = {}
                     if 'f_p' in edge_data:
@@ -8808,7 +8832,7 @@ class Graphulator(QMainWindow):
                 for edge in self.edges
             )
             # Check if node has B_ext > 0
-            node_obj_id = id(node)
+            node_obj_id = _node_key(node)
             if has_selfloop and node_obj_id in self.scattering_assignments:
                 B_ext = self.scattering_assignments[node_obj_id].get('B_ext', None)
                 if B_ext is not None and B_ext > 0:
@@ -9423,31 +9447,15 @@ class Graphulator(QMainWindow):
         Returns:
             bool: True if all required parameters are assigned
         """
-        # Use original nodes for lookup (stored when rendering scattering graph)
-        original_nodes = getattr(self, '_original_nodes_for_lookup', self.nodes)
+        # Scattering-graph nodes are copies of the originals, but they preserve
+        # the stable node_id, so assignments can be looked up directly.
         original_edges = getattr(self, '_original_edges_for_lookup', self.edges)
 
-        if not original_nodes:
-            return False
-
-        # Find the corresponding original node by matching label and position
-        # (scattering_graph nodes are copies with different IDs)
-        original_node = None
-        for orig_node in original_nodes:
-            if (orig_node['label'] == node['label'] and
-                orig_node['pos'] == node['pos']):
-                original_node = orig_node
-                break
-
-        if not original_node:
-            return False
-
-        node_id = id(original_node)
-        assignments = self.scattering_assignments.get(node_id, {})
+        assignments = self.scattering_assignments.get(_node_key(node), {})
 
         # Check if node has self-loop (check in original edges)
         has_selfloop = any(
-            edge.get('is_self_loop', False) and edge['from_node'] == original_node
+            edge.get('is_self_loop', False) and edge['from_node_id'] == node['node_id']
             for edge in original_edges
         ) if original_edges else False
 
@@ -9467,39 +9475,12 @@ class Graphulator(QMainWindow):
         Returns:
             bool: True if all required parameters are assigned
         """
-        # Use original edges for lookup (stored when rendering scattering graph)
-        original_edges = getattr(self, '_original_edges_for_lookup', self.edges)
-
-        if not original_edges:
-            return False
-
-        # Find the corresponding original edge by matching from/to node labels
-        # (scattering_graph edges are copies with different IDs)
-        from_label = edge['from_node']['label']
-        to_label = edge['to_node']['label']
-        is_self_loop = edge.get('is_self_loop', False)
-
-        original_edge = None
-        for orig_edge in original_edges:
-            orig_from_label = orig_edge['from_node']['label']
-            orig_to_label = orig_edge['to_node']['label']
-            orig_is_self_loop = orig_edge.get('is_self_loop', False)
-
-            # Match by node labels and self-loop status
-            if (orig_from_label == from_label and
-                orig_to_label == to_label and
-                orig_is_self_loop == is_self_loop):
-                original_edge = orig_edge
-                break
-
-        if not original_edge:
-            return False
-
-        edge_id = id(original_edge)
-        assignments = self.scattering_assignments.get(edge_id, {})
+        # Scattering-graph edges are copies of the originals, but they preserve
+        # the stable from/to node ids, so assignments can be looked up directly.
+        assignments = self.scattering_assignments.get(_edge_key(edge), {})
 
         # Check if this is a chord edge (chord f_p is computed, not assigned)
-        edge_key = tuple(sorted([original_edge['from_node_id'], original_edge['to_node_id']]))
+        edge_key = tuple(sorted([edge['from_node_id'], edge['to_node_id']]))
         is_chord = edge_key in self.scattering_chord_edges
 
         # Required parameters
@@ -9579,7 +9560,7 @@ class Graphulator(QMainWindow):
                     'pos': node['pos'],
                     'conj': node.get('conj', False)
                 }
-                node_id_key = id(node)
+                node_id_key = _node_key(node)
                 if node_id_key in self.scattering_assignments:
                     params = self.scattering_assignments[node_id_key]
                     node_data['freq'] = params.get('freq', None)
@@ -9598,7 +9579,7 @@ class Graphulator(QMainWindow):
                     'to_node_id': edge['to_node_id'],
                     'is_self_loop': edge['is_self_loop']
                 }
-                edge_id_key = id(edge)
+                edge_id_key = _edge_key(edge)
                 if edge_id_key in self.scattering_assignments:
                     params = self.scattering_assignments[edge_id_key]
                     edge_data['f_p'] = params.get('f_p', None)
@@ -9611,19 +9592,17 @@ class Graphulator(QMainWindow):
                 edges.append(edge_data)
 
             # Build scattering_assignments dict
+            # (the GraphExtractor API keys by id() of the plain dicts built above)
             scattering_assignments = {}
-            for node in self.nodes:
-                node_id_key = id(node)
+            for node_data in nodes:
+                node_id_key = node_data['node_id']
                 if node_id_key in self.scattering_assignments:
-                    matching_node = next(n for n in nodes if n['node_id'] == node['node_id'])
-                    scattering_assignments[id(matching_node)] = self.scattering_assignments[node_id_key]
+                    scattering_assignments[id(node_data)] = self.scattering_assignments[node_id_key]
 
-            for edge in self.edges:
-                edge_id_key = id(edge)
+            for edge_data in edges:
+                edge_id_key = (edge_data['from_node_id'], edge_data['to_node_id'])
                 if edge_id_key in self.scattering_assignments:
-                    matching_edge = next((e for e in edges if e['from_node_id'] == edge['from_node_id'] and e['to_node_id'] == edge['to_node_id']), None)
-                    if matching_edge:
-                        scattering_assignments[id(matching_edge)] = self.scattering_assignments[edge_id_key]
+                    scattering_assignments[id(edge_data)] = self.scattering_assignments[edge_id_key]
 
             # Extract graph data
             tree_edges_list = [[from_id, to_id] for from_id, to_id in self.scattering_tree_edges]
@@ -9876,7 +9855,7 @@ class Graphulator(QMainWindow):
                 'pos': node['pos'],
                 'conj': node.get('conj', False)
             }
-            node_id_key = id(node)
+            node_id_key = _node_key(node)
             if node_id_key in self.scattering_assignments:
                 params = self.scattering_assignments[node_id_key]
                 node_data['freq'] = params.get('freq', None)
@@ -9896,7 +9875,7 @@ class Graphulator(QMainWindow):
                 'to_node_id': edge['to_node_id'],
                 'is_self_loop': edge['is_self_loop']
             }
-            edge_id_key = id(edge)
+            edge_id_key = _edge_key(edge)
             if edge_id_key in self.scattering_assignments:
                 params = self.scattering_assignments[edge_id_key]
                 edge_data['f_p'] = params.get('f_p', None)
@@ -9909,20 +9888,17 @@ class Graphulator(QMainWindow):
             edges.append(edge_data)
 
         # Build scattering_assignments dict for this component
+        # (the GraphExtractor API keys by id() of the plain dicts built above)
         scattering_assignments = {}
-        for node in nodes_to_use:
-            node_id_key = id(node)
+        for node_data in nodes:
+            node_id_key = node_data['node_id']
             if node_id_key in self.scattering_assignments:
-                matching_node = next((n for n in nodes if n['node_id'] == node['node_id']), None)
-                if matching_node:
-                    scattering_assignments[id(matching_node)] = self.scattering_assignments[node_id_key]
+                scattering_assignments[id(node_data)] = self.scattering_assignments[node_id_key]
 
-        for edge in edges_to_use:
-            edge_id_key = id(edge)
+        for edge_data in edges:
+            edge_id_key = (edge_data['from_node_id'], edge_data['to_node_id'])
             if edge_id_key in self.scattering_assignments:
-                matching_edge = next((e for e in edges if e['from_node_id'] == edge['from_node_id'] and e['to_node_id'] == edge['to_node_id']), None)
-                if matching_edge:
-                    scattering_assignments[id(matching_edge)] = self.scattering_assignments[edge_id_key]
+                scattering_assignments[id(edge_data)] = self.scattering_assignments[edge_id_key]
 
         # Compute spanning tree for this component
         extractor = GraphExtractor()
@@ -12445,7 +12421,7 @@ class Graphulator(QMainWindow):
                     self._next_constraint_group_id += 1
 
                     # Get current value from unconjugated node's assignment (or default)
-                    node_id = id(unconj_node)
+                    node_id = _node_key(unconj_node)
                     if node_id in self.scattering_assignments:
                         if param_name in self.scattering_assignments[node_id]:
                             value = self.scattering_assignments[node_id][param_name]
@@ -12778,20 +12754,9 @@ class Graphulator(QMainWindow):
     def _edit_scattering_node_parameters(self, node):
         """Edit scattering parameters for a node via dialog"""
 
-        # Find the original node for assignment storage
-        original_node = None
-        if hasattr(self, '_original_nodes_for_lookup') and self._original_nodes_for_lookup:
-            for orig_node in self._original_nodes_for_lookup:
-                if (orig_node['label'] == node['label'] and
-                    orig_node['pos'] == node['pos']):
-                    original_node = orig_node
-                    break
-
-        if not original_node:
-            print(f"Could not find original node for '{node['label']}'")
-            return
-
-        node_id = id(original_node)
+        # Scattering-graph nodes are copies but preserve the stable node_id,
+        # which is also the assignment key.
+        node_id = _node_key(node)
         node_label = node['label']
         if node.get('conj', False):
             node_label += '*'
@@ -12885,29 +12850,9 @@ class Graphulator(QMainWindow):
     def _edit_scattering_edge_parameters(self, edge):
         """Edit scattering parameters for an edge via dialog"""
 
-        # Find the original edge for assignment storage
-        original_edge = None
-        if hasattr(self, '_original_edges_for_lookup') and self._original_edges_for_lookup:
-            from_label = edge['from_node']['label']
-            to_label = edge['to_node']['label']
-            is_self_loop = edge.get('is_self_loop', False)
-
-            for orig_edge in self._original_edges_for_lookup:
-                orig_from_label = orig_edge['from_node']['label']
-                orig_to_label = orig_edge['to_node']['label']
-                orig_is_self_loop = orig_edge.get('is_self_loop', False)
-
-                if (orig_from_label == from_label and
-                    orig_to_label == to_label and
-                    orig_is_self_loop == is_self_loop):
-                    original_edge = orig_edge
-                    break
-
-        if not original_edge:
-            print(f"Could not find original edge")
-            return
-
-        edge_id = id(original_edge)
+        # Scattering-graph edges are copies but preserve the stable from/to
+        # node ids, which form the assignment key.
+        edge_id = _edge_key(edge)
 
         # Build edge label
         from_label = edge['from_node']['label']
@@ -12919,7 +12864,7 @@ class Graphulator(QMainWindow):
         edge_label = f"{from_label}→{to_label}"
 
         # Check if this is a chord edge
-        edge_key = tuple(sorted([original_edge['from_node_id'], original_edge['to_node_id']]))
+        edge_key = tuple(sorted([edge['from_node_id'], edge['to_node_id']]))
         is_chord = edge_key in self.scattering_chord_edges
 
         # Get current assignments
@@ -15081,20 +15026,18 @@ class Graphulator(QMainWindow):
 
         # Clear scattering assignments for deleted nodes/edges
         # Keep only assignments for nodes/edges that still exist
-        # Note: scattering_assignments uses Python id() as keys, not node['node_id']
         if hasattr(self, 'scattering_assignments') and self.scattering_assignments:
-            node_obj_ids = {id(n) for n in self.nodes}
-            edge_obj_ids = {id(e) for e in self.edges}
+            node_obj_ids = {_node_key(n) for n in self.nodes}
+            edge_obj_ids = {_edge_key(e) for e in self.edges}
 
             # Find nodes that have self-loops (ports)
             port_node_obj_ids = set()
             for edge in self.edges:
                 if edge.get('is_self_loop', False):
-                    port_node_obj_ids.add(id(edge['from_node']))
+                    port_node_obj_ids.add(_node_key(edge['from_node']))
 
             valid_assignments = {}
             for key, value in self.scattering_assignments.items():
-                # Both node and edge assignments use Python id() as keys
                 if key in node_obj_ids:
                     # Node assignment - check if it's a port (has self-loop)
                     if key in port_node_obj_ids:
@@ -15381,7 +15324,7 @@ class Graphulator(QMainWindow):
             'conj': node.get('conj', False),
             'nodelabelnudge': node.get('nodelabelnudge', (0.0, 0.0))
         }
-        node_obj_id = id(node)
+        node_obj_id = _node_key(node)
         if node_obj_id in self.scattering_assignments:
             node_copy['scattering_params'] = dict(self.scattering_assignments[node_obj_id])
         else:
@@ -15414,7 +15357,7 @@ class Graphulator(QMainWindow):
         else:
             edge_copy['label1_bgcolor'] = edge.get('label1_bgcolor', None)
             edge_copy['label2_bgcolor'] = edge.get('label2_bgcolor', None)
-        edge_obj_id = id(edge)
+        edge_obj_id = _edge_key(edge)
         if edge_obj_id in self.scattering_assignments:
             edge_copy['scattering_params'] = dict(self.scattering_assignments[edge_obj_id])
         else:
@@ -15651,7 +15594,7 @@ class Graphulator(QMainWindow):
 
                 # Restore scattering parameters if present
                 if clip_node.get('scattering_params'):
-                    self.scattering_assignments[id(new_node)] = dict(clip_node['scattering_params'])
+                    self.scattering_assignments[_node_key(new_node)] = dict(clip_node['scattering_params'])
 
         # Invalidate Kron reduction if nodes were pasted
         # Note: scattering data invalidation moved to after edges are pasted
@@ -15703,7 +15646,7 @@ class Graphulator(QMainWindow):
 
                 # Restore scattering parameters if present
                 if clip_edge.get('scattering_params'):
-                    self.scattering_assignments[id(new_edge)] = dict(clip_edge['scattering_params'])
+                    self.scattering_assignments[_edge_key(new_edge)] = dict(clip_edge['scattering_params'])
 
         # Invalidate scattering data after edges are pasted (so B_ext is preserved for port nodes)
         # Note: Kron invalidation already done above when nodes were pasted
@@ -15858,7 +15801,7 @@ class Graphulator(QMainWindow):
 
                 # Restore scattering parameters if present
                 if clip_node.get('scattering_params'):
-                    self.scattering_assignments[id(new_node)] = dict(clip_node['scattering_params'])
+                    self.scattering_assignments[_node_key(new_node)] = dict(clip_node['scattering_params'])
 
         # Invalidate Kron reduction if nodes were pasted
         # Note: scattering data invalidation moved to after edges are pasted
@@ -15910,7 +15853,7 @@ class Graphulator(QMainWindow):
 
                 # Restore scattering parameters if present
                 if clip_edge.get('scattering_params'):
-                    self.scattering_assignments[id(new_edge)] = dict(clip_edge['scattering_params'])
+                    self.scattering_assignments[_edge_key(new_edge)] = dict(clip_edge['scattering_params'])
 
         # Invalidate scattering data after edges are pasted (so B_ext is preserved for port nodes)
         if len(old_id_to_new_node) > 0:
