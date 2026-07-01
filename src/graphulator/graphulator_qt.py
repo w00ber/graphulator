@@ -41,6 +41,7 @@ import matplotlib.patches as patches
 # Import modules (relative imports for package)
 from . import graph_primitives as gp
 from . import graphulator_config as config
+from .para_core.graph_state import capture_graph_state
 from .para_rendering.label_cache import LabelPathCache
 
 
@@ -537,6 +538,7 @@ class PropertiesPanel(QWidget):
 • Ctrl+A: Select all<br>
 • Ctrl+C/X/V: Copy/cut/paste<br>
 • Ctrl+Z: Undo<br>
+• Ctrl+Shift+Z / Ctrl+Y: Redo<br>
 • Ctrl+R: Rotate nodes 15° CCW<br>
 • Ctrl+Shift+R: Rotate nodes 15° CW<br>
 • d or Delete: Delete<br>
@@ -1614,6 +1616,7 @@ class Graphulator(QMainWindow):
 
         # Undo system
         self.undo_stack = []  # Stack of previous states
+        self.redo_stack = []  # Stack of undone states
         self.max_undo = 50  # Maximum undo levels
 
         # Graph circuit
@@ -1801,6 +1804,8 @@ class Graphulator(QMainWindow):
         QShortcut(QKeySequence("Ctrl+X"), self).activated.connect(self._cut_nodes)
         QShortcut(QKeySequence("Ctrl+V"), self).activated.connect(self._paste_nodes)
         QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(self._undo)
+        QShortcut(QKeySequence("Ctrl+Shift+Z"), self).activated.connect(self._redo)
+        QShortcut(QKeySequence("Ctrl+Y"), self).activated.connect(self._redo)
 
         # Export
         QShortcut(QKeySequence("Ctrl+Shift+E"), self).activated.connect(self._export_code)
@@ -1853,6 +1858,7 @@ class Graphulator(QMainWindow):
         logger.info("  Ctrl+X          : Cut selected nodes and edges")
         logger.debug("  Ctrl+V          : Paste nodes and edges at view center")
         logger.info("  Ctrl+Z          : Undo last action")
+        logger.info("  Ctrl+Shift+Z/Y  : Redo last undone action")
         logger.debug("  Ctrl+R          : Rotate selected nodes 15° CCW")
         logger.debug("  Ctrl+Shift+R    : Rotate selected nodes 15° CW")
         logger.debug("  Ctrl+Shift+E    : Export graph as Python code")
@@ -2245,6 +2251,7 @@ class Graphulator(QMainWindow):
         self.selected_nodes = []
         self.selected_edges = []
         self.undo_stack = []
+        self.redo_stack = []
 
         # Restore view settings
         view = data.get("view", {})
@@ -2328,6 +2335,7 @@ class Graphulator(QMainWindow):
         self.selected_nodes = []
         self.selected_edges = []
         self.undo_stack = []
+        self.redo_stack = []
         self.current_filepath = None
         self.node_counter = 0
         self.node_id_counter = 0
@@ -5266,56 +5274,35 @@ class Graphulator(QMainWindow):
         # Fast view-only update (no scene rebuild)
         self._apply_view_fast()
 
+    def _status_message(self, msg, timeout=3000):
+        """Show a transient message in the status bar."""
+        self.statusBar().showMessage(msg, timeout)
+
+    def _capture_state(self):
+        """Deep-copy the full graph state (every node/edge field)."""
+        return capture_graph_state(self.nodes, self.edges)
+
+    def _restore_state(self, state):
+        """Install a captured state as the live graph."""
+        self.nodes = state['nodes']
+        self.edges = state['edges']
+
+        # Clear selections (they reference the replaced dicts)
+        self.selected_nodes.clear()
+        self.selected_edges.clear()
+
+        self._update_plot()
+
     def _save_state(self):
         """Save current state to undo stack"""
-        # Deep copy the nodes list
-        nodes_state = []
-        for node in self.nodes:
-            nodes_state.append({
-                'node_id': node['node_id'],
-                'label': node['label'],
-                'pos': node['pos'],
-                'color': node['color'],
-                'color_key': node['color_key'],
-                'node_size_mult': node.get('node_size_mult', 1.0),
-                'label_size_mult': node.get('label_size_mult', 1.0),
-                'conj': node.get('conj', False),
-                'nodelabelnudge': node.get('nodelabelnudge', (0.0, 0.0))
-            })
-
-        # Deep copy the edges list
-        edges_state = []
-        for edge in self.edges:
-            # Store edge by node IDs so we can reconnect after undo
-            edge_state = {
-                'from_node_id': edge['from_node_id'],
-                'to_node_id': edge['to_node_id'],
-                'label1': edge.get('label1', ''),
-                'label2': edge.get('label2', ''),
-                'linewidth_mult': edge['linewidth_mult'],
-                'label_size_mult': edge['label_size_mult'],
-                'label_offset_mult': edge.get('label_offset_mult', 1.0),
-                'style': edge['style'],
-                'direction': edge['direction'],
-                'flip_labels': edge.get('flip_labels', False),
-                'label_rotation_offset': edge.get('label_rotation_offset', 0),
-                'is_self_loop': edge['is_self_loop']
-            }
-            # Save self-loop specific parameters
-            if edge['is_self_loop']:
-                edge_state['selfloopangle'] = edge.get('selfloopangle', 0)
-                edge_state['selfloopscale'] = edge.get('selfloopscale', 1.0)
-                edge_state['arrowlengthsc'] = edge.get('arrowlengthsc', 1.0)
-                edge_state['flip'] = edge.get('flip', False)
-                edge_state['angle_pinned'] = edge.get('angle_pinned', False)
-            edges_state.append(edge_state)
-
-        state = {'nodes': nodes_state, 'edges': edges_state}
-        self.undo_stack.append(state)
+        self.undo_stack.append(self._capture_state())
 
         # Limit stack size
         if len(self.undo_stack) > self.max_undo:
             self.undo_stack.pop(0)
+
+        # A new action invalidates the redo history
+        self.redo_stack.clear()
 
         # Mark as modified
         self._set_modified(True)
@@ -5324,60 +5311,23 @@ class Graphulator(QMainWindow):
         """Undo last action"""
         if not self.undo_stack:
             logger.info("Nothing to undo")
+            self._status_message("Nothing to undo")
             return
 
-        # Restore previous state
-        previous_state = self.undo_stack.pop()
-
-        # Restore nodes
-        self.nodes = previous_state['nodes']
-
-        # Build node_id-to-node mapping for reconnecting edges
-        id_to_node = {}
-        for node in self.nodes:
-            id_to_node[node['node_id']] = node
-
-        # Restore edges by reconnecting to nodes via IDs
-        self.edges = []
-        for edge_state in previous_state['edges']:
-            from_node_id = edge_state['from_node_id']
-            to_node_id = edge_state['to_node_id']
-
-            # Only restore edge if both nodes still exist
-            if from_node_id in id_to_node and to_node_id in id_to_node:
-                edge = {
-                    'from_node': id_to_node[from_node_id],
-                    'to_node': id_to_node[to_node_id],
-                    'from_node_id': from_node_id,
-                    'to_node_id': to_node_id,
-                    'label1': edge_state.get('label1', ''),
-                    'label2': edge_state.get('label2', ''),
-                    'linewidth_mult': edge_state['linewidth_mult'],
-                    'label_size_mult': edge_state['label_size_mult'],
-                    'label_offset_mult': edge_state.get('label_offset_mult', 1.0),
-                    'style': edge_state['style'],
-                    'direction': edge_state['direction'],
-                    'flip_labels': edge_state.get('flip_labels', False),
-                    'label_rotation_offset': edge_state.get('label_rotation_offset', 0),
-                    'looptheta': edge_state.get('looptheta', 30),
-                    'is_self_loop': edge_state['is_self_loop']
-                }
-                # Restore self-loop specific parameters
-                if edge_state['is_self_loop']:
-                    edge['selfloopangle'] = edge_state.get('selfloopangle', 0)
-                    edge['selfloopscale'] = edge_state.get('selfloopscale', 1.0)
-                    edge['arrowlengthsc'] = edge_state.get('arrowlengthsc', 1.0)
-                    edge['flip'] = edge_state.get('flip', False)
-                    edge['angle_pinned'] = edge_state.get('angle_pinned', False)
-                    edge['selflooplabelnudge'] = edge_state.get('selflooplabelnudge', (0.0, 0.0))
-                self.edges.append(edge)
-
-        # Clear selections
-        self.selected_nodes.clear()
-        self.selected_edges.clear()
-
+        self.redo_stack.append(self._capture_state())
+        self._restore_state(self.undo_stack.pop())
         logger.info(f"Undo - restored to {len(self.nodes)} node(s) and {len(self.edges)} edge(s)")
-        self._update_plot()
+
+    def _redo(self):
+        """Redo the last undone action"""
+        if not self.redo_stack:
+            logger.info("Nothing to redo")
+            self._status_message("Nothing to redo")
+            return
+
+        self.undo_stack.append(self._capture_state())
+        self._restore_state(self.redo_stack.pop())
+        logger.info(f"Redo - restored to {len(self.nodes)} node(s) and {len(self.edges)} edge(s)")
 
     def _select_all(self):
         """Select all nodes and edges"""

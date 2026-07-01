@@ -139,11 +139,14 @@ SHORTCUT_DEFINITIONS: List[ShortcutDefinition] = [
         description="Undo the last action",
         default_keys={"default": "Ctrl+Z"},
     ),
+    # Action id kept as "edit.redo_basis" for backward compatibility with
+    # user-persisted custom key bindings; it now redoes any undone action
+    # (and still redoes basis selection while in basis-ordering mode).
     ShortcutDefinition(
         action_id="edit.redo_basis",
-        display_name="Redo Basis Selection",
+        display_name="Redo",
         category="Edit",
-        description="Redo basis selection",
+        description="Redo the last undone action",
         default_keys={"default": "Ctrl+Shift+Z"},
     ),
     ShortcutDefinition(
