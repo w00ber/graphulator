@@ -464,6 +464,23 @@ class EdgeInputDialog(QDialog):
         return self.result
 
 
+def sync_dialog_defaults_from_config(window=None):
+    """Sync dialog memory and derived values from the config module.
+
+    New-node appearance flows through NodeInputDialog's remembered class
+    attributes and the window's last_node_props (continuous duplicate mode),
+    not through config lookups at creation time. Call this after settings
+    change (Apply / Reset / startup load) so the changed defaults actually
+    reach newly placed nodes.
+    """
+    config.DEFAULT_NODE_COLOR = config.MYCOLORS.get(
+        config.DEFAULT_NODE_COLOR_KEY, config.DEFAULT_NODE_COLOR)
+    NodeInputDialog.last_color = config.DEFAULT_NODE_COLOR_KEY
+    if window is not None:
+        # Continuous-duplicate mode rebuilds its template from config
+        window.last_node_props = None
+
+
 class PropertiesPanel(QWidget):
     """Properties panel for selected objects"""
 
@@ -884,6 +901,32 @@ class PropertiesPanel(QWidget):
         self.conj_checkbox.stateChanged.connect(lambda: self._update_conjugation())
         form.addRow("Conjugate:", self.conj_checkbox)
 
+        # Outline
+        self.outline_checkbox = QCheckBox()
+        self.outline_checkbox.setChecked(node.get('outline_enabled', False))
+        self.outline_checkbox.stateChanged.connect(lambda: self._update_outline_enabled())
+        form.addRow("Outline:", self.outline_checkbox)
+
+        outline_color_btn = QPushButton("Choose Outline Color")
+        outline_color_btn.clicked.connect(lambda: self._choose_outline_color())
+        form.addRow("Outline Color:", outline_color_btn)
+
+        self.outline_width_spin = QDoubleSpinBox()
+        self.outline_width_spin.setRange(0.5, 10.0)
+        self.outline_width_spin.setDecimals(1)
+        self.outline_width_spin.setSingleStep(0.5)
+        self.outline_width_spin.setValue(node.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH))
+        self.outline_width_spin.valueChanged.connect(lambda: self._update_outline_width())
+        form.addRow("Outline Width:", self.outline_width_spin)
+
+        self.outline_alpha_spin = QDoubleSpinBox()
+        self.outline_alpha_spin.setRange(0.0, 1.0)
+        self.outline_alpha_spin.setDecimals(2)
+        self.outline_alpha_spin.setSingleStep(0.05)
+        self.outline_alpha_spin.setValue(node.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA))
+        self.outline_alpha_spin.valueChanged.connect(lambda: self._update_outline_alpha())
+        form.addRow("Outline Alpha:", self.outline_alpha_spin)
+
         self.properties_layout.addLayout(form)
         self.displayed_single = node
 
@@ -1197,6 +1240,11 @@ class PropertiesPanel(QWidget):
                 lambda val: self._apply_to_nodes('conj', val))
             form.addRow("Conjugate:", conj_cb)
 
+            outline_cb = self._make_multi_checkbox(
+                [n.get('outline_enabled', False) for n in nodes],
+                lambda val: self._apply_to_nodes('outline_enabled', val))
+            form.addRow("Outline:", outline_cb)
+
             color_btn = QPushButton("Choose Color (all nodes)")
             color_btn.clicked.connect(self._choose_multi_node_color)
             form.addRow("Color:", color_btn)
@@ -1354,6 +1402,29 @@ class PropertiesPanel(QWidget):
     def _update_conjugation(self):
         if self.current_object and self.current_type == 'node':
             self.current_object['conj'] = self.conj_checkbox.isChecked()
+            self.graphulator._update_plot()
+
+    def _update_outline_enabled(self):
+        if self.current_object and self.current_type == 'node':
+            self.current_object['outline_enabled'] = self.outline_checkbox.isChecked()
+            self.graphulator._update_plot()
+
+    def _choose_outline_color(self):
+        if self.current_object and self.current_type == 'node':
+            current = self.current_object.get('outline_color', config.DEFAULT_NODE_OUTLINE_COLOR)
+            color = QColorDialog.getColor(QColor(current), self.graphulator, "Choose Outline Color")
+            if color.isValid():
+                self.current_object['outline_color'] = color.name()
+                self.graphulator._update_plot()
+
+    def _update_outline_width(self):
+        if self.current_object and self.current_type == 'node':
+            self.current_object['outline_width'] = self.outline_width_spin.value()
+            self.graphulator._update_plot()
+
+    def _update_outline_alpha(self):
+        if self.current_object and self.current_type == 'node':
+            self.current_object['outline_alpha'] = self.outline_alpha_spin.value()
             self.graphulator._update_plot()
 
     def _choose_edge_label_bgcolor(self):
@@ -1564,28 +1635,37 @@ class GraphulatorSettingsDialog(SettingsDialogBase):
         self.graphulator.node_radius = config.DEFAULT_NODE_RADIUS
         self.graphulator._update_plot()
 
+    def _after_apply(self):
+        """Sync dialog memory so new nodes pick up the changed defaults."""
+        sync_dialog_defaults_from_config(self.graphulator)
+
     def _add_extra_buttons(self, button_layout):
         apply_existing_btn = QPushButton("Apply to Existing…")
         apply_existing_btn.setAutoDefault(False)
         apply_existing_btn.setToolTip(
-            "Apply the edge arrowhead defaults to every edge in the current "
-            "graph (one undo step)")
+            "Apply the edge arrowhead defaults to every edge and the node "
+            "outline defaults to every node in the current graph (one undo "
+            "step)")
         apply_existing_btn.clicked.connect(self._on_apply_to_existing)
         button_layout.addWidget(apply_existing_btn)
 
     def _on_apply_to_existing(self):
-        """Restyle the current graph's edges from the defaults (one undo step)."""
+        """Restyle the current graph from the defaults (one undo step)."""
         self._apply_all_values()
         g = self.graphulator
-        if not g.edges:
+        if not g.edges and not g.nodes:
             self._refresh_ui()
             return
+        outline_desc = ("on" if config.DEFAULT_NODE_OUTLINE_ENABLED
+                        else "off")
         reply = QMessageBox.question(
             self, "Apply to Existing",
             f"Apply the arrowhead defaults "
             f"({config.DEFAULT_EDGE_ARROWSTYLE}, "
             f"{config.DEFAULT_EDGE_ARROWSCALE:g}x) to all "
-            f"{len(g.edges)} edge(s) in the current graph?",
+            f"{len(g.edges)} edge(s) and the outline defaults "
+            f"({outline_desc}) to all {len(g.nodes)} node(s) in the "
+            f"current graph?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply != QMessageBox.Yes:
             return
@@ -1593,6 +1673,11 @@ class GraphulatorSettingsDialog(SettingsDialogBase):
         for edge in g.edges:
             edge['arrowstyle'] = config.DEFAULT_EDGE_ARROWSTYLE
             edge['arrowscale'] = config.DEFAULT_EDGE_ARROWSCALE
+        for node in g.nodes:
+            node['outline_enabled'] = config.DEFAULT_NODE_OUTLINE_ENABLED
+            node['outline_color'] = config.DEFAULT_NODE_OUTLINE_COLOR
+            node['outline_width'] = config.DEFAULT_NODE_OUTLINE_WIDTH
+            node['outline_alpha'] = config.DEFAULT_NODE_OUTLINE_ALPHA
         self._refresh_ui()
 
 
@@ -1609,8 +1694,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         self.setWindowTitle("Graphulator - Interactive Graph Drawing Tool")
 
         # Apply saved user settings to the config module before any
-        # config-derived state is initialized below
+        # config-derived state is initialized below, then sync the dialog
+        # defaults so new nodes reflect the saved settings
         get_settings_manager('graphulator', config_module=config).load()
+        sync_dialog_defaults_from_config()
 
         # Grid parameters
         self.grid_spacing = config.DEFAULT_GRID_SPACING
@@ -2200,7 +2287,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 "node_size_mult": node.get("node_size_mult", 1.0),
                 "label_size_mult": node.get("label_size_mult", 1.0),
                 "conj": node.get("conj", False),
-                "nodelabelnudge": list(node.get("nodelabelnudge", (0.0, 0.0)))
+                "nodelabelnudge": list(node.get("nodelabelnudge", (0.0, 0.0))),
+                "outline_enabled": node.get("outline_enabled", False),
+                "outline_color": node.get("outline_color", config.DEFAULT_NODE_OUTLINE_COLOR),
+                "outline_width": node.get("outline_width", config.DEFAULT_NODE_OUTLINE_WIDTH),
+                "outline_alpha": node.get("outline_alpha", config.DEFAULT_NODE_OUTLINE_ALPHA)
             }
             data["nodes"].append(node_data)
 
@@ -2271,7 +2362,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 "node_size_mult": node_data.get("node_size_mult", 1.0),
                 "label_size_mult": node_data.get("label_size_mult", 1.0),
                 "conj": node_data.get("conj", False),
-                "nodelabelnudge": tuple(node_data.get("nodelabelnudge", (0.0, 0.0)))
+                "nodelabelnudge": tuple(node_data.get("nodelabelnudge", (0.0, 0.0))),
+                "outline_enabled": node_data.get("outline_enabled", False),
+                "outline_color": node_data.get("outline_color", config.DEFAULT_NODE_OUTLINE_COLOR),
+                "outline_width": node_data.get("outline_width", config.DEFAULT_NODE_OUTLINE_WIDTH),
+                "outline_alpha": node_data.get("outline_alpha", config.DEFAULT_NODE_OUTLINE_ALPHA)
             }
             self.nodes.append(node)
             node_id_map[node_data["node_id"]] = node
@@ -2656,12 +2751,13 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             self.placement_mode = None
             logger.debug("Exited continuous duplicate mode")
         else:
-            # If no previous node, use defaults
+            # If no previous node, use the configured defaults
             if self.last_node_props is None:
                 self.last_node_props = {
                     'label': '',  # Empty string signals to use 'A' for first node
-                    'color': config.MYCOLORS['BLUE'],
-                    'color_key': 'BLUE',
+                    'color': config.MYCOLORS.get(config.DEFAULT_NODE_COLOR_KEY,
+                                                 config.DEFAULT_NODE_COLOR),
+                    'color_key': config.DEFAULT_NODE_COLOR_KEY,
                     'node_size_mult': 1.0,  # Medium
                     'label_size_mult': 1.4,  # Large
                     'conj': False
@@ -3283,6 +3379,18 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     zorder=10
                 )
             self.canvas.ax.add_patch(circle)
+
+            # Draw custom outline if enabled (same convention as Paragraphulator)
+            if node.get('outline_enabled', False):
+                outline_circle = patches.Circle(
+                    node['pos'], node_radius,
+                    fill=False,
+                    edgecolor=node.get('outline_color', config.DEFAULT_NODE_OUTLINE_COLOR),
+                    linewidth=node.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH),
+                    alpha=node.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA),
+                    zorder=10.5  # on top of the fill, below labels
+                )
+                self.canvas.ax.add_patch(outline_circle)
 
             # Font size should be proportional to node radius
             # Aim for text to be about 35% of node diameter
@@ -4200,7 +4308,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                             'color_key': self.last_node_props['color_key'],
                             'node_size_mult': self.last_node_props['node_size_mult'],
                             'label_size_mult': self.last_node_props['label_size_mult'],
-                            'conj': self.last_node_props['conj']
+                            'conj': self.last_node_props['conj'],
+                            'outline_enabled': config.DEFAULT_NODE_OUTLINE_ENABLED,
+                            'outline_color': config.DEFAULT_NODE_OUTLINE_COLOR,
+                            'outline_width': config.DEFAULT_NODE_OUTLINE_WIDTH,
+                            'outline_alpha': config.DEFAULT_NODE_OUTLINE_ALPHA
                         })
                         self.node_counter += 1
                         self.node_id_counter += 1
@@ -4249,7 +4361,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                             'color_key': result['color_key'],
                             'node_size_mult': result['node_size_mult'],
                             'label_size_mult': result['label_size_mult'],
-                            'conj': result['conj']
+                            'conj': result['conj'],
+                            'outline_enabled': config.DEFAULT_NODE_OUTLINE_ENABLED,
+                            'outline_color': config.DEFAULT_NODE_OUTLINE_COLOR,
+                            'outline_width': config.DEFAULT_NODE_OUTLINE_WIDTH,
+                            'outline_alpha': config.DEFAULT_NODE_OUTLINE_ALPHA
                         }
                         self.nodes.append(new_node)
                         self.node_counter += 1
@@ -4527,7 +4643,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 'node_size_mult': node.get('node_size_mult', 1.0),
                 'label_size_mult': node.get('label_size_mult', 1.0),
                 'conj': node.get('conj', False),
-                'nodelabelnudge': node.get('nodelabelnudge', (0.0, 0.0))
+                'nodelabelnudge': node.get('nodelabelnudge', (0.0, 0.0)),
+                'outline_enabled': node.get('outline_enabled', False),
+                'outline_color': node.get('outline_color', config.DEFAULT_NODE_OUTLINE_COLOR),
+                'outline_width': node.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH),
+                'outline_alpha': node.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA)
             })
 
         # Copy edges (only edges where both nodes are selected)
@@ -4595,7 +4715,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 'node_size_mult': node.get('node_size_mult', 1.0),
                 'label_size_mult': node.get('label_size_mult', 1.0),
                 'conj': node.get('conj', False),
-                'nodelabelnudge': node.get('nodelabelnudge', (0.0, 0.0))
+                'nodelabelnudge': node.get('nodelabelnudge', (0.0, 0.0)),
+                'outline_enabled': node.get('outline_enabled', False),
+                'outline_color': node.get('outline_color', config.DEFAULT_NODE_OUTLINE_COLOR),
+                'outline_width': node.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH),
+                'outline_alpha': node.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA)
             })
             self.nodes.remove(node)
 
@@ -4710,7 +4834,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     'node_size_mult': clip_node.get('node_size_mult', 1.0),
                     'label_size_mult': clip_node.get('label_size_mult', 1.0),
                     'conj': clip_node.get('conj', False),
-                    'nodelabelnudge': clip_node.get('nodelabelnudge', (0.0, 0.0))
+                    'nodelabelnudge': clip_node.get('nodelabelnudge', (0.0, 0.0)),
+                    'outline_enabled': clip_node.get('outline_enabled', False),
+                    'outline_color': clip_node.get('outline_color', config.DEFAULT_NODE_OUTLINE_COLOR),
+                    'outline_width': clip_node.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH),
+                    'outline_alpha': clip_node.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA)
                 }
                 self.nodes.append(new_node)
                 self.node_id_counter += 1
@@ -4933,6 +5061,15 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             # fontscale is now a simple multiplier - graph_primitives handles auto-scaling
             code_lines.append(f"             fontscale={label_size_mult * RESCALE['NODELABELSCALE']:.3f},")
             code_lines.append(f"             conj={conj},")
+
+            # Add outline properties if enabled (qt stores free color strings)
+            if node.get('outline_enabled', False):
+                outline_color = node.get('outline_color', config.DEFAULT_NODE_OUTLINE_COLOR)
+                outline_width = node.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH)
+                outline_alpha = node.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA)
+                code_lines.append(f"             nodeoutlinecolor='{outline_color}',")
+                code_lines.append(f"             nodelw={outline_width:.1f},")
+                code_lines.append(f"             nodeoutlinealpha={outline_alpha:.2f},")
 
             # Add nodelabelnudge if non-zero
             # Compensate for GUI's vertical adjustment (5% of font size downward)

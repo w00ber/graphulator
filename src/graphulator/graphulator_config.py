@@ -19,10 +19,13 @@ MYCOLORS = dict(
 )
 
 # Default node settings
-DEFAULT_NODE_COLOR = 'indianred'
+DEFAULT_NODE_COLOR_KEY = 'RED'  # key into MYCOLORS; the node dialogs work in keys
+DEFAULT_NODE_COLOR = MYCOLORS[DEFAULT_NODE_COLOR_KEY]  # derived; kept in sync
 DEFAULT_NODE_RADIUS = 0.6
+DEFAULT_NODE_OUTLINE_ENABLED = False
 DEFAULT_NODE_OUTLINE_COLOR = 'black'
 DEFAULT_NODE_OUTLINE_WIDTH = 2.5
+DEFAULT_NODE_OUTLINE_ALPHA = 1.0
 DEFAULT_NODE_LABEL_COLOR = 'white'
 DEFAULT_NODE_LABEL_SIZE = 28
 
@@ -68,9 +71,13 @@ DYNAMIC_ADJUST_SELFLOOP_ANGLE = True  # When True, unpinned self-loops reorient 
 # For 'dropdown' the min slot holds the options (list of (display, value)).
 SETTINGS_PARAMS = {
     'Node Defaults': [
-        ('DEFAULT_NODE_COLOR', 'Node Color', 'color', None, None, None),
+        ('DEFAULT_NODE_COLOR_KEY', 'Node Color', 'dropdown', 'MYCOLORS_KEYS', None, None),
         ('DEFAULT_NODE_RADIUS', 'Node Base Radius', 'float', 0.1, 2.0, 0.1),
         ('DEFAULT_NODE_LABEL_COLOR', 'Node Label Color', 'color', None, None, None),
+        ('DEFAULT_NODE_OUTLINE_ENABLED', 'Show Node Outline', 'bool', None, None, None),
+        ('DEFAULT_NODE_OUTLINE_COLOR', 'Outline Color', 'color', None, None, None),
+        ('DEFAULT_NODE_OUTLINE_WIDTH', 'Outline Width', 'float', 0.5, 10.0, 0.5),
+        ('DEFAULT_NODE_OUTLINE_ALPHA', 'Outline Opacity', 'float', 0.0, 1.0, 0.05),
     ],
     'Edge Defaults': [
         ('DEFAULT_EDGE_ARROWSTYLE', 'Arrowhead Style', 'dropdown',
@@ -99,4 +106,5 @@ LIVE_PARAMS = (
     'CONJ_LABEL_SCALE',
     'ARROWHEAD_OPEN_ANGLE',
     'DEFAULT_NODE_RADIUS',
+    'DEFAULT_NODE_LABEL_COLOR',  # read at draw time for nodes without an override
 )

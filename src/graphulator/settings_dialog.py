@@ -96,9 +96,22 @@ def make_style_sample_scene(config_module):
                 v = getattr(config_module, name, default)
             return v
 
-        node_color = val('DEFAULT_NODE_COLOR', 'indianred')
+        def resolve_color(key_name, color_name, fallback):
+            """Prefer a MYCOLORS key setting when the app exposes one."""
+            key = val(key_name)
+            palette = getattr(config_module, 'MYCOLORS', {})
+            if key is not None and key in palette:
+                return palette[key]
+            return val(color_name, fallback)
+
+        node_color = resolve_color('DEFAULT_NODE_COLOR_KEY',
+                                   'DEFAULT_NODE_COLOR', 'indianred')
         label_color = val('DEFAULT_NODE_LABEL_COLOR', 'white')
-        R = 0.6
+
+        # Base radius × size scale, drawn against FIXED axes limits so
+        # changing either setting visibly rescales the sample nodes
+        R = float(val('DEFAULT_NODE_RADIUS', 0.6)) * float(val('DEFAULT_NODE_SIZE_MULT', 1.0))
+        lw_mult = float(val('DEFAULT_EDGE_LINEWIDTH_MULT', 1.0))
         arrow_kwargs = dict(
             arrowstyle=val('DEFAULT_EDGE_ARROWSTYLE', 'open'),
             arrowscale=float(val('DEFAULT_EDGE_ARROWSCALE', 1.0)),
@@ -111,16 +124,33 @@ def make_style_sample_scene(config_module):
         edge_style = val('CONJ_DIFF_EDGE_STYLE', 'loopy')
         gp.edge(ax=ax, nodexy=[(-1.8, 0), (1.8, 0)], nodeR=[R, R],
                 style=edge_style, whichedges='both', label=[None, None],
-                loopkwargs=dict(lw=2.0, arrowlength=0.3, **arrow_kwargs))
+                loopkwargs=dict(lw=2.0 * lw_mult, arrowlength=0.3, **arrow_kwargs))
 
-        # Self-loop on the normal node
-        gp.selfloop(ax=ax, nodecent=(-1.8, 0), R=R * 1.2, loopR=R * 6,
-                    baseangle=180, dtheta=-34, arrowlength=R / 2 * 2.25 / 4,
+        # Self-loop on the normal node (size/angle track the app defaults)
+        sl_scale = float(val('DEFAULT_SELFLOOP_SCALE', 1.0))
+        sl_angle = float(val('DEFAULT_SELFLOOP_ANGLE', 180))
+        gp.selfloop(ax=ax, nodecent=(-1.8, 0), R=R * 1.2,
+                    loopR=R * 6 * sl_scale,
+                    baseangle=sl_angle, dtheta=-34,
+                    arrowlength=R / 2 * 2.25 / 4,
                     lw=1.8, **arrow_kwargs)
+
+        def outline_ring(center):
+            if not val('DEFAULT_NODE_OUTLINE_ENABLED', False):
+                return
+            outline_color = resolve_color('DEFAULT_NODE_OUTLINE_COLOR_KEY',
+                                          'DEFAULT_NODE_OUTLINE_COLOR', 'black')
+            ax.add_patch(mpatches.Circle(
+                center, R, fill=False,
+                edgecolor=outline_color,
+                linewidth=float(val('DEFAULT_NODE_OUTLINE_WIDTH', 2.5)),
+                alpha=float(val('DEFAULT_NODE_OUTLINE_ALPHA', 1.0)),
+                zorder=10.5))
 
         # Normal node
         ax.add_patch(mpatches.Circle((-1.8, 0), R, facecolor=node_color,
                                      edgecolor='none', zorder=10))
+        outline_ring((-1.8, 0))
         ax.text(-1.8, 0, 'A', ha='center', va='center', fontsize=13,
                 color=label_color, fontweight='bold', zorder=11)
 
@@ -136,12 +166,13 @@ def make_style_sample_scene(config_module):
                 (1.8, 0), R, facecolor=node_color, edgecolor='none',
                 alpha=float(val('CONJ_NODE_FILL_ALPHA', 0.5)), zorder=10))
             conj_label_color = label_color
+        outline_ring((1.8, 0))
         ax.text(1.8, 0, 'A*', ha='center', va='center',
                 fontsize=13 * conj_scale, color=conj_label_color,
                 fontweight='bold', zorder=11)
 
         ax.set_xlim(-4.6, 3.1)
-        ax.set_ylim(-1.7, 1.7)
+        ax.set_ylim(-1.9, 1.9)
 
     return draw
 
@@ -159,7 +190,7 @@ class SettingsDialogBase(QDialog):
     def __init__(self, parent=None, *, config_module, params_table,
                  settings_manager, on_applied=None, live_params=(),
                  sample_scene=None, auto_refresh_tabs=(),
-                 window_title="Settings"):
+                 preview_tabs=None, window_title="Settings"):
         super().__init__(parent)
         self.graphulator = parent
         self._config = config_module
@@ -169,6 +200,8 @@ class SettingsDialogBase(QDialog):
         self._live_params = set(live_params)
         self._sample_scene = sample_scene
         self._auto_refresh_tabs = set(auto_refresh_tabs)
+        # Tabs on which the preview pane is shown (None = every tab)
+        self._preview_tabs = set(preview_tabs) if preview_tabs is not None else None
 
         self.setWindowTitle(window_title)
         self.setMinimumWidth(550)
@@ -203,16 +236,20 @@ class SettingsDialogBase(QDialog):
         # Build tabs from the params table (+ subclass extras)
         self._build_tabs()
 
-        # Optional live preview pane
+        # Optional live preview pane (shown only on appearance-related tabs
+        # when preview_tabs is given)
         self._sample_canvas = None
+        self._preview_box = None
         if self._sample_scene is not None:
-            preview_box = QGroupBox("Preview")
+            self._preview_box = QGroupBox("Preview")
             preview_layout = QVBoxLayout()
-            preview_box.setLayout(preview_layout)
+            self._preview_box.setLayout(preview_layout)
             self._sample_canvas = SampleSceneCanvas(self._sample_scene)
             preview_layout.addWidget(self._sample_canvas)
-            main_layout.addWidget(preview_box)
+            main_layout.addWidget(self._preview_box)
             self._refresh_sample()
+            self.tab_widget.currentChanged.connect(self._update_preview_visibility)
+            self._update_preview_visibility()
 
         # Create button layout
         button_layout = QHBoxLayout()
@@ -466,6 +503,16 @@ class SettingsDialogBase(QDialog):
         self._pending_live.clear()
         self._refresh_ui()
 
+    def _update_preview_visibility(self, _index=None):
+        """Show the preview pane only on appearance-related tabs."""
+        if self._preview_box is None:
+            return
+        if self._preview_tabs is None:
+            self._preview_box.setVisible(True)
+            return
+        current = self.tab_widget.tabText(self.tab_widget.currentIndex())
+        self._preview_box.setVisible(current in self._preview_tabs)
+
     def _refresh_sample(self):
         """Redraw the preview pane from pending widget values."""
         if self._sample_canvas is None:
@@ -575,6 +622,9 @@ class SettingsDialogBase(QDialog):
                     self._set_widget_value(param_name, original_value)
 
         self._extra_reset()
+        # Resync app-side inheritance (dialog memory, derived defaults) just
+        # like Apply does, so the reset actually reaches newly placed objects
+        self._after_apply()
         self._refresh_ui()
         QMessageBox.information(self, "Reset Complete",
                                 "All settings have been reset to their original defaults.")

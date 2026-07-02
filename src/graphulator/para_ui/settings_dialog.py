@@ -291,6 +291,8 @@ class SettingsDialog(SettingsDialogBase):
             auto_refresh_tabs=('S-Parameter Plot',),
             live_params=LIVE_PARAMS,
             sample_scene=make_style_sample_scene(config),
+            preview_tabs=('Node & Edge Defaults', 'Conventions',
+                          'Self-Loop Defaults'),
         )
 
     # ---- Export-rescale parameters live on the window, not the config ----
