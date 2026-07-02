@@ -10,7 +10,6 @@ __author__ = "J. Aumentado"
 __copyright__ = "© J Aumentado"
 __url__ = "https://github.com/w00ber/graphulator"
 
-from . import graph_primitives
-from . import graphulator_config
+from . import graph_primitives, graphulator_config
 
 __all__ = ["graph_primitives", "graphulator_config"]

@@ -1,10 +1,9 @@
 """Tests for the KaTeX HTML template functions."""
 
-import pytest
 
 from graphulator.para_rendering.katex_templates import (
-    render_matrix_html,
     render_basis_html,
+    render_matrix_html,
     render_placeholder_html,
 )
 

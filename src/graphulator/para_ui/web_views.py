@@ -6,11 +6,11 @@ This module contains the ZoomableWebView class for displaying KaTeX-rendered con
 
 import logging
 
-from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtCore import QTimer, QEvent, Qt
-from PySide6.QtWidgets import QMenu, QWidget
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWebEngineCore import QWebEnginePage
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWidgets import QMenu, QWidget
 
 logger = logging.getLogger(__name__)
 

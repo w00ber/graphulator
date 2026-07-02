@@ -25,7 +25,6 @@ paths, so the caching/transform path is identical for both.
 
 import logging
 
-import numpy as np
 from matplotlib.font_manager import FontProperties
 from matplotlib.patches import PathPatch, Rectangle
 from matplotlib.textpath import TextPath

@@ -6,20 +6,33 @@ This module contains the SettingsDialog and ColorPaletteWidget classes.
 
 import logging
 
-from PySide6.QtWidgets import (
-    QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTabWidget, QScrollArea, QFormLayout, QSpinBox, QComboBox,
-    QCheckBox, QLineEdit, QColorDialog, QListWidget, QListWidgetItem,
-    QMessageBox
-)
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor, QIcon, QPixmap
-
-logger = logging.getLogger(__name__)
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QColorDialog,
+    QComboBox,
+    QDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .. import graphulator_para_config as config
-from .widgets import FineControlSpinBox
 from .shortcut_editor import ShortcutEditorWidget
+from .widgets import FineControlSpinBox
+
+logger = logging.getLogger(__name__)
 
 
 class ColorPaletteWidget(QWidget):
@@ -149,7 +162,7 @@ class ColorPaletteWidget(QWidget):
                     pixmap.fill(qcolor)
                 else:
                     pixmap.fill(QColor('gray'))
-            except:
+            except Exception:
                 pixmap.fill(QColor('gray'))
             list_item.setIcon(QIcon(pixmap))
 
@@ -275,9 +288,13 @@ class SettingsDialog(QDialog):
 
         # Import settings constants from main module (delayed to avoid circular imports)
         from ..graphulator_para import (
-            SETTINGS_PARAMS, EXPORT_RESCALE_DEFAULTS,
-            save_user_settings, delete_user_settings, USER_SETTINGS_FILE,
-            _get_original_config_value, sync_dialog_defaults_from_config
+            EXPORT_RESCALE_DEFAULTS,
+            SETTINGS_PARAMS,
+            USER_SETTINGS_FILE,
+            _get_original_config_value,
+            delete_user_settings,
+            save_user_settings,
+            sync_dialog_defaults_from_config,
         )
         self._SETTINGS_PARAMS = SETTINGS_PARAMS
         self._EXPORT_RESCALE_DEFAULTS = EXPORT_RESCALE_DEFAULTS

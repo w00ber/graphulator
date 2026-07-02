@@ -17,7 +17,7 @@ Note on Qt key handling:
 - Therefore, use "Ctrl+X" for cross-platform shortcuts - Qt handles display correctly
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List
 
 

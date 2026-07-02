@@ -24,10 +24,11 @@ PGRAPH = os.path.join(os.path.dirname(__file__), os.pardir,
 def para_window():
     try:
         from PySide6.QtWidgets import QApplication
+
         import graphulator.graphulator_para as gp
     except ImportError as exc:
         pytest.skip(f"GUI stack unavailable: {exc}")
-    app = QApplication.instance() or QApplication([])
+    _app = QApplication.instance() or QApplication([])  # keep the app alive
     try:
         win = gp.Graphulator()
     except Exception as exc:  # e.g. no usable Qt platform plugin

@@ -12,22 +12,21 @@ Features:
 
 from typing import Optional
 
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QKeySequence
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QFrame,
     QHBoxLayout,
-    QTreeWidget,
-    QTreeWidgetItem,
-    QPushButton,
+    QKeySequenceEdit,
     QLabel,
     QLineEdit,
     QMessageBox,
-    QKeySequenceEdit,
-    QFrame,
-    QSizePolicy,
+    QPushButton,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QFont, QColor
 
 from .shortcut_manager import ShortcutManager
 

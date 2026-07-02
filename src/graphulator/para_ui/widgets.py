@@ -10,15 +10,9 @@ import hashlib
 import os
 import re
 
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QDoubleSpinBox, QPlainTextEdit, QTextEdit,
-    QInputDialog, QMessageBox
-)
-from PySide6.QtCore import Qt, QSize, QRect, QBuffer, QIODevice, QEvent, QMimeData
-from PySide6.QtGui import (
-    QFont, QPainter, QColor, QTextFormat, QTextCursor, QImage
-)
-
+from PySide6.QtCore import QBuffer, QEvent, QIODevice, QMimeData, QRect, QSize, Qt
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QTextCursor, QTextFormat
+from PySide6.QtWidgets import QDoubleSpinBox, QInputDialog, QMessageBox, QPlainTextEdit, QTextEdit, QVBoxLayout, QWidget
 
 # Warn the user when a single pasted/dropped image would exceed this size in
 # the (base64-encoded) graph file. 1 MB raw ≈ 1.36 MB encoded.

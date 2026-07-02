@@ -35,6 +35,15 @@ dependencies = [
     "pymupdf>=1.23.0",  # SVG->PDF conversion so clipboard/PDF text exports as outlines (no font dependency)
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
+]
+
 [project.urls]
 Homepage = "https://github.com/w00ber/graphulator"
 Documentation = "https://github.com/w00ber/graphulator#readme"
@@ -60,4 +69,30 @@ graphulator = [
     "katex/fonts/*",
     "katex/contrib/*.js",
     "assets/*.png",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+# The two monolithic app files predate the tooling; lint the maintained
+# modules first and shrink this list as code migrates out of them.
+extend-exclude = [
+    "src/graphulator/graphulator_qt.py",
+    "src/graphulator/graphulator_para.py",
+    "src/graphulator/autograph.py",
+    "examples",
+    "building",
+    "misc",
+]
+
+[tool.ruff.lint]
+# Conservative starter set: errors, pyflakes, import order
+select = ["E", "F", "I"]
+ignore = [
+    "E501",  # long lines: legacy code has many; revisit after refactors
+    "E741",  # ambiguous variable names (I, l) common in matrix math
 ]

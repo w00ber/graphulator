@@ -6,6 +6,7 @@ This module provides the entry point for the 'graphulator' console command.
 """
 
 import sys
+
 from .graphulator_qt import main as gui_main
 
 

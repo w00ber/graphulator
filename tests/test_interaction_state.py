@@ -1,6 +1,5 @@
 """Tests for the InteractionMode and PlacementMode enums."""
 
-import pytest
 
 from graphulator.para_core.interaction_state import InteractionMode, PlacementMode
 
