@@ -43,7 +43,9 @@ from . import graph_primitives as gp
 from . import graphulator_config as config
 from .common_window import GraphWindowCommonMixin
 from .para_core.graph_state import capture_graph_state
+from .para_core.settings_manager import get_settings_manager
 from .para_rendering.label_cache import LabelPathCache
+from .settings_dialog import SettingsDialogBase, make_style_sample_scene
 
 
 EXPORT_RESCALE_DEFAULTS = {
@@ -1536,6 +1538,63 @@ class MplCanvas(FigureCanvas):
         self.scroll_signal.emit(event)
 
 
+class GraphulatorSettingsDialog(SettingsDialogBase):
+    """Graphulator Settings dialog: styling defaults with a live preview.
+
+    Convention parameters (conjugation styling, arrowhead opening angle,
+    node base radius) live-apply to the open graph as they change; the
+    remaining defaults affect newly placed objects, with an explicit
+    "Apply to Existing" button for restyling the current graph.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(
+            parent,
+            config_module=config,
+            params_table=config.SETTINGS_PARAMS,
+            settings_manager=get_settings_manager('graphulator',
+                                                  config_module=config),
+            live_params=config.LIVE_PARAMS,
+            sample_scene=make_style_sample_scene(config),
+        )
+
+    def _refresh_ui(self):
+        """Refresh the Graphulator canvas after settings change."""
+        self.graphulator.node_radius = config.DEFAULT_NODE_RADIUS
+        self.graphulator._update_plot()
+
+    def _add_extra_buttons(self, button_layout):
+        apply_existing_btn = QPushButton("Apply to Existing…")
+        apply_existing_btn.setAutoDefault(False)
+        apply_existing_btn.setToolTip(
+            "Apply the edge arrowhead defaults to every edge in the current "
+            "graph (one undo step)")
+        apply_existing_btn.clicked.connect(self._on_apply_to_existing)
+        button_layout.addWidget(apply_existing_btn)
+
+    def _on_apply_to_existing(self):
+        """Restyle the current graph's edges from the defaults (one undo step)."""
+        self._apply_all_values()
+        g = self.graphulator
+        if not g.edges:
+            self._refresh_ui()
+            return
+        reply = QMessageBox.question(
+            self, "Apply to Existing",
+            f"Apply the arrowhead defaults "
+            f"({config.DEFAULT_EDGE_ARROWSTYLE}, "
+            f"{config.DEFAULT_EDGE_ARROWSCALE:g}x) to all "
+            f"{len(g.edges)} edge(s) in the current graph?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        g._save_state()
+        for edge in g.edges:
+            edge['arrowstyle'] = config.DEFAULT_EDGE_ARROWSTYLE
+            edge['arrowscale'] = config.DEFAULT_EDGE_ARROWSCALE
+        self._refresh_ui()
+
+
 class Graphulator(GraphWindowCommonMixin, QMainWindow):
     """Main application window"""
 
@@ -1547,6 +1606,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Graphulator - Interactive Graph Drawing Tool")
+
+        # Apply saved user settings to the config module before any
+        # config-derived state is initialized below
+        get_settings_manager('graphulator', config_module=config).load()
 
         # Grid parameters
         self.grid_spacing = config.DEFAULT_GRID_SPACING
@@ -1963,6 +2026,14 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         file_menu.addSeparator()
 
+        # Settings
+        settings_action = QAction("Se&ttings…", self)
+        settings_action.setShortcut("Ctrl+,")
+        settings_action.triggered.connect(self._open_settings)
+        file_menu.addAction(settings_action)
+
+        file_menu.addSeparator()
+
         # Save
         save_action = QAction("&Save", self)
         save_action.setShortcut("Ctrl+S")
@@ -2253,6 +2324,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         # Auto-fit view to loaded graph (center and zoom to fit all objects)
         self._auto_fit_view()
+
+    def _open_settings(self):
+        """Open the Settings dialog (Ctrl+,)."""
+        dialog = GraphulatorSettingsDialog(self)
+        dialog.exec()
 
     def _new_graph(self):
         """Create a new graph"""

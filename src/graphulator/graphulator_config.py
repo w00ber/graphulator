@@ -60,3 +60,43 @@ DEFAULT_SELFLOOP_ANGLE = 90  # degrees (90° = Up)
 SELFLOOP_ANGLE_KEYBOARD_INCREMENT = 15  # degrees per keypress (must be multiple of 5)
 AUTO_ADJUST_SELFLOOP_ANGLE = True  # When True, new self-loops auto-orient away from edges
 DYNAMIC_ADJUST_SELFLOOP_ANGLE = True  # When True, unpinned self-loops reorient on drag-end
+
+# =============================================================================
+# SETTINGS DIALOG PARAMETER DEFINITIONS
+# =============================================================================
+# Format: {tab_name: [(config_attr, display_name, type, min, max, step), ...]}
+# For 'dropdown' the min slot holds the options (list of (display, value)).
+SETTINGS_PARAMS = {
+    'Node Defaults': [
+        ('DEFAULT_NODE_COLOR', 'Node Color', 'color', None, None, None),
+        ('DEFAULT_NODE_RADIUS', 'Node Base Radius', 'float', 0.1, 2.0, 0.1),
+        ('DEFAULT_NODE_LABEL_COLOR', 'Node Label Color', 'color', None, None, None),
+    ],
+    'Edge Defaults': [
+        ('DEFAULT_EDGE_ARROWSTYLE', 'Arrowhead Style', 'dropdown',
+         [('Open', 'open'), ('Filled', 'filled'), ('Stealth', 'stealth')], None, None),
+        ('DEFAULT_EDGE_ARROWSCALE', 'Arrowhead Scale (×)', 'float', 0.2, 3.0, 0.1),
+        ('ARROWHEAD_OPEN_ANGLE', 'Arrowhead Opening Angle (°)', 'int', 20, 120, 5),
+    ],
+    'Conventions': [
+        ('CONJ_NODE_FILL_MODE', 'Conjugated Node Fill', 'dropdown',
+         [('Dimmed', 'dimmed'), ('Transparent', 'transparent')], None, None),
+        ('CONJ_NODE_FILL_ALPHA', 'Conjugated Fill Alpha', 'float', 0.1, 1.0, 0.05),
+        ('CONJ_LABEL_SCALE', 'Conjugated Label Scale', 'float', 0.5, 1.0, 0.02),
+    ],
+    'Self-Loop Defaults': [
+        ('DEFAULT_SELFLOOP_ANGLE', 'Default Angle (°)', 'int', 0, 355, 15),
+        ('AUTO_ADJUST_SELFLOOP_ANGLE', 'Auto-Orient New Self-Loops', 'bool', None, None, None),
+        ('DYNAMIC_ADJUST_SELFLOOP_ANGLE', 'Re-Orient Unpinned on Drag', 'bool', None, None, None),
+    ],
+}
+
+# Parameters that are rendering conventions (read at draw time): the Settings
+# dialog live-applies these to the open graph, debounced, as they change.
+LIVE_PARAMS = (
+    'CONJ_NODE_FILL_MODE',
+    'CONJ_NODE_FILL_ALPHA',
+    'CONJ_LABEL_SCALE',
+    'ARROWHEAD_OPEN_ANGLE',
+    'DEFAULT_NODE_RADIUS',
+)

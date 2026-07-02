@@ -76,6 +76,73 @@ class SampleSceneCanvas(FigureCanvasQTAgg):
         self.draw_idle()
 
 
+def make_style_sample_scene(config_module):
+    """Build a ``sample_scene`` callable previewing the styling defaults.
+
+    Draws a canned scene — a normal node, a conjugated node (per the
+    convention settings), a bidirectional edge with arrowheads, and a
+    self-loop — from the dialog's pending widget values, falling back to the
+    config module for anything the dialog doesn't expose. Uses only the
+    provided axes (no pyplot state).
+    """
+    import matplotlib.patches as mpatches
+
+    from . import graph_primitives as gp
+
+    def draw(ax, values):
+        def val(name, default=None):
+            v = values.get(name)
+            if v is None:
+                v = getattr(config_module, name, default)
+            return v
+
+        node_color = val('DEFAULT_NODE_COLOR', 'indianred')
+        label_color = val('DEFAULT_NODE_LABEL_COLOR', 'white')
+        R = 0.6
+        arrow_kwargs = dict(
+            arrowstyle=val('DEFAULT_EDGE_ARROWSTYLE', 'open'),
+            arrowscale=float(val('DEFAULT_EDGE_ARROWSCALE', 1.0)),
+            arrowopenang=float(val('ARROWHEAD_OPEN_ANGLE', 60)),
+        )
+
+        # Edge with arrowheads between the two nodes
+        gp.edge(ax=ax, nodexy=[(-1.8, 0), (1.8, 0)], nodeR=[R, R],
+                style='loopy', whichedges='both', label=[None, None],
+                loopkwargs=dict(lw=2.0, arrowlength=0.3, **arrow_kwargs))
+
+        # Self-loop on the normal node
+        gp.selfloop(ax=ax, nodecent=(-1.8, 0), R=R * 1.2, loopR=R * 6,
+                    baseangle=180, dtheta=-34, arrowlength=R / 2 * 2.25 / 4,
+                    lw=1.8, **arrow_kwargs)
+
+        # Normal node
+        ax.add_patch(mpatches.Circle((-1.8, 0), R, facecolor=node_color,
+                                     edgecolor='none', zorder=10))
+        ax.text(-1.8, 0, 'A', ha='center', va='center', fontsize=13,
+                color=label_color, fontweight='bold', zorder=11)
+
+        # Conjugated node per the convention settings
+        conj_scale = float(val('CONJ_LABEL_SCALE', 0.92))
+        if val('CONJ_NODE_FILL_MODE', 'dimmed') == 'transparent':
+            ax.add_patch(mpatches.Circle((1.8, 0), R, facecolor='none',
+                                         edgecolor=node_color, linewidth=2.0,
+                                         zorder=10))
+            conj_label_color = node_color
+        else:
+            ax.add_patch(mpatches.Circle(
+                (1.8, 0), R, facecolor=node_color, edgecolor='none',
+                alpha=float(val('CONJ_NODE_FILL_ALPHA', 0.5)), zorder=10))
+            conj_label_color = label_color
+        ax.text(1.8, 0, 'A*', ha='center', va='center',
+                fontsize=13 * conj_scale, color=conj_label_color,
+                fontweight='bold', zorder=11)
+
+        ax.set_xlim(-4.6, 3.1)
+        ax.set_ylim(-1.7, 1.7)
+
+    return draw
+
+
 class SettingsDialogBase(QDialog):
     """Table-driven Settings dialog with Apply/OK/Cancel semantics.
 
