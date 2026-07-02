@@ -2657,13 +2657,23 @@ class Graphulator(QMainWindow):
     def closeEvent(self, event):
         """Handle window close event"""
         if self._check_unsaved_changes():
-            # Save last graph automatically
+            # Save last graph automatically (for session restore)
             try:
                 data = self._serialize_graph()
                 with open(self.last_graph_path, 'w') as f:
                     json.dump(data, f, indent=2)
-            except:
-                pass  # Don't prevent closing if save fails
+            except Exception:
+                logger.exception("Failed to autosave last graph on close")
+                reply = QMessageBox.warning(
+                    self, "Autosave Failed",
+                    "The session autosave failed, so this graph won't be "
+                    "restored next launch.\n\nClose anyway?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if reply == QMessageBox.No:
+                    event.ignore()
+                    return
 
             event.accept()
         else:
@@ -5340,6 +5350,7 @@ class Graphulator(QMainWindow):
         """Copy selected nodes and edges to clipboard"""
         if not self.selected_nodes and not self.selected_edges:
             logger.info("No nodes or edges selected to copy")
+            self._status_message("Nothing selected to copy")
             return
 
         self.clipboard = {'nodes': [], 'edges': []}
@@ -5398,6 +5409,7 @@ class Graphulator(QMainWindow):
         """Cut selected nodes and edges to clipboard"""
         if not self.selected_nodes and not self.selected_edges:
             logger.info("No nodes or edges selected to cut")
+            self._status_message("Nothing selected to cut")
             return
 
         self._save_state()
@@ -6213,9 +6225,10 @@ class Graphulator(QMainWindow):
         self.canvas.ax.set_title('')
         self.canvas.ax.axis('off')
 
-        self.canvas.draw()
-        # Force Qt to process events immediately
-        QApplication.processEvents()
+        # draw_idle coalesces repaints and avoids the re-entrancy hazards of
+        # pumping the event loop (processEvents) mid-render. The snapshot code
+        # below reads only limits/artist attributes, not the renderer.
+        self.canvas.draw_idle()
 
         # Update properties panel based on selection
         self._update_properties_panel()

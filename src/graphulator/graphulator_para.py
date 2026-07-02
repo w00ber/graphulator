@@ -8101,13 +8101,28 @@ class Graphulator(QMainWindow):
     def closeEvent(self, event):
         """Handle window close event"""
         if self._check_unsaved_changes():
-            # Save last graph automatically
+            # Save last graph automatically (for session restore)
             try:
                 data = self._serialize_graph()
                 with open(self.last_graph_path, 'w') as f:
                     json.dump(data, f, indent=2)
-            except:
-                pass  # Don't prevent closing if save fails
+            except Exception:
+                logger.exception("Failed to autosave last graph on close")
+                reply = QMessageBox.warning(
+                    self, "Autosave Failed",
+                    "The session autosave failed, so this graph won't be "
+                    "restored next launch.\n\nClose anyway?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if reply == QMessageBox.No:
+                    event.ignore()
+                    return
+
+            # Let a running S-parameter sweep finish before teardown
+            if self._sparams_worker is not None and self._sparams_worker.isRunning():
+                self._sparams_pending = False
+                self._sparams_worker.wait(5000)
 
             # Clean up matplotlib canvases to prevent segfault
             try:
@@ -8117,8 +8132,8 @@ class Graphulator(QMainWindow):
                     self.kron_canvas.close()
                 if hasattr(self, 'scattering_canvas') and self.scattering_canvas:
                     self.scattering_canvas.close()
-            except:
-                pass  # Don't prevent closing if cleanup fails
+            except Exception:
+                logger.exception("Canvas cleanup failed during close")
 
             event.accept()
         else:
@@ -8401,7 +8416,7 @@ class Graphulator(QMainWindow):
         if self.basis_ordering_mode and self.basis_order:
             removed_node = self.basis_order.pop()
             self.basis_order_undo_stack.append(removed_node)
-            print(f"Removed '{removed_node['label']}' from basis order")
+            logger.info(f"Removed '{removed_node['label']}' from basis order")
             self._update_plot()
 
     def _redo_basis_selection(self):
@@ -8409,7 +8424,7 @@ class Graphulator(QMainWindow):
         if self.basis_ordering_mode and self.basis_order_undo_stack:
             node = self.basis_order_undo_stack.pop()
             self.basis_order.append(node)
-            print(f"Re-added '{node['label']}' to basis order")
+            logger.info(f"Re-added '{node['label']}' to basis order")
             self._update_plot()
 
     # === Kron Reduction Mode Methods ===
@@ -10378,6 +10393,18 @@ class Graphulator(QMainWindow):
         with matplotlib.rc_context({'mathtext.fontset': 'stixsans',
                             'mathtext.default': 'regular'}):
 
+            # Phase arrays are per-component and independent of the trace, so
+            # compute them lazily once per component instead of per checkbox
+            phase_cache = {}
+
+            def get_phase_deg(comp_idx, S_complex):
+                if comp_idx not in phase_cache:
+                    S_phase_rad = np.angle(S_complex)
+                    if self.sparams_phase_unwrap.isChecked():
+                        S_phase_rad = np.unwrap(S_phase_rad, axis=0)
+                    phase_cache[comp_idx] = np.degrees(S_phase_rad)
+                return phase_cache[comp_idx]
+
             # Plot each selected S-parameter with fixed colors based on matrix position
             # Each S-parameter gets a consistent color regardless of which traces are shown
             for key, checkbox in self.sparams_checkboxes.items():
@@ -10410,16 +10437,8 @@ class Graphulator(QMainWindow):
                         if j_idx >= num_ports or k_idx >= num_ports:
                             continue
 
-                        # Compute phase from complex S-matrix
-                        S_phase_rad = np.angle(S_complex)
-                        if self.sparams_phase_unwrap.isChecked():
-                            S_phase_rad_unwrapped = np.zeros_like(S_phase_rad)
-                            for j in range(S_phase_rad.shape[1]):
-                                for k in range(S_phase_rad.shape[2]):
-                                    S_phase_rad_unwrapped[:, j, k] = np.unwrap(S_phase_rad[:, j, k])
-                            S_phase_deg = np.degrees(S_phase_rad_unwrapped)
-                        else:
-                            S_phase_deg = np.degrees(S_phase_rad)
+                        # Compute phase from complex S-matrix (cached per component)
+                        S_phase_deg = get_phase_deg(comp_idx, S_complex)
 
                         # Apply conjugate transformation to data if active
                         if conjugate_mode:
@@ -15378,7 +15397,7 @@ class Graphulator(QMainWindow):
         """Select all nodes and edges"""
         self.selected_nodes = self.nodes.copy()
         self.selected_edges = self.edges.copy()
-        print(f"Selected all: {len(self.selected_nodes)} node(s) and {len(self.selected_edges)} edge(s)")
+        logger.info(f"Selected all: {len(self.selected_nodes)} node(s) and {len(self.selected_edges)} edge(s)")
         self._update_plot()
 
     def _create_node_copy_dict(self, node):
@@ -15437,7 +15456,8 @@ class Graphulator(QMainWindow):
     def _copy_nodes(self):
         """Copy selected nodes and edges to clipboard"""
         if not self.selected_nodes and not self.selected_edges:
-            print("No nodes or edges selected to copy")
+            logger.info("No nodes or edges selected to copy")
+            self._status_message("Nothing selected to copy")
             return
 
         self.clipboard = {'nodes': [], 'edges': []}
@@ -15503,7 +15523,8 @@ class Graphulator(QMainWindow):
     def _cut_nodes(self):
         """Cut selected nodes and edges to clipboard"""
         if not self.selected_nodes and not self.selected_edges:
-            print("No nodes or edges selected to cut")
+            logger.info("No nodes or edges selected to cut")
+            self._status_message("Nothing selected to cut")
             return
 
         self._save_state()
@@ -16819,10 +16840,11 @@ class Graphulator(QMainWindow):
             # Non-blocking render (better for smooth scrolling)
             self.canvas.draw_idle()
         else:
-            # Blocking render (ensures immediate update)
+            # Blocking render (ensures immediate update). Note: no
+            # processEvents() here - pumping the event loop mid-render can
+            # re-enter input handlers; export paths that need a completed
+            # renderer use _update_plot_no_grid instead.
             self.canvas.draw()
-            # Force Qt to process events immediately
-            QApplication.processEvents()
 
         # Update properties panel based on selection
         self._update_properties_panel()
