@@ -5440,6 +5440,139 @@ class LabelPatternAnalyzer:
         return f"Node{number}"
 
 
+def _compute_sparams_job(job):
+    """Compute S-parameters for one self-contained component job.
+
+    Pure computation over the plain data packaged by
+    Graphulator._build_sparams_job — no GUI access, safe to run on a
+    worker thread.
+
+    Returns:
+        dict with S-parameter results, or None if the component is invalid
+        (e.g. missing parameter assignments).
+    """
+    comp_name = job['comp_name']
+    nodes = job['nodes']
+    edges = job['edges']
+    root_node_id = job['root_node_id']
+    f_root_s = job['f_root_s']
+
+    # Compute spanning tree for this component
+    extractor = GraphExtractor()
+    gui_nodes = [{'node_id': node['node_id']} for node in nodes]
+    gui_edges = [
+        {
+            'from_node_id': edge['from_node_id'],
+            'to_node_id': edge['to_node_id'],
+            'is_self_loop': edge['is_self_loop']
+        }
+        for edge in edges
+    ]
+
+    tree_edges_nested, chord_edges_list, is_connected = extractor.compute_spanning_tree(
+        gui_nodes, gui_edges, root_node_id
+    )
+
+    # Convert to list format for extractor
+    tree_edges_list = []
+    for branch in tree_edges_nested:
+        for from_id, to_id in branch:
+            tree_edges_list.append([from_id, to_id])
+
+    extractor.extract_graph_data(
+        nodes=nodes,
+        edges=edges,
+        scattering_assignments=job['scattering_assignments'],
+        frequency_settings={'start': job['freq_start'], 'stop': job['freq_stop'],
+                            'points': job['freq_points']},
+        root_node_id=root_node_id,
+        precomputed_tree_edges=tree_edges_list,
+        precomputed_chord_edges=chord_edges_list
+    )
+
+    # Validate all required parameters are assigned before computing
+    missing = extractor.validate_scattering_assignments()
+    missing_items = missing.get('missing_nodes', []) + missing.get('missing_edges', [])
+    if missing_items:
+        detail = "\n".join(f"  - {item}" for item in missing_items)
+        logger.info(f"  {comp_name}: Missing scattering parameters:\n{detail}")
+        return None
+
+    # Check if injection node is conjugated
+    root_node = next((n for n in nodes if n['node_id'] == root_node_id), None)
+    f_calc = f_root_s
+    if root_node and root_node.get('conj', False):
+        f_calc = -f_root_s
+        logger.info(f"  {comp_name}: Injection node is conjugated - using negative frequencies")
+
+    # Compute S-matrix
+    scattering_calc = GraphScatteringMatrix(extractor, f_calc)
+
+    logger.info(f"  {comp_name}: {len(scattering_calc.port_dict)} ports computed")
+
+    # Build enriched port_dict with labels for checkbox/plot code
+    # Original port_dict: {node_id: B_ext}
+    # Enriched: {node_id: {'B_ext': B_ext, 'label': label, 'conj': bool}}
+    enriched_port_dict = {}
+    for port_id, B_ext in scattering_calc.port_dict.items():
+        port_node = next((n for n in nodes if n['node_id'] == port_id), None)
+        label = port_node['label'] if port_node else str(port_id)
+        conj = port_node.get('conj', False) if port_node else False
+        enriched_port_dict[port_id] = {'B_ext': B_ext, 'label': label, 'conj': conj}
+
+    return {
+        'S': scattering_calc.S,
+        'SdB': scattering_calc.SdB,
+        'port_dict': enriched_port_dict,
+        'drive_signals': scattering_calc.drive_signals,
+        'port_ids': sorted(scattering_calc.port_dict.keys()),
+        'component_index': job['component_index'],
+        'component_label': job['component_label'],
+    }
+
+
+class SParamsWorker(QThread):
+    """Background worker for the S-parameter frequency sweep.
+
+    Runs the numeric pipeline for a list of component jobs so large point
+    counts don't block the GUI. Results are tagged with a generation number;
+    the receiver drops results superseded by a newer request.
+    """
+
+    finished_ok = Signal(int, object)  # generation, {'results': [...], 'f_root_s': ndarray}
+    failed = Signal(int, str)          # generation, error message
+
+    def __init__(self, generation, jobs, f_root_s, parent=None):
+        super().__init__(parent)
+        self.generation = generation
+        self.jobs = jobs
+        self.f_root_s = f_root_s
+
+    def run(self):
+        try:
+            results = []
+            last_error = None
+            for job in self.jobs:
+                logger.info(f"=== Computing S-parameters for {job['comp_name']} ===")
+                try:
+                    result = _compute_sparams_job(job)
+                except Exception as e:
+                    logger.exception(f"  {job['comp_name']}: Error computing S-parameters")
+                    last_error = str(e)
+                    continue
+                if result is not None:
+                    results.append(result)
+
+            if not results and last_error is not None:
+                self.failed.emit(self.generation, last_error)
+            else:
+                self.finished_ok.emit(self.generation,
+                                      {'results': results, 'f_root_s': self.f_root_s})
+        except Exception as e:
+            logger.exception("S-parameter worker failed")
+            self.failed.emit(self.generation, str(e))
+
+
 class Graphulator(QMainWindow):
     """Main application window"""
 
@@ -5609,6 +5742,11 @@ class Graphulator(QMainWindow):
         self.undo_stack = []  # Stack of previous states
         self.redo_stack = []  # Stack of undone states
         self.max_undo = 50  # Maximum undo levels
+
+        # Background S-parameter sweep state
+        self._sparams_worker = None      # Strong reference to the running worker
+        self._sparams_pending = False    # A request arrived while a sweep was running
+        self._sparams_generation = 0     # Monotonic id; stale worker results are dropped
 
         # Graph circuit
         self.graph = gp.GraphCircuit()
@@ -9742,10 +9880,12 @@ class Graphulator(QMainWindow):
                     self.properties_panel.show_s_button.setText("Hide S")
 
     def _compute_and_plot_sparams(self):
-        """Compute S-matrix and plot selected parameters.
+        """Compute S-matrix in a background thread and plot selected parameters.
 
         For disconnected graphs with multiple components, computes S-parameters
-        for each component separately and plots them together.
+        for each component separately and plots them together. The numeric
+        sweep runs on a worker thread so large point counts don't freeze the
+        GUI; stale results (superseded by a newer request) are dropped.
         """
 
         try:
@@ -9765,68 +9905,44 @@ class Graphulator(QMainWindow):
                 # Single component - use full graph
                 components_to_compute = [None]  # None means use full graph
 
-            # Store results for all components
-            all_sparams_data = []
-
-            for comp_idx, component in enumerate(components_to_compute):
-                comp_name = 'full graph' if component is None else f"Component {component['index']}"
-                print(f"\n=== Computing S-parameters for {comp_name} ===")
-
-                result = self._compute_sparams_for_component(
-                    component, f_root_s, freq_start, freq_stop, freq_points
+            # Snapshot everything the worker needs (plain data, no GUI access)
+            jobs = []
+            for component in components_to_compute:
+                job = self._build_sparams_job(
+                    component, f_root_s, freq_start, freq_stop, freq_points,
+                    multi_component=len(components_to_compute) > 1
                 )
+                if job is not None:
+                    jobs.append(job)
 
-                if result is not None:
-                    result['component_index'] = component['index'] if component else 0
-                    result['component_label'] = f"C{component['index']+1}" if component and len(components_to_compute) > 1 else ""
-                    all_sparams_data.append(result)
-
-            if not all_sparams_data:
-                print("No valid S-parameter data computed")
+            if not jobs:
+                logger.info("No components with nodes to compute")
                 return
 
-            # Store combined results
-            self.sparams_data = {
-                'frequencies': f_root_s,
-                'components': all_sparams_data,
-                'num_components': len(all_sparams_data)
-            }
+            # Any newer request supersedes results still in flight
+            self._sparams_generation += 1
 
-            # For backward compatibility, also store first component's data at top level
-            if all_sparams_data:
-                first = all_sparams_data[0]
-                self.sparams_data['S'] = first['S']
-                self.sparams_data['SdB'] = first['SdB']
-                self.sparams_data['port_dict'] = first['port_dict']
-                self.sparams_data['drive_signals'] = first['drive_signals']
-                self.sparams_data['port_ids'] = first['port_ids']
+            if self._sparams_worker is not None and self._sparams_worker.isRunning():
+                # A sweep is already running; rerun with fresh state when it ends
+                self._sparams_pending = True
+                return
 
-            # Update checkboxes with port labels (handles multi-component)
-            self._update_sparams_checkboxes()
-
-            # Plot
-            self._plot_sparams()
-
-            print(f"S-matrix computed successfully for {len(all_sparams_data)} component(s)")
+            self._start_sparams_worker(jobs, f_root_s)
 
         except Exception as e:
-            print(f"Error computing S-parameters: {e}")
-            traceback.print_exc()
-            # Show error on plot
+            logger.exception("Error preparing S-parameter computation")
             self._show_sparams_error(str(e))
 
-    def _compute_sparams_for_component(self, component, f_root_s, freq_start, freq_stop, freq_points):
-        """Compute S-parameters for a single component (or full graph if component is None).
+    def _build_sparams_job(self, component, f_root_s, freq_start, freq_stop, freq_points,
+                           multi_component=False):
+        """Build a self-contained computation job for one component.
 
-        Args:
-            component: Component dict from _find_connected_components(), or None for full graph
-            f_root_s: Frequency array for plotting (positive)
-            freq_start, freq_stop, freq_points: Frequency range settings
+        Runs on the UI thread: reads the live graph, scattering assignments,
+        and injection dropdown, and packages plain data for the worker.
 
         Returns:
-            dict with S-parameter results, or None if computation fails
+            dict job payload, or None if the component has no nodes.
         """
-
         # Determine which nodes/edges to use
         if component is not None:
             nodes_to_use = component['nodes']
@@ -9838,7 +9954,7 @@ class Graphulator(QMainWindow):
             comp_name = "full graph"
 
         if not nodes_to_use:
-            print(f"  No nodes in {comp_name}")
+            logger.info(f"  No nodes in {comp_name}")
             return None
 
         # For this component, we need to compute its own spanning tree
@@ -9897,88 +10013,86 @@ class Graphulator(QMainWindow):
         for node_data in nodes:
             node_id_key = node_data['node_id']
             if node_id_key in self.scattering_assignments:
-                scattering_assignments[id(node_data)] = self.scattering_assignments[node_id_key]
+                scattering_assignments[id(node_data)] = dict(self.scattering_assignments[node_id_key])
 
         for edge_data in edges:
             edge_id_key = (edge_data['from_node_id'], edge_data['to_node_id'])
             if edge_id_key in self.scattering_assignments:
-                scattering_assignments[id(edge_data)] = self.scattering_assignments[edge_id_key]
+                scattering_assignments[id(edge_data)] = dict(self.scattering_assignments[edge_id_key])
 
-        # Compute spanning tree for this component
-        extractor = GraphExtractor()
-        gui_nodes = [{'node_id': node['node_id']} for node in nodes_to_use]
-        gui_edges = [
-            {
-                'from_node_id': edge['from_node_id'],
-                'to_node_id': edge['to_node_id'],
-                'is_self_loop': edge['is_self_loop']
-            }
-            for edge in edges_to_use
-        ]
+        return {
+            'comp_name': comp_name,
+            'component_index': component['index'] if component else 0,
+            'component_label': f"C{component['index']+1}" if component and multi_component else "",
+            'root_node_id': root_node_id,
+            'nodes': nodes,
+            'edges': edges,
+            'scattering_assignments': scattering_assignments,
+            'f_root_s': f_root_s,
+            'freq_start': freq_start,
+            'freq_stop': freq_stop,
+            'freq_points': freq_points,
+        }
 
-        tree_edges_nested, chord_edges_list, is_connected = extractor.compute_spanning_tree(
-            gui_nodes, gui_edges, root_node_id
-        )
+    def _start_sparams_worker(self, jobs, f_root_s):
+        """Launch the background sweep for the current generation."""
+        worker = SParamsWorker(self._sparams_generation, jobs, f_root_s, parent=self)
+        worker.finished_ok.connect(self._on_sparams_finished)
+        worker.failed.connect(self._on_sparams_failed)
+        worker.finished.connect(self._on_sparams_thread_finished)
+        self._sparams_worker = worker
+        self._status_message("Computing S-parameters…", 0)
+        worker.start()
 
-        # Convert to list format for extractor
-        tree_edges_list = []
-        for branch in tree_edges_nested:
-            for from_id, to_id in branch:
-                tree_edges_list.append([from_id, to_id])
+    def _on_sparams_thread_finished(self):
+        """QThread ended (success or failure): rerun if a request came in meanwhile."""
+        self._sparams_worker = None
+        if self._sparams_pending:
+            self._sparams_pending = False
+            self._compute_and_plot_sparams()
 
-        try:
-            extractor.extract_graph_data(
-                nodes=nodes,
-                edges=edges,
-                scattering_assignments=scattering_assignments,
-                frequency_settings={'start': freq_start, 'stop': freq_stop, 'points': freq_points},
-                root_node_id=root_node_id,
-                precomputed_tree_edges=tree_edges_list,
-                precomputed_chord_edges=chord_edges_list
-            )
+    def _on_sparams_failed(self, generation, error_msg):
+        if generation != self._sparams_generation:
+            return  # stale; a newer computation is on its way
+        self.statusBar().clearMessage()
+        self._show_sparams_error(error_msg)
 
-            # Validate all required parameters are assigned before computing
-            missing = extractor.validate_scattering_assignments()
-            missing_items = missing.get('missing_nodes', []) + missing.get('missing_edges', [])
-            if missing_items:
-                detail = "\n".join(f"  - {item}" for item in missing_items)
-                print(f"  {comp_name}: Missing scattering parameters:\n{detail}")
-                return None
+    def _on_sparams_finished(self, generation, payload):
+        """Install worker results and update the plot (UI thread)."""
+        if generation != self._sparams_generation:
+            return  # stale; a newer computation is on its way
 
-            # Check if injection node is conjugated
-            root_node = next((n for n in nodes if n['node_id'] == root_node_id), None)
-            f_calc = f_root_s
-            if root_node and root_node.get('conj', False):
-                f_calc = -f_root_s
-                print(f"  {comp_name}: Injection node is conjugated - using negative frequencies")
+        self.statusBar().clearMessage()
+        all_sparams_data = payload['results']
+        f_root_s = payload['f_root_s']
 
-            # Compute S-matrix
-            scattering_calc = GraphScatteringMatrix(extractor, f_calc)
+        if not all_sparams_data:
+            logger.info("No valid S-parameter data computed")
+            self._status_message("No valid S-parameter data computed")
+            return
 
-            print(f"  {comp_name}: {len(scattering_calc.port_dict)} ports computed")
+        # Store combined results
+        self.sparams_data = {
+            'frequencies': f_root_s,
+            'components': all_sparams_data,
+            'num_components': len(all_sparams_data)
+        }
 
-            # Build enriched port_dict with labels for checkbox/plot code
-            # Original port_dict: {node_id: B_ext}
-            # Enriched: {node_id: {'B_ext': B_ext, 'label': label, 'conj': bool}}
-            enriched_port_dict = {}
-            for port_id, B_ext in scattering_calc.port_dict.items():
-                port_node = next((n for n in nodes_to_use if n['node_id'] == port_id), None)
-                label = port_node['label'] if port_node else str(port_id)
-                conj = port_node.get('conj', False) if port_node else False
-                enriched_port_dict[port_id] = {'B_ext': B_ext, 'label': label, 'conj': conj}
+        # For backward compatibility, also store first component's data at top level
+        first = all_sparams_data[0]
+        self.sparams_data['S'] = first['S']
+        self.sparams_data['SdB'] = first['SdB']
+        self.sparams_data['port_dict'] = first['port_dict']
+        self.sparams_data['drive_signals'] = first['drive_signals']
+        self.sparams_data['port_ids'] = first['port_ids']
 
-            return {
-                'S': scattering_calc.S,
-                'SdB': scattering_calc.SdB,
-                'port_dict': enriched_port_dict,
-                'drive_signals': scattering_calc.drive_signals,
-                'port_ids': sorted(scattering_calc.port_dict.keys())
-            }
+        # Update checkboxes with port labels (handles multi-component)
+        self._update_sparams_checkboxes()
 
-        except Exception as e:
-            print(f"  {comp_name}: Error computing S-parameters: {e}")
-            traceback.print_exc()
-            return None
+        # Plot
+        self._plot_sparams()
+
+        logger.info(f"S-matrix computed successfully for {len(all_sparams_data)} component(s)")
 
     def _update_sparams_checkboxes(self):
         """Update checkboxes for S-parameter selection.
