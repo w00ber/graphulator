@@ -162,3 +162,16 @@ class TestNamespacing:
         manager = SettingsManager("graphulator", config_module=FakeConfig)
         assert manager.get_original_config_value("SOME_VALUE") == 3
         assert manager.get_original_config_value("MISSING") is None
+
+    def test_get_original_config_value_survives_mutation(self, tmp_path):
+        """Reset must restore as-coded values even after config mutation."""
+
+        class FakeConfig:
+            SOME_VALUE = 3
+            SOME_DICT = {"a": 1}
+
+        manager = SettingsManager("graphulator", config_module=FakeConfig)
+        FakeConfig.SOME_VALUE = 99          # mutated by dialog / load()
+        FakeConfig.SOME_DICT["a"] = 99
+        assert manager.get_original_config_value("SOME_VALUE") == 3
+        assert manager.get_original_config_value("SOME_DICT") == {"a": 1}

@@ -14,6 +14,7 @@ Legacy flat files (written before namespacing) belonged to Paragraphulator —
 the only app that had settings then — and are migrated in place on first read.
 """
 
+import copy
 import json
 import logging
 from pathlib import Path
@@ -57,6 +58,16 @@ class SettingsManager:
         self._settings: Dict[str, Any] = {}
         self._export_rescale: Dict[str, Any] = {}
         self._shortcuts: Dict[str, str] = {}
+        # Snapshot the as-coded constants before any override is applied so
+        # "Reset to Defaults" can restore true code values even after the
+        # config module has been mutated by load() or the Settings dialog.
+        self._code_defaults: Dict[str, Any] = {}
+        for name, value in vars(config_module).items():
+            if name.isupper():
+                try:
+                    self._code_defaults[name] = copy.deepcopy(value)
+                except Exception:
+                    self._code_defaults[name] = value
 
     @property
     def settings_file(self) -> Path:
@@ -184,9 +195,13 @@ class SettingsManager:
         For export rescale params, checks the defaults dict in config (apps
         without one fall through to plain config attributes).
         """
-        rescale_defaults = getattr(self._config, 'EXPORT_RESCALE_DEFAULTS', {})
+        rescale_defaults = self._code_defaults.get(
+            'EXPORT_RESCALE_DEFAULTS',
+            getattr(self._config, 'EXPORT_RESCALE_DEFAULTS', {}))
         if param_name in rescale_defaults:
             return rescale_defaults[param_name]
+        if param_name in self._code_defaults:
+            return copy.deepcopy(self._code_defaults[param_name])
         return getattr(self._config, param_name, None)
 
 
