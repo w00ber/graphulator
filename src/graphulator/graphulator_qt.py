@@ -959,6 +959,13 @@ class PropertiesPanel(QWidget):
             self.linewidth_combo.currentTextChanged.connect(lambda: self._update_edge_linewidth())
             form.addRow("Line Width:", self.linewidth_combo)
 
+            # Arrowhead style (scale via the existing arrowlengthsc semantics)
+            self.arrowstyle_combo = QComboBox()
+            self.arrowstyle_combo.addItems(['open', 'filled', 'stealth'])
+            self.arrowstyle_combo.setCurrentText(edge.get('arrowstyle', 'open'))
+            self.arrowstyle_combo.currentTextChanged.connect(lambda: self._update_edge_arrowstyle())
+            form.addRow("Arrowhead:", self.arrowstyle_combo)
+
             # Self-loop label background color
             label_bg_btn = QPushButton("Set Label BG" if edge.get('label_bgcolor') else "No Label BG")
             label_bg_btn.clicked.connect(lambda: self._choose_edge_label_bgcolor())
@@ -1011,6 +1018,23 @@ class PropertiesPanel(QWidget):
             self.looptheta_spinbox.setValue(edge.get('looptheta', 30))
             self.looptheta_spinbox.valueChanged.connect(lambda: self._update_edge_looptheta())
             form.addRow("Loop Theta (Ctrl+←/→):", self.looptheta_spinbox)
+
+            # Arrowhead style + relative scale
+            self.arrowstyle_combo = QComboBox()
+            self.arrowstyle_combo.addItems(['open', 'filled', 'stealth'])
+            self.arrowstyle_combo.setCurrentText(edge.get('arrowstyle', 'open'))
+            self.arrowstyle_combo.currentTextChanged.connect(lambda: self._update_edge_arrowstyle())
+            form.addRow("Arrowhead:", self.arrowstyle_combo)
+
+            self.arrowscale_spinbox = QDoubleSpinBox()
+            self.arrowscale_spinbox.setMinimum(0.2)
+            self.arrowscale_spinbox.setMaximum(3.0)
+            self.arrowscale_spinbox.setSingleStep(0.1)
+            self.arrowscale_spinbox.setDecimals(2)
+            self.arrowscale_spinbox.setSuffix("x")
+            self.arrowscale_spinbox.setValue(edge.get('arrowscale', 1.0))
+            self.arrowscale_spinbox.valueChanged.connect(lambda: self._update_edge_arrowscale())
+            form.addRow("Arrowhead Scale:", self.arrowscale_spinbox)
 
             # Edge label background colors
             label1_bg_btn = QPushButton("Set Label1 BG" if edge.get('label1_bgcolor') else "No Label1 BG")
@@ -1188,6 +1212,13 @@ class PropertiesPanel(QWidget):
             regular_edges = [e for e in edges if not e.get('is_self_loop', False)]
             selfloops = [e for e in edges if e.get('is_self_loop', False)]
 
+            # Arrowhead style applies to every edge type
+            arrow_cb = self._make_multi_combo(
+                ['open', 'filled', 'stealth'],
+                [e.get('arrowstyle', 'open') for e in edges],
+                lambda text: self._apply_to_edges('arrowstyle', text))
+            form.addRow("Arrowhead:", arrow_cb)
+
             # Style/Direction/Loop Theta only when every selected edge is a regular edge
             if regular_edges and not selfloops:
                 style_cb = self._make_multi_combo(
@@ -1207,6 +1238,12 @@ class PropertiesPanel(QWidget):
                     lambda val: self._apply_to_edges('looptheta', val),
                     -180, 180, "°")
                 form.addRow("Loop Theta:", looptheta_sb)
+
+                arrowscale_sb = self._make_multi_double_spinbox(
+                    [e.get('arrowscale', 1.0) for e in regular_edges],
+                    lambda val: self._apply_to_edges('arrowscale', val),
+                    0.2, 3.0, 0.1)
+                form.addRow("Arrowhead Scale:", arrowscale_sb)
 
             # Loop Size/Flip only when every selected edge is a self-loop
             if selfloops and not regular_edges:
@@ -1392,6 +1429,16 @@ class PropertiesPanel(QWidget):
     def _update_edge_direction(self):
         if self.current_object and self.current_type == 'edge':
             self.current_object['direction'] = self.direction_combo.currentText()
+            self.graphulator._update_plot()
+
+    def _update_edge_arrowstyle(self):
+        if self.current_object and self.current_type == 'edge':
+            self.current_object['arrowstyle'] = self.arrowstyle_combo.currentText()
+            self.graphulator._update_plot()
+
+    def _update_edge_arrowscale(self):
+        if self.current_object and self.current_type == 'edge':
+            self.current_object['arrowscale'] = self.arrowscale_spinbox.value()
             self.graphulator._update_plot()
 
     def _update_edge_looptheta(self):
@@ -2100,7 +2147,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 "is_self_loop": edge["is_self_loop"],
                 "flip_labels": edge.get("flip_labels", False),
                 "label_rotation_offset": edge.get("label_rotation_offset", 0),
-                "looptheta": edge.get("looptheta", 30)
+                "looptheta": edge.get("looptheta", 30),
+                "arrowstyle": edge.get("arrowstyle", "open"),
+                "arrowscale": edge.get("arrowscale", 1.0)
             }
             # Add self-loop specific parameters
             if edge["is_self_loop"]:
@@ -2181,7 +2230,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     "is_self_loop": edge_data["is_self_loop"],
                     "flip_labels": edge_data.get("flip_labels", False),
                     "label_rotation_offset": edge_data.get("label_rotation_offset", 0),
-                    "looptheta": edge_data.get("looptheta", 30)
+                    "looptheta": edge_data.get("looptheta", 30),
+                    # Legacy literals, not config defaults: old files must
+                    # render exactly as they did when saved
+                    "arrowstyle": edge_data.get("arrowstyle", "open"),
+                    "arrowscale": edge_data.get("arrowscale", 1.0)
                 }
                 # Restore self-loop specific parameters
                 if edge_data["is_self_loop"]:
@@ -2626,8 +2679,32 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             action = menu.addAction(edge_type.capitalize())
             action.triggered.connect(lambda _, t=edge_type, e=edge: self._change_edge_type(e, t))
 
+        # Arrowhead style submenu (current style checked)
+        arrow_menu = menu.addMenu("Arrowhead")
+        current_style = edge.get('arrowstyle', 'open')
+        for arrow_style in ['open', 'filled', 'stealth']:
+            action = arrow_menu.addAction(arrow_style.capitalize())
+            action.setCheckable(True)
+            action.setChecked(arrow_style == current_style)
+            action.triggered.connect(
+                lambda _, s=arrow_style, e=edge: self._change_edge_arrowstyle(e, s))
+
         # Show menu at mouse position
         menu.exec(QCursor.pos())
+
+    def _change_edge_arrowstyle(self, edge, arrow_style):
+        """Change the arrowhead style of an edge (or all selected edges)"""
+        self._save_state()
+
+        if edge in self.selected_edges and len(self.selected_edges) > 1:
+            for selected_edge in self.selected_edges:
+                selected_edge['arrowstyle'] = arrow_style
+            logger.debug(f"Changed arrowhead of {len(self.selected_edges)} edge(s) to {arrow_style}")
+        else:
+            edge['arrowstyle'] = arrow_style
+            logger.debug(f"Changed edge arrowhead to {arrow_style}")
+
+        self._update_plot()
 
     def _change_edge_type(self, edge, edge_type):
         """Change the type of an edge (or all selected edges if multiple selected)"""
@@ -3250,7 +3327,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # This gives points_per_data_unit ≈ 43 for that reference
         reference_points_per_data_unit = 43.0
 
-        for edge in self.edges:
+        for edge_index, edge in enumerate(self.edges):
             from_node = edge['from_node']
             to_node = edge['to_node']
 
@@ -3286,7 +3363,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     arrowlength=arrowlength,
                     lw=scaled_lw,
                     color=edge.get('color', 'black'),
-                    flip=edge.get('flip', False)
+                    flip=edge.get('flip', False),
+                    arrowstyle=edge.get('arrowstyle', 'open'),
+                    arrowscale=edge.get('arrowscale', 1.0),
+                    arrowopenang=config.ARROWHEAD_OPEN_ANGLE,
+                    gid=f'edge_{edge_index}'
                 )
 
                 # Draw self-loop label manually if present (use label1 for self-loops)
@@ -3447,7 +3528,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     style=style,
                     whichedges=edge['direction'],
                     theta=edge.get('looptheta', 30),  # Looptheta parameter (adjustable via Ctrl+Left/Right)
-                    loopkwargs={'lw': final_lw, 'arrowlength': 0.4},  # Add arrowheads
+                    loopkwargs={'lw': final_lw, 'arrowlength': 0.4,  # Add arrowheads
+                                'arrowstyle': edge.get('arrowstyle', 'open'),
+                                'arrowscale': edge.get('arrowscale', 1.0),
+                                'arrowopenang': config.ARROWHEAD_OPEN_ANGLE},
+                    gid=f'edge_{edge_index}',
                     label_cache=self._label_cache,
                     usetex=self.use_latex,
                 )
@@ -3850,7 +3935,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                                     'direction': result['direction'],
                                     'flip_labels': result.get('flip_labels', False),
                                     'looptheta': result.get('looptheta', 30),
-                                    'is_self_loop': is_self_loop
+                                    'is_self_loop': is_self_loop,
+                                    'arrowstyle': config.DEFAULT_EDGE_ARROWSTYLE,
+                                    'arrowscale': config.DEFAULT_EDGE_ARROWSCALE
                                 }
                                 # Self-loop specific parameters
                                 if is_self_loop:
@@ -4363,6 +4450,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     'label_offset_mult': edge.get('label_offset_mult', 1.0),
                     'style': edge['style'],
                     'direction': edge['direction'],
+                    'looptheta': edge.get('looptheta', 30),
+                    'flip_labels': edge.get('flip_labels', False),
+                    'label_rotation_offset': edge.get('label_rotation_offset', 0),
+                    'arrowstyle': edge.get('arrowstyle', 'open'),
+                    'arrowscale': edge.get('arrowscale', 1.0),
                     'is_self_loop': edge['is_self_loop']
                 }
                 # Copy self-loop specific parameters
@@ -4434,6 +4526,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                         'label_offset_mult': edge.get('label_offset_mult', 1.0),
                         'style': edge['style'],
                         'direction': edge['direction'],
+                        'looptheta': edge.get('looptheta', 30),
+                        'flip_labels': edge.get('flip_labels', False),
+                        'label_rotation_offset': edge.get('label_rotation_offset', 0),
+                        'arrowstyle': edge.get('arrowstyle', 'open'),
+                        'arrowscale': edge.get('arrowscale', 1.0),
                         'is_self_loop': edge['is_self_loop']
                     }
                     # Copy self-loop specific parameters
@@ -4548,6 +4645,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     'style': clip_edge['style'],
                     'direction': clip_edge['direction'],
                     'looptheta': clip_edge.get('looptheta', 30),
+                    'flip_labels': clip_edge.get('flip_labels', False),
+                    'label_rotation_offset': clip_edge.get('label_rotation_offset', 0),
+                    'arrowstyle': clip_edge.get('arrowstyle', 'open'),
+                    'arrowscale': clip_edge.get('arrowscale', 1.0),
                     'is_self_loop': clip_edge['is_self_loop']
                 }
                 # Restore self-loop specific parameters
@@ -4793,6 +4894,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 if abs(arrowlengthsc - 1.0) > 0.01:
                     code_lines.append(f"             arrowlengthsc={arrowlengthsc:.3f},")
 
+                # Add arrowstyle (self-loop arrowhead)
+                sl_arrowstyle = selfloop_edge.get('arrowstyle', 'open')
+                if sl_arrowstyle != 'open':
+                    code_lines.append(f"             arrowstyle='{sl_arrowstyle}',")
+
                 # Add flipselfloop
                 flip = selfloop_edge.get('flip', False)
                 if flip:
@@ -4930,7 +5036,14 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 code_lines.append(f"             style='{style}',")
                 code_lines.append(f"             whichedges='{direction}',")
                 code_lines.append(f"             theta={edge.get('looptheta', 30)},")
-                code_lines.append(f"             loopkwargs={{'lw': {scaled_lw * RESCALE['EDGELWSCALE']:.1f}, 'arrowlength': 0.4}})")
+                loopkwargs_parts = [f"'lw': {scaled_lw * RESCALE['EDGELWSCALE']:.1f}", "'arrowlength': 0.4"]
+                arrowstyle = edge.get('arrowstyle', 'open')
+                arrowscale = edge.get('arrowscale', 1.0)
+                if arrowstyle != 'open':
+                    loopkwargs_parts.append(f"'arrowstyle': '{arrowstyle}'")
+                if abs(arrowscale - 1.0) > 0.01:
+                    loopkwargs_parts.append(f"'arrowscale': {arrowscale:.3f}")
+                code_lines.append(f"             loopkwargs={{{', '.join(loopkwargs_parts)}}})")
                 code_lines.append("")
 
         code_lines.append("")

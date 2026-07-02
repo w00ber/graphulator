@@ -26,6 +26,11 @@ DEFAULT_NODE_OUTLINE_WIDTH = 2.5
 DEFAULT_NODE_LABEL_COLOR = 'white'
 DEFAULT_NODE_LABEL_SIZE = 28
 
+# Default edge arrowhead settings
+DEFAULT_EDGE_ARROWSTYLE = 'open'  # 'open' | 'filled' | 'stealth'
+DEFAULT_EDGE_ARROWSCALE = 1.0     # relative arrowhead scaling for new edges
+ARROWHEAD_OPEN_ANGLE = 60         # arrowhead opening angle in degrees (convention; applies at draw time)
+
 # Grid settings
 DEFAULT_GRID_SPACING = 1.0
 DEFAULT_GRID_TYPE = "square"  # "square" or "triangular"
