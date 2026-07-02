@@ -26,6 +26,12 @@ DEFAULT_NODE_OUTLINE_WIDTH = 2.5
 DEFAULT_NODE_LABEL_COLOR = 'white'
 DEFAULT_NODE_LABEL_SIZE = 28
 
+# Conjugated-mode rendering convention (applies to the whole graph at draw
+# time; nodes store only their 'conj' flag)
+CONJ_NODE_FILL_MODE = 'dimmed'  # 'dimmed' (alpha fill) | 'transparent' (colored ring, no fill)
+CONJ_NODE_FILL_ALPHA = 0.5      # fill alpha for 'dimmed' mode
+CONJ_LABEL_SCALE = 0.92         # label shrink to accommodate the asterisk
+
 # Default edge arrowhead settings
 DEFAULT_EDGE_ARROWSTYLE = 'open'  # 'open' | 'filled' | 'stealth'
 DEFAULT_EDGE_ARROWSCALE = 1.0     # relative arrowhead scaling for new edges

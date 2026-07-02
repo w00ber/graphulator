@@ -36,6 +36,13 @@ DEFAULT_NODE_SIZE_MULT = 1.0  # Multiplier for node radius
 DEFAULT_NODE_LABEL_SIZE_MULT = 1.4  # Multiplier for label font size
 DEFAULT_NODE_CONJUGATED = False
 
+# Conjugated-mode rendering convention (Naaman-Aumentado; applies to the
+# whole graph at draw time - nodes store only their 'conj' flag)
+CONJ_NODE_FILL_ALPHA = 0.5   # fill alpha for conjugated nodes
+CONJ_LABEL_SCALE = 0.92      # label shrink to accommodate the asterisk
+CONJ_SAME_EDGE_STYLE = 'single'   # edge style between same-conjugation nodes
+CONJ_DIFF_EDGE_STYLE = 'double'   # edge style between opposite-conjugation nodes
+
 # Node outline (circle border) settings
 DEFAULT_NODE_OUTLINE_COLOR_KEY = 'BLACK'  # Key into MYCOLORS for outline color
 DEFAULT_NODE_OUTLINE_COLOR = 'black'  # Actual color value (derived from MYCOLORS[DEFAULT_NODE_OUTLINE_COLOR_KEY])

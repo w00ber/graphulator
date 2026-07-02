@@ -11603,7 +11603,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
                 # Determine style based on conjugation states
                 same_conj = (from_conj == to_conj)
-                new_style = 'single' if same_conj else 'double'
+                new_style = config.CONJ_SAME_EDGE_STYLE if same_conj else config.CONJ_DIFF_EDGE_STYLE
 
                 # Update the edge style
                 edge['style'] = new_style
@@ -12246,7 +12246,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             node_radius = self.node_radius * node_size_mult
 
             # Apply conjugation transparency
-            node_alpha = 0.5 if conj else 1.0
+            node_alpha = config.CONJ_NODE_FILL_ALPHA if conj else 1.0
 
             # Apply scattering mode transparency
             if self.canvas == self.scattering_canvas:
@@ -12286,7 +12286,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             # Font size should be proportional to node radius
             # Aim for text to be about 35% of node diameter
             # Reduce size by 8% for conjugated nodes to accommodate asterisk
-            conj_scale = 0.92 if conj else 1.0
+            conj_scale = config.CONJ_LABEL_SCALE if conj else 1.0
             font_size_points = node_radius * 2 * points_per_data_unit * config.PLOT_NODE_LABEL_FONT_SCALE * label_size_mult * conj_scale
 
             # Draw label - use bold sans-serif text with proper subscript/superscript handling
@@ -12992,7 +12992,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 points_per_data_unit = fig_width_points / data_width
 
                 label_size_mult = node.get('label_size_mult', 1.0)
-                conj_scale = 0.92 if conj else 1.0
+                conj_scale = config.CONJ_LABEL_SCALE if conj else 1.0
                 font_size = ghost_radius * 2 * points_per_data_unit * config.PLOT_NODE_LABEL_FONT_SCALE * label_size_mult * conj_scale
 
                 preview_artists = self._label_cache.draw(
@@ -13152,7 +13152,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             data_width = xlim[1] - xlim[0]
             points_per_data_unit = fig_width_points / data_width
 
-            conj_scale = 0.92 if ghost_props['conj'] else 1.0
+            conj_scale = config.CONJ_LABEL_SCALE if ghost_props['conj'] else 1.0
             font_size = ghost_radius * 2 * points_per_data_unit * config.PLOT_NODE_LABEL_FONT_SCALE * ghost_props['label_size_mult'] * conj_scale
 
             self.preview_text = self._label_cache.draw(
@@ -13301,7 +13301,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 node1_conj = self.edge_mode_first_node.get('conj', False)
                 node2_conj = second_node.get('conj', False)
                 same_conj = (node1_conj == node2_conj)
-                style = 'single' if same_conj else 'double'
+                style = config.CONJ_SAME_EDGE_STYLE if same_conj else config.CONJ_DIFF_EDGE_STYLE
 
                 if is_self_loop:
                     # Self-loop: inherit from last_selfloop_props if available
@@ -13392,7 +13392,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                         node1_conj = self.edge_mode_first_node.get('conj', False)
                         node2_conj = second_node.get('conj', False)
                         same_conj = (node1_conj == node2_conj)
-                        result['style'] = 'single' if same_conj else 'double'
+                        result['style'] = config.CONJ_SAME_EDGE_STYLE if same_conj else config.CONJ_DIFF_EDGE_STYLE
 
                     # Check if edge already exists between these nodes (in either direction)
                     existing_edge = None
@@ -15215,7 +15215,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 if nudge != (0.0, 0.0) and (abs(nudge[0]) > 0.001 or abs(nudge[1]) > 0.001):
                     # Calculate vertical adjustment used in GUI rendering
                     # Use export parameters to calculate points_per_data_unit
-                    conj_scale = 0.92 if conj else 1.0
+                    conj_scale = config.CONJ_LABEL_SCALE if conj else 1.0
                     font_size_points = radius * 2 * export_points_per_data_unit * 0.35 * label_size_mult * conj_scale
                     adjustment_fraction = 0.05
                     vertical_adjustment_points = font_size_points * adjustment_fraction

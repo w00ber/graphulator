@@ -3185,22 +3185,32 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             # Draw circle with size multiplier (no outline, like prettynodes)
             node_radius = self.node_radius * node_size_mult
 
-            # Apply conjugation transparency
-            node_alpha = 0.5 if conj else 1.0
-
-            circle = patches.Circle(
-                node['pos'], node_radius,
-                facecolor=node['color'],
-                edgecolor='none',
-                alpha=node_alpha,
-                zorder=10
-            )
+            # Apply the conjugated-node convention (config-driven)
+            if conj and config.CONJ_NODE_FILL_MODE == 'transparent':
+                # Unfilled node with a colored ring
+                ring_lw = 2.5 * node_size_mult * (points_per_data_unit / 43.0)
+                circle = patches.Circle(
+                    node['pos'], node_radius,
+                    facecolor='none',
+                    edgecolor=node['color'],
+                    linewidth=ring_lw,
+                    zorder=10
+                )
+            else:
+                node_alpha = config.CONJ_NODE_FILL_ALPHA if conj else 1.0
+                circle = patches.Circle(
+                    node['pos'], node_radius,
+                    facecolor=node['color'],
+                    edgecolor='none',
+                    alpha=node_alpha,
+                    zorder=10
+                )
             self.canvas.ax.add_patch(circle)
 
             # Font size should be proportional to node radius
             # Aim for text to be about 35% of node diameter
             # Reduce size by 8% for conjugated nodes to accommodate asterisk
-            conj_scale = 0.92 if conj else 1.0
+            conj_scale = config.CONJ_LABEL_SCALE if conj else 1.0
             font_size_points = node_radius * 2 * points_per_data_unit * 0.35 * label_size_mult * conj_scale
 
             # Draw label - use bold sans-serif text with proper subscript/superscript handling
@@ -3279,11 +3289,17 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
             # Draw the label via the cached vector glyph-path renderer so it stays
             # crisp and fast across pan/zoom (no per-frame layout recompilation).
+            # Transparent conjugated nodes have no fill, so the default white
+            # label would vanish; use the node color instead
+            if conj and config.CONJ_NODE_FILL_MODE == 'transparent':
+                default_label_color = node['color']
+            else:
+                default_label_color = config.DEFAULT_NODE_LABEL_COLOR
             self._label_cache.draw(
                 self.canvas.ax, formatted_text, label_x, label_y,
                 fontsize_points=font_size_points,
                 points_per_data_unit=points_per_data_unit,
-                color=node.get('label_color', config.DEFAULT_NODE_LABEL_COLOR),
+                color=node.get('label_color', default_label_color),
                 ha='center', va='center',
                 usetex=self.use_latex, zorder=11,
             )
@@ -4848,7 +4864,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             if nudge != (0.0, 0.0) and (abs(nudge[0]) > 0.001 or abs(nudge[1]) > 0.001):
                 # Calculate vertical adjustment used in GUI rendering
                 # Use export parameters to calculate points_per_data_unit
-                conj_scale = 0.92 if conj else 1.0
+                conj_scale = config.CONJ_LABEL_SCALE if conj else 1.0
                 font_size_points = radius * 2 * export_points_per_data_unit * 0.35 * label_size_mult * conj_scale
                 adjustment_fraction = 0.05
                 vertical_adjustment_points = font_size_points * adjustment_fraction
