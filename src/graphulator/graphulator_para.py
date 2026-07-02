@@ -61,6 +61,7 @@ from sympy.functions.elementary.complexes import conjugate as Conjugate
 # Import modules (relative imports for package)
 from . import graph_primitives as gp
 from . import graphulator_para_config as config
+from .common_window import GraphWindowCommonMixin
 
 # Import refactored modules
 from .para_ui.widgets import (
@@ -86,9 +87,35 @@ from .para_core.settings_manager import (
     USER_SETTINGS_DIR, USER_SETTINGS_FILE
 )
 from .para_core.interaction_state import InteractionMode, PlacementMode
+from .para_core.graph_state import capture_graph_state
 from .autograph import GraphExtractor, GraphScatteringMatrix
 
 logger = logging.getLogger(__name__)
+
+
+def _node_key(node):
+    """Stable scattering-assignment key for a node (survives undo/paste/load)."""
+    return node['node_id']
+
+
+def _edge_key(edge):
+    """Stable scattering-assignment key for an edge.
+
+    Duplicate edges between a node pair are prevented at creation, so the
+    ordered (from, to) pair uniquely identifies an edge. Int node keys and
+    tuple edge keys cannot collide in the same dict.
+    """
+    return (edge['from_node_id'], edge['to_node_id'])
+
+
+def _edge_key_from_property(value):
+    """Recover an edge key read back from a Qt widget property.
+
+    Qt's QVariant round-trip can return a stored tuple as a list; edge keys
+    must be hashable tuples.
+    """
+    return tuple(value) if isinstance(value, list) else value
+
 
 EXPORT_RESCALE_DEFAULTS = {
     'NODELABELSCALE': 1.000,
@@ -3695,7 +3722,7 @@ class PropertiesPanel(QWidget):
         # Add node parameter rows
         for i, node in enumerate(node_list):
             row = i + 1
-            node_id = id(node)
+            node_id = _node_key(node)
 
             # Node label (bold)
             label_text = node['label']
@@ -3892,7 +3919,7 @@ class PropertiesPanel(QWidget):
         # Find the node
         node = None
         for n in self.graphulator.nodes:
-            if id(n) == node_id:
+            if _node_key(n) == node_id:
                 node = n
                 break
 
@@ -4030,7 +4057,7 @@ class PropertiesPanel(QWidget):
             for node in self.graphulator.nodes:
                 node_data = {'node_id': node['node_id'], 'label': node['label'], 'pos': node['pos'], 'conj': node.get('conj', False)}
                 # Add scattering parameters if assigned
-                node_id_key = id(node)
+                node_id_key = _node_key(node)
                 if node_id_key in self.graphulator.scattering_assignments:
                     params = self.graphulator.scattering_assignments[node_id_key]
                     node_data['freq'] = params.get('freq', None)
@@ -4050,7 +4077,7 @@ class PropertiesPanel(QWidget):
                     'is_self_loop': edge['is_self_loop']
                 }
                 # Add scattering parameters if assigned
-                edge_id_key = id(edge)
+                edge_id_key = _edge_key(edge)
                 if edge_id_key in self.graphulator.scattering_assignments:
                     params = self.graphulator.scattering_assignments[edge_id_key]
                     edge_data['f_p'] = params.get('f_p', None)
@@ -4063,19 +4090,18 @@ class PropertiesPanel(QWidget):
                 edges.append(edge_data)
 
             # Create scattering_assignments dict mapping id() to params
+            # (the GraphExtractor API keys by id() of the plain dicts built above)
             scattering_assignments = {}
-            for node in self.graphulator.nodes:
-                node_id_key = id(node)
+            for node_data in nodes:
+                node_id_key = node_data['node_id']
                 if node_id_key in self.graphulator.scattering_assignments:
-                    scattering_assignments[id(next(n for n in nodes if n['node_id'] == node['node_id']))] = \
+                    scattering_assignments[id(node_data)] = \
                         self.graphulator.scattering_assignments[node_id_key]
 
-            for edge in self.graphulator.edges:
-                edge_id_key = id(edge)
+            for edge_data in edges:
+                edge_id_key = (edge_data['from_node_id'], edge_data['to_node_id'])
                 if edge_id_key in self.graphulator.scattering_assignments:
-                    matching_edge = next((e for e in edges if e['from_node_id'] == edge['from_node_id'] and e['to_node_id'] == edge['to_node_id']), None)
-                    if matching_edge:
-                        scattering_assignments[id(matching_edge)] = self.graphulator.scattering_assignments[edge_id_key]
+                    scattering_assignments[id(edge_data)] = self.graphulator.scattering_assignments[edge_id_key]
 
             # Extract graph data with pre-computed tree/chord
             tree_edges_list = [[from_id, to_id] for from_id, to_id in self.graphulator.scattering_tree_edges]
@@ -4103,9 +4129,9 @@ class PropertiesPanel(QWidget):
             for i in range(self.edges_param_layout.count()):
                 widget = self.edges_param_layout.itemAt(i).widget()
                 if widget and widget.property('is_chord_fp_display'):
-                    edge_id = widget.property('edge_id')
+                    edge_id = _edge_key_from_property(widget.property('edge_id'))
                     # Find the corresponding edge
-                    edge = next((e for e in self.graphulator.edges if id(e) == edge_id), None)
+                    edge = next((e for e in self.graphulator.edges if _edge_key(e) == edge_id), None)
                     if edge:
                         edge_key = (edge['from_node_id'], edge['to_node_id'])
                         edge_key_reversed = (edge_key[1], edge_key[0])
@@ -4164,7 +4190,7 @@ class PropertiesPanel(QWidget):
         # Add tree edge parameter rows
         for i, edge in enumerate(tree_edges):
             row = i + 1
-            edge_id = id(edge)
+            edge_id = _edge_key(edge)
 
             # Edge label (from -> to)
             from_label = edge['from_node']['label']
@@ -4268,7 +4294,7 @@ class PropertiesPanel(QWidget):
         # Add chord edge rows (with non-editable f_p)
         for i, edge in enumerate(chord_edges):
             row = len(tree_edges) + i + 1
-            edge_id = id(edge)
+            edge_id = _edge_key(edge)
 
             # Edge label (from -> to) - indicate it's a chord
             from_label = edge['from_node']['label']
@@ -4553,7 +4579,7 @@ class PropertiesPanel(QWidget):
             else:
                 self.graphulator.scattering_assignments[node_id][param_name] = value
         else:  # edge
-            edge_id = widget.property('edge_id')
+            edge_id = _edge_key_from_property(widget.property('edge_id'))
             if edge_id not in self.graphulator.scattering_assignments:
                 self.graphulator.scattering_assignments[edge_id] = {}
             # Convert milliarb. to arb. units for rate
@@ -4812,7 +4838,7 @@ class PropertiesPanel(QWidget):
         # Get port node labels (nodes with B_ext > 0), including conjugation indicator
         port_node_labels = []
         for node in self.graphulator.nodes:
-            node_id = id(node)
+            node_id = _node_key(node)
             params = self.graphulator.scattering_assignments.get(node_id, {})
             B_ext = params.get('B_ext', None)
             if B_ext is not None and B_ext > 0:
@@ -4876,7 +4902,7 @@ class PropertiesPanel(QWidget):
         node_id_to_label_map = {node['node_id']: node['label'] for node in self.graphulator.nodes}
 
         for idx, node in enumerate(self.graphulator.nodes):
-            node_id = id(node)
+            node_id = _node_key(node)
             params = self.graphulator.scattering_assignments.get(node_id, {})
 
             freq = params.get('freq', None)
@@ -4908,7 +4934,7 @@ class PropertiesPanel(QWidget):
         edge_assignments_code = []
 
         for idx, edge in enumerate(self.graphulator.edges):
-            edge_id = id(edge)
+            edge_id = _edge_key(edge)
             params = self.graphulator.scattering_assignments.get(edge_id, {})
 
             f_p = params.get('f_p', None)
@@ -5415,8 +5441,171 @@ class LabelPatternAnalyzer:
         return f"Node{number}"
 
 
-class Graphulator(QMainWindow):
+def _compute_sparams_job(job):
+    """Compute S-parameters for one self-contained component job.
+
+    Pure computation over the plain data packaged by
+    Graphulator._build_sparams_job — no GUI access, safe to run on a
+    worker thread.
+
+    Returns:
+        dict with S-parameter results, or None if the component is invalid
+        (e.g. missing parameter assignments).
+    """
+    comp_name = job['comp_name']
+    nodes = job['nodes']
+    edges = job['edges']
+    root_node_id = job['root_node_id']
+    f_root_s = job['f_root_s']
+
+    # Compute spanning tree for this component
+    extractor = GraphExtractor()
+    gui_nodes = [{'node_id': node['node_id']} for node in nodes]
+    gui_edges = [
+        {
+            'from_node_id': edge['from_node_id'],
+            'to_node_id': edge['to_node_id'],
+            'is_self_loop': edge['is_self_loop']
+        }
+        for edge in edges
+    ]
+
+    tree_edges_nested, chord_edges_list, is_connected = extractor.compute_spanning_tree(
+        gui_nodes, gui_edges, root_node_id
+    )
+
+    # Convert to list format for extractor
+    tree_edges_list = []
+    for branch in tree_edges_nested:
+        for from_id, to_id in branch:
+            tree_edges_list.append([from_id, to_id])
+
+    extractor.extract_graph_data(
+        nodes=nodes,
+        edges=edges,
+        scattering_assignments=job['scattering_assignments'],
+        frequency_settings={'start': job['freq_start'], 'stop': job['freq_stop'],
+                            'points': job['freq_points']},
+        root_node_id=root_node_id,
+        precomputed_tree_edges=tree_edges_list,
+        precomputed_chord_edges=chord_edges_list
+    )
+
+    # Validate all required parameters are assigned before computing
+    missing = extractor.validate_scattering_assignments()
+    missing_items = missing.get('missing_nodes', []) + missing.get('missing_edges', [])
+    if missing_items:
+        detail = "\n".join(f"  - {item}" for item in missing_items)
+        logger.info(f"  {comp_name}: Missing scattering parameters:\n{detail}")
+        return None
+
+    # Check if injection node is conjugated
+    root_node = next((n for n in nodes if n['node_id'] == root_node_id), None)
+    f_calc = f_root_s
+    if root_node and root_node.get('conj', False):
+        f_calc = -f_root_s
+        logger.info(f"  {comp_name}: Injection node is conjugated - using negative frequencies")
+
+    # Compute S-matrix
+    scattering_calc = GraphScatteringMatrix(extractor, f_calc)
+
+    logger.info(f"  {comp_name}: {len(scattering_calc.port_dict)} ports computed")
+
+    # Build enriched port_dict with labels for checkbox/plot code
+    # Original port_dict: {node_id: B_ext}
+    # Enriched: {node_id: {'B_ext': B_ext, 'label': label, 'conj': bool}}
+    enriched_port_dict = {}
+    for port_id, B_ext in scattering_calc.port_dict.items():
+        port_node = next((n for n in nodes if n['node_id'] == port_id), None)
+        label = port_node['label'] if port_node else str(port_id)
+        conj = port_node.get('conj', False) if port_node else False
+        enriched_port_dict[port_id] = {'B_ext': B_ext, 'label': label, 'conj': conj}
+
+    return {
+        'S': scattering_calc.S,
+        'SdB': scattering_calc.SdB,
+        'port_dict': enriched_port_dict,
+        'drive_signals': scattering_calc.drive_signals,
+        'port_ids': sorted(scattering_calc.port_dict.keys()),
+        'component_index': job['component_index'],
+        'component_label': job['component_label'],
+    }
+
+
+class SParamsWorker(QThread):
+    """Background worker for the S-parameter frequency sweep.
+
+    Runs the numeric pipeline for a list of component jobs so large point
+    counts don't block the GUI. Results are tagged with a generation number;
+    the receiver drops results superseded by a newer request.
+    """
+
+    finished_ok = Signal(int, object)  # generation, {'results': [...], 'f_root_s': ndarray}
+    failed = Signal(int, str)          # generation, error message
+
+    def __init__(self, generation, jobs, f_root_s, parent=None):
+        super().__init__(parent)
+        self.generation = generation
+        self.jobs = jobs
+        self.f_root_s = f_root_s
+
+    def run(self):
+        try:
+            results = []
+            last_error = None
+            for job in self.jobs:
+                logger.info(f"=== Computing S-parameters for {job['comp_name']} ===")
+                try:
+                    result = _compute_sparams_job(job)
+                except Exception as e:
+                    logger.exception(f"  {job['comp_name']}: Error computing S-parameters")
+                    last_error = str(e)
+                    continue
+                if result is not None:
+                    results.append(result)
+
+            if not results and last_error is not None:
+                self.failed.emit(self.generation, last_error)
+            else:
+                self.finished_ok.emit(self.generation,
+                                      {'results': results, 'f_root_s': self.f_root_s})
+        except Exception as e:
+            logger.exception("S-parameter worker failed")
+            self.failed.emit(self.generation, str(e))
+
+
+class Graphulator(GraphWindowCommonMixin, QMainWindow):
     """Main application window"""
+
+    # Shared-behavior parametrization (see GraphWindowCommonMixin)
+    APP_NAME = "Paragraphulator"
+    APP_ABOUT_BLURB = "<p>A very niche tool for parametric coupled mode theory.</p>"
+    APP_ICON_FILENAME = "paragraphulator_ICON.png"
+    FILE_DIALOG_FILTER = "Parametric Graph Files (*.pgraph);;All Files (*)"
+    FILE_EXTENSION = ".pgraph"
+    APP_CONFIG = config
+    PANEL_SELFLOOP_ANGLE_SPINBOX = 'angle_spinbox'
+    PANEL_SELFLOOP_COMPASS = 'angle_compass_label'
+    PANEL_SELFLOOP_PINNED = 'angle_pinned_checkbox'
+
+    def _undo(self):
+        """Undo last action (basis-selection undo while in basis-ordering mode)."""
+        if self.basis_ordering_mode:
+            self._undo_basis_selection()
+            return
+        super()._undo()
+
+    def _redo(self):
+        """Redo the last undone action (basis-selection redo while in
+        basis-ordering mode)."""
+        if self.basis_ordering_mode:
+            self._redo_basis_selection()
+            return
+        super()._redo()
+
+    def _after_grid_change(self):
+        """Grid changes affect every canvas (original/scattering/kron)."""
+        self._update_both_canvases()
 
     def __init__(self):
         super().__init__()
@@ -5582,7 +5771,13 @@ class Graphulator(QMainWindow):
 
         # Undo system
         self.undo_stack = []  # Stack of previous states
+        self.redo_stack = []  # Stack of undone states
         self.max_undo = 50  # Maximum undo levels
+
+        # Background S-parameter sweep state
+        self._sparams_worker = None      # Strong reference to the running worker
+        self._sparams_pending = False    # A request arrived while a sweep was running
+        self._sparams_generation = 0     # Monotonic id; stale worker results are dropped
 
         # Graph circuit
         self.graph = gp.GraphCircuit()
@@ -6143,7 +6338,7 @@ class Graphulator(QMainWindow):
 
         # ===== EDIT OPERATIONS =====
         sm.bind_shortcut("edit.undo", self._undo, self)
-        sm.bind_shortcut("edit.redo_basis", self._redo_basis_selection, self)
+        sm.bind_shortcut("edit.redo_basis", self._redo, self)
         sm.bind_shortcut("edit.delete", self._delete_selected_nodes, self)
         sm.bind_shortcut("edit.delete_d", self._delete_selected_nodes, self)
         sm.bind_shortcut("edit.clear_all", self._clear_nodes, self)
@@ -6452,136 +6647,6 @@ class Graphulator(QMainWindow):
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
 
-    def _show_about(self):
-        """Show the About dialog with version, logo, and project info."""
-        import PySide6
-        from PySide6.QtCore import Qt, qVersion
-        from PySide6.QtGui import QPixmap
-
-        from graphulator import __copyright__, __url__, __version__
-        from graphulator._resources import resource_path
-
-        py_version = ".".join(str(p) for p in sys.version_info[:3])
-        text = (
-            f"<h3>Paragraphulator {__version__}</h3>"
-            "<p>A very niche tool for parametric coupled mode theory.</p>"
-            f"<p><small>PySide6 {PySide6.__version__} &middot; "
-            f"Qt {qVersion()} &middot; Python {py_version}</small></p>"
-            f"<p><small>{__copyright__} &middot; "
-            f"<a href='{__url__}'>{__url__.replace('https://', '')}</a>"
-            "</small></p>"
-        )
-
-        box = QMessageBox(self)
-        box.setWindowTitle("About Paragraphulator")
-        box.setTextFormat(Qt.RichText)
-        box.setText(text)
-
-        icon_path = resource_path("assets", "paragraphulator_ICON.png")
-        if icon_path.is_file():
-            pixmap = QPixmap(str(icon_path))
-            if not pixmap.isNull():
-                box.setIconPixmap(pixmap.scaled(
-                    96, 96,
-                    Qt.KeepAspectRatio, Qt.SmoothTransformation,
-                ))
-
-        box.setStandardButtons(QMessageBox.Ok)
-        box.exec()
-
-    def _update_window_title(self):
-        """Update window title with filename and modified status"""
-        title = "Paragraphulator"
-        if self.current_filepath:
-            title += f" - {Path(self.current_filepath).name}"
-        if self.is_modified:
-            title += " *"
-        self.setWindowTitle(title)
-
-    def _set_modified(self, modified=True):
-        """Set modified flag and update window title"""
-        self.is_modified = modified
-        self._update_window_title()
-
-    def _check_unsaved_changes(self):
-        """Check for unsaved changes and prompt user. Returns True if safe to proceed."""
-        if not self.is_modified:
-            return True
-
-        reply = QMessageBox.question(
-            self, "Unsaved Changes",
-            "You have unsaved changes. Do you want to save them?",
-            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-            QMessageBox.Save
-        )
-
-        if reply == QMessageBox.Save:
-            return self._save_graph()
-        elif reply == QMessageBox.Discard:
-            return True
-        else:  # Cancel
-            return False
-
-    def _load_recent_files(self):
-        """Load recent files list from disk"""
-        try:
-            if self.recent_files_path.exists():
-                with open(self.recent_files_path, 'r') as f:
-                    self.recent_files = [line.strip() for line in f if line.strip()]
-                # Keep only files that still exist
-                self.recent_files = [f for f in self.recent_files if Path(f).exists()]
-                self.recent_files = self.recent_files[:self.max_recent_files]
-        except Exception as e:
-            print(f"Error loading recent files: {e}")
-            self.recent_files = []
-
-    def _save_recent_files(self):
-        """Save recent files list to disk"""
-        try:
-            with open(self.recent_files_path, 'w') as f:
-                for filepath in self.recent_files:
-                    f.write(f"{filepath}\n")
-        except Exception as e:
-            print(f"Error saving recent files: {e}")
-
-    def _add_to_recent_files(self, filepath):
-        """Add a file to the recent files list"""
-        filepath = str(filepath)
-        # Remove if already in list
-        if filepath in self.recent_files:
-            self.recent_files.remove(filepath)
-        # Add to front
-        self.recent_files.insert(0, filepath)
-        # Trim to max
-        self.recent_files = self.recent_files[:self.max_recent_files]
-        self._save_recent_files()
-        self._update_recent_files_menu()
-
-    def _update_recent_files_menu(self):
-        """Update the Recent Files submenu"""
-        self.recent_files_menu.clear()
-
-        if not self.recent_files:
-            no_recent = QAction("(No recent files)", self)
-            no_recent.setEnabled(False)
-            self.recent_files_menu.addAction(no_recent)
-        else:
-            for filepath in self.recent_files:
-                action = QAction(Path(filepath).name, self)
-                action.setToolTip(filepath)
-                action.triggered.connect(lambda checked, f=filepath: self._open_graph_file(f))
-                self.recent_files_menu.addAction(action)
-
-            self.recent_files_menu.addSeparator()
-            clear_action = QAction("Clear Recent Files", self)
-            clear_action.triggered.connect(self._clear_recent_files)
-            self.recent_files_menu.addAction(clear_action)
-
-    def _clear_recent_files(self):
-        """Clear the recent files list"""
-        self.recent_files = []
-        self._save_recent_files()
-        self._update_recent_files_menu()
 
     def _load_last_directory(self):
         """Load the last used directory from disk"""
@@ -6768,8 +6833,8 @@ class Graphulator(QMainWindow):
                 for edge in self.edges
             )
 
-            # Add scattering parameters if they exist (convert from id() to node_id)
-            node_id_key = id(node)
+            # Add scattering parameters if they exist
+            node_id_key = _node_key(node)
             if node_id_key in self.scattering_assignments:
                 scattering_params = self.scattering_assignments[node_id_key]
                 if 'freq' in scattering_params:
@@ -6831,8 +6896,8 @@ class Graphulator(QMainWindow):
                 edge_data["label1_bgcolor"] = edge.get("label1_bgcolor", None)
                 edge_data["label2_bgcolor"] = edge.get("label2_bgcolor", None)
 
-            # Add scattering parameters if they exist (convert from id() to edge tuple)
-            edge_id_key = id(edge)
+            # Add scattering parameters if they exist
+            edge_id_key = _edge_key(edge)
             if edge_id_key in self.scattering_assignments:
                 scattering_params = self.scattering_assignments[edge_id_key]
                 if 'f_p' in scattering_params:
@@ -6970,6 +7035,7 @@ class Graphulator(QMainWindow):
         self.selected_nodes = []
         self.selected_edges = []
         self.undo_stack = []
+        self.redo_stack = []
 
         # Detect format version
         version = data.get("version", "1.0")
@@ -7028,9 +7094,9 @@ class Graphulator(QMainWindow):
             node_id_map[node_data["node_id"]] = node
             max_node_id = max(max_node_id, node_data["node_id"])
 
-            # Load scattering parameters if present (stored using node_id, need to convert to id())
+            # Load scattering parameters if present
             if 'freq' in node_data or 'B_int' in node_data or 'B_ext' in node_data:
-                node_obj_id = id(node)
+                node_obj_id = _node_key(node)
                 if node_obj_id not in self.scattering_assignments:
                     self.scattering_assignments[node_obj_id] = {}
                 if 'freq' in node_data:
@@ -7092,9 +7158,9 @@ class Graphulator(QMainWindow):
 
                 self.edges.append(edge)
 
-                # Load scattering parameters if present (stored using edge tuple, need to convert to id())
+                # Load scattering parameters if present
                 if 'f_p' in edge_data or 'rate' in edge_data or 'phase' in edge_data:
-                    edge_obj_id = id(edge)
+                    edge_obj_id = _edge_key(edge)
                     if edge_obj_id not in self.scattering_assignments:
                         self.scattering_assignments[edge_obj_id] = {}
                     if 'f_p' in edge_data:
@@ -7377,6 +7443,7 @@ class Graphulator(QMainWindow):
         self.selected_nodes = []
         self.selected_edges = []
         self.undo_stack = []
+        self.redo_stack = []
         self.current_filepath = None
         self.node_counter = 0
         self.node_id_counter = 0
@@ -7447,25 +7514,6 @@ class Graphulator(QMainWindow):
         if filepath:
             self._open_graph_file(filepath)
 
-    def _open_graph_file(self, filepath):
-        """Open a specific graph file"""
-        try:
-            with open(filepath, 'r') as f:
-                data = json.load(f)
-
-            self._deserialize_graph(data)
-            self.current_filepath = filepath
-            self._set_modified(False)
-            self._add_to_recent_files(filepath)
-            self._save_last_directory(filepath)
-            print(f"Opened graph from {filepath}")
-
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Error Opening File",
-                f"Could not open file:\n{e}"
-            )
-            print(f"Error opening graph: {e}")
 
     def _open_settings(self):
         """Open the settings dialog"""
@@ -7494,84 +7542,6 @@ class Graphulator(QMainWindow):
             # Linux/other: open file manager at directory
             subprocess.run(['xdg-open', str(USER_SETTINGS_DIR)])
 
-    def _save_graph(self):
-        """Save the current graph"""
-        if self.current_filepath:
-            return self._save_graph_to_file(self.current_filepath)
-        else:
-            return self._save_graph_as()
-
-    def _save_graph_as(self):
-        """Save the graph to a new file"""
-        filepath, _ = QFileDialog.getSaveFileName(
-            self, "Save Graph As", self._get_default_directory(),
-            "Parametric Graph Files (*.pgraph);;All Files (*)"
-        )
-
-        if filepath:
-            # Add .pgraph extension if not present
-            if not filepath.endswith('.pgraph'):
-                filepath += '.pgraph'
-            return self._save_graph_to_file(filepath)
-        return False
-
-    def _save_graph_to_file(self, filepath):
-        """Save graph to specified file"""
-        try:
-            data = self._serialize_graph()
-
-            with open(filepath, 'w') as f:
-                json.dump(data, f, indent=2)
-
-            self.current_filepath = filepath
-            self._set_modified(False)
-            self._add_to_recent_files(filepath)
-            self._save_last_directory(filepath)
-
-            # Also save as last graph
-            try:
-                with open(self.last_graph_path, 'w') as f:
-                    json.dump(data, f, indent=2)
-            except:
-                pass  # Don't fail if we can't save last graph
-
-            print(f"Saved graph to {filepath}")
-            return True
-
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Error Saving File",
-                f"Could not save file:\n{e}"
-            )
-            print(f"Error saving graph: {e}")
-            return False
-
-    def _reload_last_graph(self):
-        """Reload the last saved graph"""
-        if not self._check_unsaved_changes():
-            return
-
-        if not self.last_graph_path.exists():
-            QMessageBox.information(
-                self, "No Last Graph",
-                "No last graph found."
-            )
-            return
-
-        try:
-            with open(self.last_graph_path, 'r') as f:
-                data = json.load(f)
-
-            self._deserialize_graph(data)
-            self.current_filepath = None  # Don't set filepath for reloaded last graph
-            self._set_modified(False)
-            print("Reloaded last graph")
-
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Error Loading Last Graph",
-                f"Could not load last graph:\n{e}"
-            )
 
     def _export_png(self):
         """Export graph as PNG image"""
@@ -7638,13 +7608,6 @@ class Graphulator(QMainWindow):
                 self.nodes = saved_nodes
                 self.edges = saved_edges
 
-    def _copy_graph_to_clipboard_vector(self):
-        """Copy the graph as vector PDF/SVG only (no raster PNG fallback).
-
-        Forces vector-preferring apps that otherwise grab the PNG (Keynote,
-        PowerPoint) to paste the editable PDF/SVG instead.
-        """
-        self._copy_graph_to_clipboard(include_png=False)
 
     def _copy_graph_to_clipboard(self, include_png=True):
         """Copy the whole graph to the clipboard as vector PDF/SVG (+ PNG).
@@ -7935,13 +7898,28 @@ class Graphulator(QMainWindow):
     def closeEvent(self, event):
         """Handle window close event"""
         if self._check_unsaved_changes():
-            # Save last graph automatically
+            # Save last graph automatically (for session restore)
             try:
                 data = self._serialize_graph()
                 with open(self.last_graph_path, 'w') as f:
                     json.dump(data, f, indent=2)
-            except:
-                pass  # Don't prevent closing if save fails
+            except Exception:
+                logger.exception("Failed to autosave last graph on close")
+                reply = QMessageBox.warning(
+                    self, "Autosave Failed",
+                    "The session autosave failed, so this graph won't be "
+                    "restored next launch.\n\nClose anyway?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if reply == QMessageBox.No:
+                    event.ignore()
+                    return
+
+            # Let a running S-parameter sweep finish before teardown
+            if self._sparams_worker is not None and self._sparams_worker.isRunning():
+                self._sparams_pending = False
+                self._sparams_worker.wait(5000)
 
             # Clean up matplotlib canvases to prevent segfault
             try:
@@ -7951,58 +7929,13 @@ class Graphulator(QMainWindow):
                     self.kron_canvas.close()
                 if hasattr(self, 'scattering_canvas') and self.scattering_canvas:
                     self.scattering_canvas.close()
-            except:
-                pass  # Don't prevent closing if cleanup fails
+            except Exception:
+                logger.exception("Canvas cleanup failed during close")
 
             event.accept()
         else:
             event.ignore()
 
-    def resizeEvent(self, event):
-        """Handle window resize event - redraw with debouncing to prevent freezing"""
-        super().resizeEvent(event)
-
-        # Just restart the debounce timer - _get_xlim() and _get_ylim() already
-        # handle aspect ratio adjustments automatically
-        self.resize_debounce_timer.stop()
-        self.resize_debounce_timer.start(self.resize_debounce_timeout)
-
-    def _handle_resize_complete(self):
-        """Called when resize debounce timer completes - redraw the plot"""
-        # The _get_xlim() and _get_ylim() functions automatically adjust limits
-        # to match canvas aspect ratio, so we just need to trigger a redraw
-        canvas_width = self.canvas.size().width()
-        canvas_height = self.canvas.size().height()
-
-        if canvas_height > 0 and canvas_width > 0:
-            print("\n" + "="*60)
-            print("WINDOW RESIZE COMPLETE - Redrawing")
-            print("="*60)
-            print(f"Canvas size: {canvas_width} x {canvas_height}")
-            print(f"Canvas aspect ratio: {canvas_width/canvas_height:.3f}")
-            xlim = self._get_xlim()
-            ylim = self._get_ylim()
-            print(f"Calculated xlim: [{xlim[0]:.2f}, {xlim[1]:.2f}]")
-            print(f"Calculated ylim: [{ylim[0]:.2f}, {ylim[1]:.2f}]")
-            print("="*60 + "\n")
-
-            self._update_plot()
-
-    def _set_placement_mode(self, mode):
-        """Set placement mode"""
-        self.placement_mode = mode
-        print(f"Placement mode: {mode}")
-        self._update_plot()
-
-    def _toggle_continuous_mode(self):
-        """Toggle continuous placement mode"""
-        if self.placement_mode == 'continuous':
-            self.placement_mode = None
-            print("Exited continuous placement mode")
-        else:
-            self.placement_mode = 'continuous'
-            print("Continuous placement mode - click to place nodes, press G again to exit")
-        self._update_plot()
 
     def _auto_increment_label(self, label):
         """Auto-increment a label based on its pattern
@@ -8235,7 +8168,7 @@ class Graphulator(QMainWindow):
         if self.basis_ordering_mode and self.basis_order:
             removed_node = self.basis_order.pop()
             self.basis_order_undo_stack.append(removed_node)
-            print(f"Removed '{removed_node['label']}' from basis order")
+            logger.info(f"Removed '{removed_node['label']}' from basis order")
             self._update_plot()
 
     def _redo_basis_selection(self):
@@ -8243,7 +8176,7 @@ class Graphulator(QMainWindow):
         if self.basis_ordering_mode and self.basis_order_undo_stack:
             node = self.basis_order_undo_stack.pop()
             self.basis_order.append(node)
-            print(f"Re-added '{node['label']}' to basis order")
+            logger.info(f"Re-added '{node['label']}' to basis order")
             self._update_plot()
 
     # === Kron Reduction Mode Methods ===
@@ -8808,7 +8741,7 @@ class Graphulator(QMainWindow):
                 for edge in self.edges
             )
             # Check if node has B_ext > 0
-            node_obj_id = id(node)
+            node_obj_id = _node_key(node)
             if has_selfloop and node_obj_id in self.scattering_assignments:
                 B_ext = self.scattering_assignments[node_obj_id].get('B_ext', None)
                 if B_ext is not None and B_ext > 0:
@@ -9423,31 +9356,15 @@ class Graphulator(QMainWindow):
         Returns:
             bool: True if all required parameters are assigned
         """
-        # Use original nodes for lookup (stored when rendering scattering graph)
-        original_nodes = getattr(self, '_original_nodes_for_lookup', self.nodes)
+        # Scattering-graph nodes are copies of the originals, but they preserve
+        # the stable node_id, so assignments can be looked up directly.
         original_edges = getattr(self, '_original_edges_for_lookup', self.edges)
 
-        if not original_nodes:
-            return False
-
-        # Find the corresponding original node by matching label and position
-        # (scattering_graph nodes are copies with different IDs)
-        original_node = None
-        for orig_node in original_nodes:
-            if (orig_node['label'] == node['label'] and
-                orig_node['pos'] == node['pos']):
-                original_node = orig_node
-                break
-
-        if not original_node:
-            return False
-
-        node_id = id(original_node)
-        assignments = self.scattering_assignments.get(node_id, {})
+        assignments = self.scattering_assignments.get(_node_key(node), {})
 
         # Check if node has self-loop (check in original edges)
         has_selfloop = any(
-            edge.get('is_self_loop', False) and edge['from_node'] == original_node
+            edge.get('is_self_loop', False) and edge['from_node_id'] == node['node_id']
             for edge in original_edges
         ) if original_edges else False
 
@@ -9467,39 +9384,12 @@ class Graphulator(QMainWindow):
         Returns:
             bool: True if all required parameters are assigned
         """
-        # Use original edges for lookup (stored when rendering scattering graph)
-        original_edges = getattr(self, '_original_edges_for_lookup', self.edges)
-
-        if not original_edges:
-            return False
-
-        # Find the corresponding original edge by matching from/to node labels
-        # (scattering_graph edges are copies with different IDs)
-        from_label = edge['from_node']['label']
-        to_label = edge['to_node']['label']
-        is_self_loop = edge.get('is_self_loop', False)
-
-        original_edge = None
-        for orig_edge in original_edges:
-            orig_from_label = orig_edge['from_node']['label']
-            orig_to_label = orig_edge['to_node']['label']
-            orig_is_self_loop = orig_edge.get('is_self_loop', False)
-
-            # Match by node labels and self-loop status
-            if (orig_from_label == from_label and
-                orig_to_label == to_label and
-                orig_is_self_loop == is_self_loop):
-                original_edge = orig_edge
-                break
-
-        if not original_edge:
-            return False
-
-        edge_id = id(original_edge)
-        assignments = self.scattering_assignments.get(edge_id, {})
+        # Scattering-graph edges are copies of the originals, but they preserve
+        # the stable from/to node ids, so assignments can be looked up directly.
+        assignments = self.scattering_assignments.get(_edge_key(edge), {})
 
         # Check if this is a chord edge (chord f_p is computed, not assigned)
-        edge_key = tuple(sorted([original_edge['from_node_id'], original_edge['to_node_id']]))
+        edge_key = tuple(sorted([edge['from_node_id'], edge['to_node_id']]))
         is_chord = edge_key in self.scattering_chord_edges
 
         # Required parameters
@@ -9579,7 +9469,7 @@ class Graphulator(QMainWindow):
                     'pos': node['pos'],
                     'conj': node.get('conj', False)
                 }
-                node_id_key = id(node)
+                node_id_key = _node_key(node)
                 if node_id_key in self.scattering_assignments:
                     params = self.scattering_assignments[node_id_key]
                     node_data['freq'] = params.get('freq', None)
@@ -9598,7 +9488,7 @@ class Graphulator(QMainWindow):
                     'to_node_id': edge['to_node_id'],
                     'is_self_loop': edge['is_self_loop']
                 }
-                edge_id_key = id(edge)
+                edge_id_key = _edge_key(edge)
                 if edge_id_key in self.scattering_assignments:
                     params = self.scattering_assignments[edge_id_key]
                     edge_data['f_p'] = params.get('f_p', None)
@@ -9611,19 +9501,17 @@ class Graphulator(QMainWindow):
                 edges.append(edge_data)
 
             # Build scattering_assignments dict
+            # (the GraphExtractor API keys by id() of the plain dicts built above)
             scattering_assignments = {}
-            for node in self.nodes:
-                node_id_key = id(node)
+            for node_data in nodes:
+                node_id_key = node_data['node_id']
                 if node_id_key in self.scattering_assignments:
-                    matching_node = next(n for n in nodes if n['node_id'] == node['node_id'])
-                    scattering_assignments[id(matching_node)] = self.scattering_assignments[node_id_key]
+                    scattering_assignments[id(node_data)] = self.scattering_assignments[node_id_key]
 
-            for edge in self.edges:
-                edge_id_key = id(edge)
+            for edge_data in edges:
+                edge_id_key = (edge_data['from_node_id'], edge_data['to_node_id'])
                 if edge_id_key in self.scattering_assignments:
-                    matching_edge = next((e for e in edges if e['from_node_id'] == edge['from_node_id'] and e['to_node_id'] == edge['to_node_id']), None)
-                    if matching_edge:
-                        scattering_assignments[id(matching_edge)] = self.scattering_assignments[edge_id_key]
+                    scattering_assignments[id(edge_data)] = self.scattering_assignments[edge_id_key]
 
             # Extract graph data
             tree_edges_list = [[from_id, to_id] for from_id, to_id in self.scattering_tree_edges]
@@ -9759,10 +9647,12 @@ class Graphulator(QMainWindow):
                     self.properties_panel.show_s_button.setText("Hide S")
 
     def _compute_and_plot_sparams(self):
-        """Compute S-matrix and plot selected parameters.
+        """Compute S-matrix in a background thread and plot selected parameters.
 
         For disconnected graphs with multiple components, computes S-parameters
-        for each component separately and plots them together.
+        for each component separately and plots them together. The numeric
+        sweep runs on a worker thread so large point counts don't freeze the
+        GUI; stale results (superseded by a newer request) are dropped.
         """
 
         try:
@@ -9782,68 +9672,44 @@ class Graphulator(QMainWindow):
                 # Single component - use full graph
                 components_to_compute = [None]  # None means use full graph
 
-            # Store results for all components
-            all_sparams_data = []
-
-            for comp_idx, component in enumerate(components_to_compute):
-                comp_name = 'full graph' if component is None else f"Component {component['index']}"
-                print(f"\n=== Computing S-parameters for {comp_name} ===")
-
-                result = self._compute_sparams_for_component(
-                    component, f_root_s, freq_start, freq_stop, freq_points
+            # Snapshot everything the worker needs (plain data, no GUI access)
+            jobs = []
+            for component in components_to_compute:
+                job = self._build_sparams_job(
+                    component, f_root_s, freq_start, freq_stop, freq_points,
+                    multi_component=len(components_to_compute) > 1
                 )
+                if job is not None:
+                    jobs.append(job)
 
-                if result is not None:
-                    result['component_index'] = component['index'] if component else 0
-                    result['component_label'] = f"C{component['index']+1}" if component and len(components_to_compute) > 1 else ""
-                    all_sparams_data.append(result)
-
-            if not all_sparams_data:
-                print("No valid S-parameter data computed")
+            if not jobs:
+                logger.info("No components with nodes to compute")
                 return
 
-            # Store combined results
-            self.sparams_data = {
-                'frequencies': f_root_s,
-                'components': all_sparams_data,
-                'num_components': len(all_sparams_data)
-            }
+            # Any newer request supersedes results still in flight
+            self._sparams_generation += 1
 
-            # For backward compatibility, also store first component's data at top level
-            if all_sparams_data:
-                first = all_sparams_data[0]
-                self.sparams_data['S'] = first['S']
-                self.sparams_data['SdB'] = first['SdB']
-                self.sparams_data['port_dict'] = first['port_dict']
-                self.sparams_data['drive_signals'] = first['drive_signals']
-                self.sparams_data['port_ids'] = first['port_ids']
+            if self._sparams_worker is not None and self._sparams_worker.isRunning():
+                # A sweep is already running; rerun with fresh state when it ends
+                self._sparams_pending = True
+                return
 
-            # Update checkboxes with port labels (handles multi-component)
-            self._update_sparams_checkboxes()
-
-            # Plot
-            self._plot_sparams()
-
-            print(f"S-matrix computed successfully for {len(all_sparams_data)} component(s)")
+            self._start_sparams_worker(jobs, f_root_s)
 
         except Exception as e:
-            print(f"Error computing S-parameters: {e}")
-            traceback.print_exc()
-            # Show error on plot
+            logger.exception("Error preparing S-parameter computation")
             self._show_sparams_error(str(e))
 
-    def _compute_sparams_for_component(self, component, f_root_s, freq_start, freq_stop, freq_points):
-        """Compute S-parameters for a single component (or full graph if component is None).
+    def _build_sparams_job(self, component, f_root_s, freq_start, freq_stop, freq_points,
+                           multi_component=False):
+        """Build a self-contained computation job for one component.
 
-        Args:
-            component: Component dict from _find_connected_components(), or None for full graph
-            f_root_s: Frequency array for plotting (positive)
-            freq_start, freq_stop, freq_points: Frequency range settings
+        Runs on the UI thread: reads the live graph, scattering assignments,
+        and injection dropdown, and packages plain data for the worker.
 
         Returns:
-            dict with S-parameter results, or None if computation fails
+            dict job payload, or None if the component has no nodes.
         """
-
         # Determine which nodes/edges to use
         if component is not None:
             nodes_to_use = component['nodes']
@@ -9855,7 +9721,7 @@ class Graphulator(QMainWindow):
             comp_name = "full graph"
 
         if not nodes_to_use:
-            print(f"  No nodes in {comp_name}")
+            logger.info(f"  No nodes in {comp_name}")
             return None
 
         # For this component, we need to compute its own spanning tree
@@ -9876,7 +9742,7 @@ class Graphulator(QMainWindow):
                 'pos': node['pos'],
                 'conj': node.get('conj', False)
             }
-            node_id_key = id(node)
+            node_id_key = _node_key(node)
             if node_id_key in self.scattering_assignments:
                 params = self.scattering_assignments[node_id_key]
                 node_data['freq'] = params.get('freq', None)
@@ -9896,7 +9762,7 @@ class Graphulator(QMainWindow):
                 'to_node_id': edge['to_node_id'],
                 'is_self_loop': edge['is_self_loop']
             }
-            edge_id_key = id(edge)
+            edge_id_key = _edge_key(edge)
             if edge_id_key in self.scattering_assignments:
                 params = self.scattering_assignments[edge_id_key]
                 edge_data['f_p'] = params.get('f_p', None)
@@ -9909,96 +9775,91 @@ class Graphulator(QMainWindow):
             edges.append(edge_data)
 
         # Build scattering_assignments dict for this component
+        # (the GraphExtractor API keys by id() of the plain dicts built above)
         scattering_assignments = {}
-        for node in nodes_to_use:
-            node_id_key = id(node)
+        for node_data in nodes:
+            node_id_key = node_data['node_id']
             if node_id_key in self.scattering_assignments:
-                matching_node = next((n for n in nodes if n['node_id'] == node['node_id']), None)
-                if matching_node:
-                    scattering_assignments[id(matching_node)] = self.scattering_assignments[node_id_key]
+                scattering_assignments[id(node_data)] = dict(self.scattering_assignments[node_id_key])
 
-        for edge in edges_to_use:
-            edge_id_key = id(edge)
+        for edge_data in edges:
+            edge_id_key = (edge_data['from_node_id'], edge_data['to_node_id'])
             if edge_id_key in self.scattering_assignments:
-                matching_edge = next((e for e in edges if e['from_node_id'] == edge['from_node_id'] and e['to_node_id'] == edge['to_node_id']), None)
-                if matching_edge:
-                    scattering_assignments[id(matching_edge)] = self.scattering_assignments[edge_id_key]
+                scattering_assignments[id(edge_data)] = dict(self.scattering_assignments[edge_id_key])
 
-        # Compute spanning tree for this component
-        extractor = GraphExtractor()
-        gui_nodes = [{'node_id': node['node_id']} for node in nodes_to_use]
-        gui_edges = [
-            {
-                'from_node_id': edge['from_node_id'],
-                'to_node_id': edge['to_node_id'],
-                'is_self_loop': edge['is_self_loop']
-            }
-            for edge in edges_to_use
-        ]
+        return {
+            'comp_name': comp_name,
+            'component_index': component['index'] if component else 0,
+            'component_label': f"C{component['index']+1}" if component and multi_component else "",
+            'root_node_id': root_node_id,
+            'nodes': nodes,
+            'edges': edges,
+            'scattering_assignments': scattering_assignments,
+            'f_root_s': f_root_s,
+            'freq_start': freq_start,
+            'freq_stop': freq_stop,
+            'freq_points': freq_points,
+        }
 
-        tree_edges_nested, chord_edges_list, is_connected = extractor.compute_spanning_tree(
-            gui_nodes, gui_edges, root_node_id
-        )
+    def _start_sparams_worker(self, jobs, f_root_s):
+        """Launch the background sweep for the current generation."""
+        worker = SParamsWorker(self._sparams_generation, jobs, f_root_s, parent=self)
+        worker.finished_ok.connect(self._on_sparams_finished)
+        worker.failed.connect(self._on_sparams_failed)
+        worker.finished.connect(self._on_sparams_thread_finished)
+        self._sparams_worker = worker
+        self._status_message("Computing S-parameters…", 0)
+        worker.start()
 
-        # Convert to list format for extractor
-        tree_edges_list = []
-        for branch in tree_edges_nested:
-            for from_id, to_id in branch:
-                tree_edges_list.append([from_id, to_id])
+    def _on_sparams_thread_finished(self):
+        """QThread ended (success or failure): rerun if a request came in meanwhile."""
+        self._sparams_worker = None
+        if self._sparams_pending:
+            self._sparams_pending = False
+            self._compute_and_plot_sparams()
 
-        try:
-            extractor.extract_graph_data(
-                nodes=nodes,
-                edges=edges,
-                scattering_assignments=scattering_assignments,
-                frequency_settings={'start': freq_start, 'stop': freq_stop, 'points': freq_points},
-                root_node_id=root_node_id,
-                precomputed_tree_edges=tree_edges_list,
-                precomputed_chord_edges=chord_edges_list
-            )
+    def _on_sparams_failed(self, generation, error_msg):
+        if generation != self._sparams_generation:
+            return  # stale; a newer computation is on its way
+        self.statusBar().clearMessage()
+        self._show_sparams_error(error_msg)
 
-            # Validate all required parameters are assigned before computing
-            missing = extractor.validate_scattering_assignments()
-            missing_items = missing.get('missing_nodes', []) + missing.get('missing_edges', [])
-            if missing_items:
-                detail = "\n".join(f"  - {item}" for item in missing_items)
-                print(f"  {comp_name}: Missing scattering parameters:\n{detail}")
-                return None
+    def _on_sparams_finished(self, generation, payload):
+        """Install worker results and update the plot (UI thread)."""
+        if generation != self._sparams_generation:
+            return  # stale; a newer computation is on its way
 
-            # Check if injection node is conjugated
-            root_node = next((n for n in nodes if n['node_id'] == root_node_id), None)
-            f_calc = f_root_s
-            if root_node and root_node.get('conj', False):
-                f_calc = -f_root_s
-                print(f"  {comp_name}: Injection node is conjugated - using negative frequencies")
+        self.statusBar().clearMessage()
+        all_sparams_data = payload['results']
+        f_root_s = payload['f_root_s']
 
-            # Compute S-matrix
-            scattering_calc = GraphScatteringMatrix(extractor, f_calc)
+        if not all_sparams_data:
+            logger.info("No valid S-parameter data computed")
+            self._status_message("No valid S-parameter data computed")
+            return
 
-            print(f"  {comp_name}: {len(scattering_calc.port_dict)} ports computed")
+        # Store combined results
+        self.sparams_data = {
+            'frequencies': f_root_s,
+            'components': all_sparams_data,
+            'num_components': len(all_sparams_data)
+        }
 
-            # Build enriched port_dict with labels for checkbox/plot code
-            # Original port_dict: {node_id: B_ext}
-            # Enriched: {node_id: {'B_ext': B_ext, 'label': label, 'conj': bool}}
-            enriched_port_dict = {}
-            for port_id, B_ext in scattering_calc.port_dict.items():
-                port_node = next((n for n in nodes_to_use if n['node_id'] == port_id), None)
-                label = port_node['label'] if port_node else str(port_id)
-                conj = port_node.get('conj', False) if port_node else False
-                enriched_port_dict[port_id] = {'B_ext': B_ext, 'label': label, 'conj': conj}
+        # For backward compatibility, also store first component's data at top level
+        first = all_sparams_data[0]
+        self.sparams_data['S'] = first['S']
+        self.sparams_data['SdB'] = first['SdB']
+        self.sparams_data['port_dict'] = first['port_dict']
+        self.sparams_data['drive_signals'] = first['drive_signals']
+        self.sparams_data['port_ids'] = first['port_ids']
 
-            return {
-                'S': scattering_calc.S,
-                'SdB': scattering_calc.SdB,
-                'port_dict': enriched_port_dict,
-                'drive_signals': scattering_calc.drive_signals,
-                'port_ids': sorted(scattering_calc.port_dict.keys())
-            }
+        # Update checkboxes with port labels (handles multi-component)
+        self._update_sparams_checkboxes()
 
-        except Exception as e:
-            print(f"  {comp_name}: Error computing S-parameters: {e}")
-            traceback.print_exc()
-            return None
+        # Plot
+        self._plot_sparams()
+
+        logger.info(f"S-matrix computed successfully for {len(all_sparams_data)} component(s)")
 
     def _update_sparams_checkboxes(self):
         """Update checkboxes for S-parameter selection.
@@ -10284,6 +10145,18 @@ class Graphulator(QMainWindow):
         with matplotlib.rc_context({'mathtext.fontset': 'stixsans',
                             'mathtext.default': 'regular'}):
 
+            # Phase arrays are per-component and independent of the trace, so
+            # compute them lazily once per component instead of per checkbox
+            phase_cache = {}
+
+            def get_phase_deg(comp_idx, S_complex):
+                if comp_idx not in phase_cache:
+                    S_phase_rad = np.angle(S_complex)
+                    if self.sparams_phase_unwrap.isChecked():
+                        S_phase_rad = np.unwrap(S_phase_rad, axis=0)
+                    phase_cache[comp_idx] = np.degrees(S_phase_rad)
+                return phase_cache[comp_idx]
+
             # Plot each selected S-parameter with fixed colors based on matrix position
             # Each S-parameter gets a consistent color regardless of which traces are shown
             for key, checkbox in self.sparams_checkboxes.items():
@@ -10316,16 +10189,8 @@ class Graphulator(QMainWindow):
                         if j_idx >= num_ports or k_idx >= num_ports:
                             continue
 
-                        # Compute phase from complex S-matrix
-                        S_phase_rad = np.angle(S_complex)
-                        if self.sparams_phase_unwrap.isChecked():
-                            S_phase_rad_unwrapped = np.zeros_like(S_phase_rad)
-                            for j in range(S_phase_rad.shape[1]):
-                                for k in range(S_phase_rad.shape[2]):
-                                    S_phase_rad_unwrapped[:, j, k] = np.unwrap(S_phase_rad[:, j, k])
-                            S_phase_deg = np.degrees(S_phase_rad_unwrapped)
-                        else:
-                            S_phase_deg = np.degrees(S_phase_rad)
+                        # Compute phase from complex S-matrix (cached per component)
+                        S_phase_deg = get_phase_deg(comp_idx, S_complex)
 
                         # Apply conjugate transformation to data if active
                         if conjugate_mode:
@@ -10861,50 +10726,6 @@ class Graphulator(QMainWindow):
         # Hide initially
         self.properties_panel.tabs.setTabVisible(3, False)
 
-    def _show_color_context_menu(self, event, node):
-        """Show context menu for color selection"""
-        # Create context menu
-        menu = QMenu(self)
-
-        # Add color options
-        for color_name in config.MYCOLORS.keys():
-            action = menu.addAction(color_name)
-            # Use lambda with default argument to capture color_name
-            action.triggered.connect(lambda _, c=color_name, n=node: self._change_node_color(n, c))
-
-        # Show menu at mouse position
-        menu.exec(QCursor.pos())
-
-    def _change_node_color(self, node, color_key):
-        """Change the color of a node (or all selected nodes if multiple selected)"""
-        self._save_state()
-
-        # If the clicked node is in selection, change all selected nodes
-        if node in self.selected_nodes and len(self.selected_nodes) > 1:
-            for selected_node in self.selected_nodes:
-                selected_node['color'] = config.MYCOLORS[color_key]
-                selected_node['color_key'] = color_key
-            print(f"Changed color of {len(self.selected_nodes)} nodes to {color_key}")
-            # Update last_node_props with the first selected node's properties
-            last_modified = self.selected_nodes[0]
-        else:
-            # Change just this node
-            node['color'] = config.MYCOLORS[color_key]
-            node['color_key'] = color_key
-            print(f"Changed node '{node['label']}' color to {color_key}")
-            last_modified = node
-
-        # Update last_node_props so continuous mode inherits these properties
-        self.last_node_props = {
-            'label': last_modified['label'],
-            'color': last_modified['color'],
-            'color_key': last_modified['color_key'],
-            'node_size_mult': last_modified.get('node_size_mult', 1.0),
-            'label_size_mult': last_modified.get('label_size_mult', 1.0),
-            'conj': last_modified.get('conj', False)
-        }
-
-        self._update_plot()
 
     def _show_edge_context_menu(self, _event, edge):
         """Show context menu for edge width selection"""
@@ -11001,44 +10822,6 @@ class Graphulator(QMainWindow):
 
         self._update_plot()
 
-    def _toggle_edge_rotation_mode(self):
-        """Toggle edge label rotation mode (Shift+F)"""
-        if not self.selected_edges:
-            print("Select an edge to adjust label rotation")
-            return
-
-        self.edge_rotation_mode = not self.edge_rotation_mode
-
-        if self.edge_rotation_mode:
-            print("Edge rotation mode: Use Left/Right arrows to adjust label angle (±5°)")
-        else:
-            print("Exited edge rotation mode")
-
-    def _adjust_edge_rotation(self, direction):
-        """Adjust edge label rotation angle by ±5 degrees"""
-        if not self.selected_edges:
-            return
-
-        self._save_state()
-        increment = 5  # degrees
-
-        for edge in self.selected_edges:
-            current_rotation = edge.get('label_rotation_offset', 0)
-
-            if direction == 'left':
-                edge['label_rotation_offset'] = current_rotation - increment
-            elif direction == 'right':
-                edge['label_rotation_offset'] = current_rotation + increment
-
-        # Print feedback
-        if len(self.selected_edges) == 1:
-            edge = self.selected_edges[0]
-            rotation = edge.get('label_rotation_offset', 0)
-            print(f"Edge label rotation: {rotation:+d}°")
-        else:
-            print(f"Adjusted rotation for {len(self.selected_edges)} edge(s)")
-
-        self._update_plot()
 
     def _update_both_canvases(self):
         """Update main canvas, Scattering canvas (if active), and Kron canvas (if exists)"""
@@ -11092,26 +10875,6 @@ class Graphulator(QMainWindow):
             self.base_xlim = saved_base_xlim
             self.base_ylim = saved_base_ylim
 
-    def _rotate_grid(self):
-        """Rotate the grid"""
-        increment = config.SQUARE_GRID_ROTATION_INCREMENT if self.grid_type == "square" else config.TRIANGULAR_GRID_ROTATION_INCREMENT
-        self.grid_rotation = (self.grid_rotation + increment) % 360
-        print(f"Rotated grid to {self.grid_rotation}°")
-        self._update_both_canvases()
-
-    def _toggle_grid_type(self):
-        """Toggle grid type"""
-        self.grid_type = "triangular" if self.grid_type == "square" else "square"
-        self.grid_rotation = 0
-        print(f"Switched to {self.grid_type} grid")
-        self._update_both_canvases()
-
-    def _clear_nodes(self):
-        """Clear all nodes"""
-        self.nodes = []
-        self.node_counter = 0
-        print("All nodes cleared")
-        self._update_plot()
 
     def _zoom(self, factor):
         """Zoom by factor - updates the currently visible canvas"""
@@ -11460,62 +11223,6 @@ class Graphulator(QMainWindow):
 
         self._update_plot()
 
-    def _rotate_selected_nodes(self, angle_degrees):
-        """Rotate selected nodes around their centroid
-
-        Args:
-            angle_degrees: Rotation angle in degrees. Positive = CCW, Negative = CW
-        """
-        if not self.selected_nodes:
-            print("No nodes selected to rotate")
-            return
-
-        self._save_state()
-
-        # Calculate centroid of selected nodes
-        positions = np.array([node['pos'] for node in self.selected_nodes])
-        centroid = positions.mean(axis=0)
-
-        # Convert angle to radians (negate to match user's expected direction)
-        angle_rad = np.radians(-angle_degrees)  # Negate for intuitive CW/CCW
-        cos_a = np.cos(angle_rad)
-        sin_a = np.sin(angle_rad)
-
-        # Get IDs of selected nodes for self-loop tracking
-        selected_node_ids = {node['node_id'] for node in self.selected_nodes}
-
-        # Rotate each node around the centroid
-        for node in self.selected_nodes:
-            # Get position relative to centroid
-            pos = np.array(node['pos'])
-            rel_pos = pos - centroid
-
-            # Apply rotation matrix
-            new_rel_pos = np.array([
-                rel_pos[0] * cos_a - rel_pos[1] * sin_a,
-                rel_pos[0] * sin_a + rel_pos[1] * cos_a
-            ])
-
-            # Update node position
-            node['pos'] = tuple(centroid + new_rel_pos)
-
-        # Rotate self-loop angles for edges attached to selected nodes
-        for edge in self.edges:
-            if edge.get('is_self_loop', False):
-                # Check if this self-loop is attached to a selected node
-                if edge['from_node_id'] in selected_node_ids:
-                    # Update self-loop angle (negate angle_degrees for correct direction)
-                    current_angle = edge.get('selfloopangle', 45)
-                    edge['selfloopangle'] = current_angle - angle_degrees  # Subtract for correct rotation
-
-        # Print feedback
-        direction = "CCW" if angle_degrees > 0 else "CW"
-        if len(self.selected_nodes) == 1:
-            print(f"Rotated node '{self.selected_nodes[0]['label']}' {abs(angle_degrees)}° {direction}")
-        else:
-            print(f"Rotated {len(self.selected_nodes)} nodes {abs(angle_degrees)}° {direction} around centroid ({centroid[0]:.2f}, {centroid[1]:.2f})")
-
-        self._update_plot()
 
     def _flip_selected_nodes_horizontal(self):
         """Flip selected nodes horizontally (reflect across Y axis through centroid)
@@ -11791,274 +11498,6 @@ class Graphulator(QMainWindow):
 
         self._update_plot()
 
-    def _adjust_selfloop_angle(self, action):
-        """Adjust self-loop angle using Ctrl+Left/Right (configurable increments)"""
-        if not self.selected_edges:
-            return
-
-        # Filter to only self-loops
-        selfloops = [e for e in self.selected_edges if e.get('is_self_loop', False)]
-        if not selfloops:
-            return
-
-        self._save_state()
-
-        increment = config.SELFLOOP_ANGLE_KEYBOARD_INCREMENT
-        for edge in selfloops:
-            current = edge.get('selfloopangle', 0)
-
-            # Reverse direction: Left increases (counter-clockwise), Right decreases (clockwise)
-            if action == 'increase':
-                edge['selfloopangle'] = (current - increment) % 360
-            elif action == 'decrease':
-                edge['selfloopangle'] = (current + increment) % 360
-            edge['angle_pinned'] = True
-
-        # Update properties panel spinbox if showing a single self-loop
-        if len(self.selected_edges) == 1 and hasattr(self, 'properties_panel'):
-            edge = self.selected_edges[0]
-            if edge.get('is_self_loop', False) and hasattr(self.properties_panel, 'angle_spinbox'):
-                self.properties_panel.angle_spinbox.blockSignals(True)
-                self.properties_panel.angle_spinbox.setValue(edge.get('selfloopangle', 0))
-                self.properties_panel.angle_spinbox.blockSignals(False)
-                if hasattr(self.properties_panel, 'angle_compass_label'):
-                    self.properties_panel.angle_compass_label.setText(
-                        PropertiesPanel._compass_direction(edge.get('selfloopangle', 0)))
-                if hasattr(self.properties_panel, 'angle_pinned_checkbox'):
-                    self.properties_panel.angle_pinned_checkbox.blockSignals(True)
-                    self.properties_panel.angle_pinned_checkbox.setChecked(True)
-                    self.properties_panel.angle_pinned_checkbox.blockSignals(False)
-
-        if len(selfloops) == 1:
-            print(f"Self-loop angle: {selfloops[0]['selfloopangle']}°")
-            # Save for inheritance
-            self._save_last_edge_props(selfloops[0])
-        else:
-            print(f"Adjusted angle for {len(selfloops)} self-loop(s)")
-            # Save the last one for inheritance
-            if selfloops:
-                self._save_last_edge_props(selfloops[-1])
-
-        self._update_plot()
-
-    def _adjust_edge_looptheta_or_selfloop_angle(self, action):
-        """Adjust looptheta for regular edges or selfloopangle for self-loops using Ctrl+Left/Right (2° increments for looptheta, configurable for selfloop)"""
-        print(f"DEBUG: _adjust_edge_looptheta_or_selfloop_angle called with action={action}, selected_edges count={len(self.selected_edges)}")
-        if not self.selected_edges:
-            print("DEBUG: No edges selected, returning")
-            return
-
-        # Separate self-loops from regular edges
-        selfloops = [e for e in self.selected_edges if e.get('is_self_loop', False)]
-        regular_edges = [e for e in self.selected_edges if not e.get('is_self_loop', False)]
-        print(f"DEBUG: selfloops={len(selfloops)}, regular_edges={len(regular_edges)}")
-
-        if not selfloops and not regular_edges:
-            print("DEBUG: No valid edges found")
-            return
-
-        self._save_state()
-
-        # Adjust self-loop angles (configurable increments)
-        increment = config.SELFLOOP_ANGLE_KEYBOARD_INCREMENT
-        for edge in selfloops:
-            current = edge.get('selfloopangle', 0)
-            # Reverse direction: Left increases (counter-clockwise), Right decreases (clockwise)
-            if action == 'increase':
-                edge['selfloopangle'] = (current - increment) % 360
-            elif action == 'decrease':
-                edge['selfloopangle'] = (current + increment) % 360
-            edge['angle_pinned'] = True
-
-        # Adjust regular edge looptheta (2° increments)
-        for edge in regular_edges:
-            current = edge.get('looptheta', 30)
-            if action == 'increase':
-                edge['looptheta'] = current + 2
-            elif action == 'decrease':
-                edge['looptheta'] = current - 2
-
-        # Update properties panel if showing a single edge
-        if len(self.selected_edges) == 1 and hasattr(self, 'properties_panel'):
-            edge = self.selected_edges[0]
-            if not edge.get('is_self_loop', False) and hasattr(self.properties_panel, 'looptheta_spinbox'):
-                # Block signals to avoid triggering update again
-                self.properties_panel.looptheta_spinbox.blockSignals(True)
-                self.properties_panel.looptheta_spinbox.setValue(edge.get('looptheta', 30))
-                self.properties_panel.looptheta_spinbox.blockSignals(False)
-            elif edge.get('is_self_loop', False) and hasattr(self.properties_panel, 'angle_spinbox'):
-                self.properties_panel.angle_spinbox.blockSignals(True)
-                self.properties_panel.angle_spinbox.setValue(edge.get('selfloopangle', 0))
-                self.properties_panel.angle_spinbox.blockSignals(False)
-                if hasattr(self.properties_panel, 'angle_compass_label'):
-                    self.properties_panel.angle_compass_label.setText(
-                        PropertiesPanel._compass_direction(edge.get('selfloopangle', 0)))
-                if hasattr(self.properties_panel, 'angle_pinned_checkbox'):
-                    self.properties_panel.angle_pinned_checkbox.blockSignals(True)
-                    self.properties_panel.angle_pinned_checkbox.setChecked(True)
-                    self.properties_panel.angle_pinned_checkbox.blockSignals(False)
-
-        # Print feedback and save for inheritance
-        if len(self.selected_edges) == 1:
-            edge = self.selected_edges[0]
-            if edge.get('is_self_loop', False):
-                print(f"Self-loop angle: {edge['selfloopangle']}°")
-            else:
-                print(f"Edge looptheta: {edge.get('looptheta', 30)}°")
-            # Save for inheritance
-            self._save_last_edge_props(edge)
-        else:
-            if selfloops and regular_edges:
-                print(f"Adjusted {len(selfloops)} self-loop(s) and {len(regular_edges)} edge(s)")
-            elif selfloops:
-                print(f"Adjusted angle for {len(selfloops)} self-loop(s)")
-            else:
-                print(f"Adjusted looptheta for {len(regular_edges)} edge(s)")
-            # Save the last modified edge for inheritance
-            if selfloops:
-                self._save_last_edge_props(selfloops[-1])
-            elif regular_edges:
-                self._save_last_edge_props(regular_edges[-1])
-
-        self._update_plot()
-
-    def _adjust_edge_label_offset(self, direction):
-        """Adjust edge label offset for selected edges using Shift+Up/Down"""
-        if not self.selected_edges:
-            return
-
-        self._save_state()
-        increment = 0.05  # Smaller increment (half of 0.1)
-
-        for edge in self.selected_edges:
-            if direction == 'up':
-                # Increase label offset
-                current = edge.get('label_offset_mult', 0.8)
-                edge['label_offset_mult'] = min(current + increment, 2.0)
-            elif direction == 'down':
-                # Decrease label offset
-                current = edge.get('label_offset_mult', 0.8)
-                edge['label_offset_mult'] = max(current - increment, 0.1)
-
-        # Print feedback
-        if len(self.selected_edges) == 1:
-            edge = self.selected_edges[0]
-            print(f"Edge label offset: {edge['label_offset_mult']:.1f}")
-        else:
-            print(f"Adjusted label offset for {len(self.selected_edges)} edge(s)")
-
-        self._update_plot()
-
-    def _nudge_selfloop_label(self, direction):
-        """Nudge self-loop label position for selected self-loop edges"""
-        if not self.selected_edges:
-            return
-
-        self._save_state()
-
-        # Filter to only self-loops
-        selfloops = [edge for edge in self.selected_edges if edge.get('is_self_loop', False)]
-        if not selfloops:
-            return
-
-        for edge in selfloops:
-            # Get the node this self-loop is attached to
-            from_node_id = edge['from_node_id']
-            from_node = next((n for n in self.nodes if n['node_id'] == from_node_id), None)
-            if not from_node:
-                continue
-
-            node_size_mult = from_node.get('node_size_mult', 1.0)
-
-            # Calculate increment based on node diameter
-            base_diameter = 2 * self.node_radius
-            diameter = base_diameter * node_size_mult
-            increment = 0.02 * diameter
-
-            # Get current nudge (default to (0, 0))
-            current_nudge = edge.get('selflooplabelnudge', (0.0, 0.0))
-            nudge_x, nudge_y = current_nudge
-
-            # Update nudge based on direction
-            if direction == 'left':
-                nudge_x -= increment
-            elif direction == 'right':
-                nudge_x += increment
-            elif direction == 'up':
-                nudge_y += increment
-            elif direction == 'down':
-                nudge_y -= increment
-
-            edge['selflooplabelnudge'] = (nudge_x, nudge_y)
-
-        # Print feedback
-        if len(selfloops) == 1:
-            edge = selfloops[0]
-            nudge = edge['selflooplabelnudge']
-            print(f"Self-loop label nudge: ({nudge[0]:.3f}, {nudge[1]:.3f})")
-        else:
-            print(f"Nudged labels for {len(selfloops)} self-loop(s)")
-
-        self._update_plot()
-
-    def _get_xlim(self):
-        """Get x limits based on zoom level and canvas aspect ratio"""
-        center = (self.base_xlim[0] + self.base_xlim[1]) / 2
-        base_half_width = (self.base_xlim[1] - self.base_xlim[0]) / 2
-        base_half_height = (self.base_ylim[1] - self.base_ylim[0]) / 2
-
-        # Get canvas aspect ratio
-        canvas_aspect = self._get_canvas_aspect_ratio()
-
-        # Calculate base data aspect ratio
-        base_data_aspect = base_half_width / base_half_height
-
-        # Expand the dimension that needs to grow to fill canvas
-        if canvas_aspect > base_data_aspect:
-            # Canvas is wider than base data - expand width
-            half_width = base_half_height * canvas_aspect
-        else:
-            # Use base width
-            half_width = base_half_width
-
-        # Apply zoom
-        half_width /= self.zoom_level
-
-        return (center - half_width, center + half_width)
-
-    def _get_ylim(self):
-        """Get y limits based on zoom level and canvas aspect ratio"""
-        center = (self.base_ylim[0] + self.base_ylim[1]) / 2
-        base_half_width = (self.base_xlim[1] - self.base_xlim[0]) / 2
-        base_half_height = (self.base_ylim[1] - self.base_ylim[0]) / 2
-
-        # Get canvas aspect ratio
-        canvas_aspect = self._get_canvas_aspect_ratio()
-
-        # Calculate base data aspect ratio
-        base_data_aspect = base_half_width / base_half_height
-
-        # Expand the dimension that needs to grow to fill canvas
-        if canvas_aspect < base_data_aspect:
-            # Canvas is taller than base data - expand height
-            half_height = base_half_width / canvas_aspect
-        else:
-            # Use base height
-            half_height = base_half_height
-
-        # Apply zoom
-        half_height /= self.zoom_level
-
-        return (center - half_height, center + half_height)
-
-    def _get_canvas_aspect_ratio(self):
-        """Get the aspect ratio (width/height) of the canvas"""
-        bbox = self.canvas.ax.get_window_extent()
-        width = bbox.width
-        height = bbox.height
-        if height > 0:
-            return width / height
-        return 1.0
 
     def _draw_grid(self):
         """Draw the grid overlay (only on Original canvas)
@@ -12075,136 +11514,6 @@ class Graphulator(QMainWindow):
         else:
             self._draw_triangular_grid()
 
-    def _draw_square_grid(self):
-        """Draw rotated square grid"""
-        spacing = self.grid_spacing
-        rot_rad = np.radians(self.grid_rotation)
-
-        xlim = self._get_xlim()
-        ylim = self._get_ylim()
-        # Build the grid over a generous extent so ordinary zoom-out stays covered
-        # without a rebuild (the fast view path rebuilds it only if the view grows
-        # beyond this).
-        max_extent = max(abs(xlim[0]), abs(xlim[1]), abs(ylim[0]), abs(ylim[1])) * 3.0
-        self._grid_built_extent = max_extent
-        n = int(max_extent / spacing) + 2
-
-        for i in range(-n, n + 1):
-            offset = i * spacing
-
-            # Vertical lines
-            x1 = offset * np.cos(rot_rad) - max_extent * np.sin(rot_rad)
-            y1 = offset * np.sin(rot_rad) + max_extent * np.cos(rot_rad)
-            x2 = offset * np.cos(rot_rad) + max_extent * np.sin(rot_rad)
-            y2 = offset * np.sin(rot_rad) - max_extent * np.cos(rot_rad)
-            line, = self.canvas.ax.plot([x1, x2], [y1, y2], 'lightgray', lw=0.5, zorder=0)
-            line.set_gid('grid')
-
-            # Horizontal lines
-            x1 = -max_extent * np.cos(rot_rad) + offset * np.sin(rot_rad)
-            y1 = -max_extent * np.sin(rot_rad) - offset * np.cos(rot_rad)
-            x2 = max_extent * np.cos(rot_rad) + offset * np.sin(rot_rad)
-            y2 = max_extent * np.sin(rot_rad) - offset * np.cos(rot_rad)
-            line, = self.canvas.ax.plot([x1, x2], [y1, y2], 'lightgray', lw=0.5, zorder=0)
-            line.set_gid('grid')
-
-    def _draw_triangular_grid(self):
-        """Draw rotated triangular grid"""
-        spacing = self.grid_spacing
-        rot_rad = np.radians(self.grid_rotation)
-        sqrt3 = np.sqrt(3)
-
-        xlim = self._get_xlim()
-        ylim = self._get_ylim()
-        # Generous extent so ordinary zoom-out stays covered without a rebuild.
-        max_extent = max(abs(xlim[0]), abs(xlim[1]), abs(ylim[0]), abs(ylim[1])) * 3.0
-        self._grid_built_extent = max_extent
-        n = int(max_extent / spacing * 2) + 5
-
-        # Three sets of lines
-        for i in range(-n, n + 1):
-            # Horizontal lines
-            offset = i * spacing * sqrt3 / 2
-            x1, y1 = -max_extent, offset
-            x2, y2 = max_extent, offset
-            x1r = x1 * np.cos(rot_rad) - y1 * np.sin(rot_rad)
-            y1r = x1 * np.sin(rot_rad) + y1 * np.cos(rot_rad)
-            x2r = x2 * np.cos(rot_rad) - y2 * np.sin(rot_rad)
-            y2r = x2 * np.sin(rot_rad) + y2 * np.cos(rot_rad)
-            line, = self.canvas.ax.plot([x1r, x2r], [y1r, y2r], 'lightgray', lw=0.5, zorder=0)
-            line.set_gid('grid')
-
-        for i in range(-n, n + 1):
-            # 60° lines
-            offset = i * spacing
-            x0, y0 = offset, 0
-            dx, dy = 1, sqrt3
-            x1 = x0 - max_extent * dx
-            y1 = y0 - max_extent * dy
-            x2 = x0 + max_extent * dx
-            y2 = y0 + max_extent * dy
-            x1r = x1 * np.cos(rot_rad) - y1 * np.sin(rot_rad)
-            y1r = x1 * np.sin(rot_rad) + y1 * np.cos(rot_rad)
-            x2r = x2 * np.cos(rot_rad) - y2 * np.sin(rot_rad)
-            y2r = x2 * np.sin(rot_rad) + y2 * np.cos(rot_rad)
-            line, = self.canvas.ax.plot([x1r, x2r], [y1r, y2r], 'lightgray', lw=0.5, zorder=0)
-            line.set_gid('grid')
-
-        for i in range(-n, n + 1):
-            # 120° lines
-            offset = i * spacing
-            x0, y0 = offset, 0
-            dx, dy = 1, -sqrt3
-            x1 = x0 - max_extent * dx
-            y1 = y0 - max_extent * dy
-            x2 = x0 + max_extent * dx
-            y2 = y0 + max_extent * dy
-            x1r = x1 * np.cos(rot_rad) - y1 * np.sin(rot_rad)
-            y1r = x1 * np.sin(rot_rad) + y1 * np.cos(rot_rad)
-            x2r = x2 * np.cos(rot_rad) - y2 * np.sin(rot_rad)
-            y2r = x2 * np.sin(rot_rad) + y2 * np.cos(rot_rad)
-            line, = self.canvas.ax.plot([x1r, x2r], [y1r, y2r], 'lightgray', lw=0.5, zorder=0)
-            line.set_gid('grid')
-
-    def _snap_to_grid(self, x, y):
-        """Snap coordinates to nearest grid point"""
-        rot_rad = np.radians(-self.grid_rotation)
-        grid_x = x * np.cos(rot_rad) - y * np.sin(rot_rad)
-        grid_y = x * np.sin(rot_rad) + y * np.cos(rot_rad)
-
-        if self.grid_type == "square":
-            snap_x = np.round(grid_x / self.grid_spacing) * self.grid_spacing
-            snap_y = np.round(grid_y / self.grid_spacing) * self.grid_spacing
-        else:
-            snap_x, snap_y = self._snap_to_hex(grid_x, grid_y)
-
-        rot_rad = np.radians(self.grid_rotation)
-        final_x = snap_x * np.cos(rot_rad) - snap_y * np.sin(rot_rad)
-        final_y = snap_x * np.sin(rot_rad) + snap_y * np.cos(rot_rad)
-
-        return final_x, final_y
-
-    def _snap_to_hex(self, x, y):
-        """Snap to triangular grid vertices"""
-        spacing = self.grid_spacing
-        sqrt3 = np.sqrt(3)
-
-        j = np.round(y / (spacing * sqrt3 / 2))
-        i = np.round((x - j * spacing / 2) / spacing)
-
-        snap_x = i * spacing + j * spacing / 2
-        snap_y = j * spacing * sqrt3 / 2
-
-        return snap_x, snap_y
-
-    def _get_next_label(self):
-        """Generate next alphabetical label"""
-        if self.node_counter < 26:
-            return chr(ord('A') + self.node_counter)
-        else:
-            first = chr(ord('A') + (self.node_counter // 26) - 1)
-            second = chr(ord('A') + (self.node_counter % 26))
-            return first + second
 
     def _get_ghost_node_properties(self):
         """Get predicted properties for the next node to be placed.
@@ -12445,7 +11754,7 @@ class Graphulator(QMainWindow):
                     self._next_constraint_group_id += 1
 
                     # Get current value from unconjugated node's assignment (or default)
-                    node_id = id(unconj_node)
+                    node_id = _node_key(unconj_node)
                     if node_id in self.scattering_assignments:
                         if param_name in self.scattering_assignments[node_id]:
                             value = self.scattering_assignments[node_id][param_name]
@@ -12483,71 +11792,6 @@ class Graphulator(QMainWindow):
         if hasattr(self, 'properties_panel') and self.properties_panel is not None:
             self.properties_panel._apply_constraint_styling()
 
-    def _find_node_at_position(self, x, y):
-        """Find node at given position (within node radius)"""
-        for node in self.nodes:
-            node_size_mult = node.get('node_size_mult', 1.0)
-            radius = self.node_radius * node_size_mult
-            dx = x - node['pos'][0]
-            dy = y - node['pos'][1]
-            distance = np.sqrt(dx*dx + dy*dy)
-            if distance <= radius:
-                return node
-        return None
-
-    def _find_edge_at_position(self, x, y):
-        """Find edge at given position (near center of edge or self-loop apex)"""
-        for edge in self.edges:
-            if edge['is_self_loop']:
-                # For self-loops, check if click is near any part of the loop arc
-                from_pos = edge['from_node']['pos']
-                from_node = edge['from_node']
-                from_radius = self.node_radius * from_node.get('node_size_mult', 1.0)
-
-                # Calculate self-loop parameters
-                selfloopscale = edge.get('selfloopscale', 1.0)
-                LOOPYSCALE = 6 * selfloopscale
-                selfloopangle = edge.get('selfloopangle', 0)
-                loopR = from_radius * LOOPYSCALE
-
-                # Check multiple points along the loop arc for easier selection
-                # Sample points from start of arc to apex to end of arc
-                detection_radius = max(from_radius * 2.0, loopR * 0.5)  # Larger detection area
-
-                # Check several points along the arc (5 sample points)
-                for t in [0.25, 0.5, 0.75, 1.0]:
-                    # Distance from node center varies along arc
-                    sample_distance = from_radius * 1.2 + loopR * t
-                    sample_x = from_pos[0] + sample_distance * np.cos(selfloopangle * np.pi / 180)
-                    sample_y = from_pos[1] + sample_distance * np.sin(selfloopangle * np.pi / 180)
-
-                    dx = x - sample_x
-                    dy = y - sample_y
-                    distance = np.sqrt(dx*dx + dy*dy)
-                    if distance <= detection_radius:
-                        return edge
-            else:
-                # Regular edge - check midpoint
-                from_pos = edge['from_node']['pos']
-                to_pos = edge['to_node']['pos']
-
-                # Calculate midpoint of edge
-                mid_x = (from_pos[0] + to_pos[0]) / 2
-                mid_y = (from_pos[1] + to_pos[1]) / 2
-
-                # Calculate edge length
-                edge_length = np.sqrt((to_pos[0] - from_pos[0])**2 + (to_pos[1] - from_pos[1])**2)
-
-                # Click detection radius (80% of half edge length, max 2.0 units)
-                detection_radius = min(edge_length * 0.4, 2.0)
-
-                # Check if click is near midpoint
-                dx = x - mid_x
-                dy = y - mid_y
-                distance = np.sqrt(dx*dx + dy*dy)
-                if distance <= detection_radius:
-                    return edge
-        return None
 
     def _edit_node(self, node):
         """Edit an existing node"""
@@ -12778,20 +12022,9 @@ class Graphulator(QMainWindow):
     def _edit_scattering_node_parameters(self, node):
         """Edit scattering parameters for a node via dialog"""
 
-        # Find the original node for assignment storage
-        original_node = None
-        if hasattr(self, '_original_nodes_for_lookup') and self._original_nodes_for_lookup:
-            for orig_node in self._original_nodes_for_lookup:
-                if (orig_node['label'] == node['label'] and
-                    orig_node['pos'] == node['pos']):
-                    original_node = orig_node
-                    break
-
-        if not original_node:
-            print(f"Could not find original node for '{node['label']}'")
-            return
-
-        node_id = id(original_node)
+        # Scattering-graph nodes are copies but preserve the stable node_id,
+        # which is also the assignment key.
+        node_id = _node_key(node)
         node_label = node['label']
         if node.get('conj', False):
             node_label += '*'
@@ -12885,29 +12118,9 @@ class Graphulator(QMainWindow):
     def _edit_scattering_edge_parameters(self, edge):
         """Edit scattering parameters for an edge via dialog"""
 
-        # Find the original edge for assignment storage
-        original_edge = None
-        if hasattr(self, '_original_edges_for_lookup') and self._original_edges_for_lookup:
-            from_label = edge['from_node']['label']
-            to_label = edge['to_node']['label']
-            is_self_loop = edge.get('is_self_loop', False)
-
-            for orig_edge in self._original_edges_for_lookup:
-                orig_from_label = orig_edge['from_node']['label']
-                orig_to_label = orig_edge['to_node']['label']
-                orig_is_self_loop = orig_edge.get('is_self_loop', False)
-
-                if (orig_from_label == from_label and
-                    orig_to_label == to_label and
-                    orig_is_self_loop == is_self_loop):
-                    original_edge = orig_edge
-                    break
-
-        if not original_edge:
-            print(f"Could not find original edge")
-            return
-
-        edge_id = id(original_edge)
+        # Scattering-graph edges are copies but preserve the stable from/to
+        # node ids, which form the assignment key.
+        edge_id = _edge_key(edge)
 
         # Build edge label
         from_label = edge['from_node']['label']
@@ -12919,7 +12132,7 @@ class Graphulator(QMainWindow):
         edge_label = f"{from_label}→{to_label}"
 
         # Check if this is a chord edge
-        edge_key = tuple(sorted([original_edge['from_node_id'], original_edge['to_node_id']]))
+        edge_key = tuple(sorted([edge['from_node_id'], edge['to_node_id']]))
         is_chord = edge_key in self.scattering_chord_edges
 
         # Get current assignments
@@ -14082,98 +13295,6 @@ class Graphulator(QMainWindow):
             self._update_conjugate_pair_constraints()
             self._update_plot()
 
-    def _compute_best_selfloop_angle(self, node, exclude_edge=None):
-        """Compute the self-loop angle that is farthest from all existing edges on this node.
-
-        Uses the configurable SELFLOOP_ANGLE_KEYBOARD_INCREMENT to generate candidate
-        angles, then picks the one with the largest minimum angular distance from any
-        connected edge (including other self-loops, but excluding exclude_edge).
-
-        Args:
-            node: The node dict to compute the angle for.
-            exclude_edge: Optional edge dict to exclude from angle collection
-                (used when recomputing an existing self-loop's own angle).
-        """
-        node_id = node['node_id']
-        node_pos = np.array(node['pos'])
-
-        # Collect angles of all edges connected to this node
-        edge_angles = []
-        for edge in self.edges:
-            if edge is exclude_edge:
-                continue
-            if edge.get('is_self_loop', False):
-                # Existing self-loop on this node
-                if edge.get('from_node_id') == node_id:
-                    edge_angles.append(edge.get('selfloopangle', 0) % 360)
-            else:
-                # Regular edge - compute angle from this node to the other node
-                if edge.get('from_node_id') == node_id:
-                    other = edge.get('to_node', {})
-                elif edge.get('to_node_id') == node_id:
-                    other = edge.get('from_node', {})
-                else:
-                    continue
-                other_pos = np.array(other['pos'])
-                diff = other_pos - node_pos
-                angle_deg = np.degrees(np.arctan2(diff[1], diff[0])) % 360
-                edge_angles.append(angle_deg)
-
-        # If no edges, return the default angle
-        if not edge_angles:
-            return config.DEFAULT_SELFLOOP_ANGLE
-
-        # Generate candidate angles based on configurable increment
-        increment = config.SELFLOOP_ANGLE_KEYBOARD_INCREMENT
-        candidates = list(range(0, 360, increment))
-
-        # Find candidate with largest minimum angular distance from any edge.
-        # On ties, prefer the default angle (90° = Up) for aesthetics.
-        best_angle = config.DEFAULT_SELFLOOP_ANGLE
-        best_min_dist = -1
-        for candidate in candidates:
-            min_dist = min(
-                min(abs(candidate - ea), 360 - abs(candidate - ea))
-                for ea in edge_angles
-            )
-            if min_dist > best_min_dist or (
-                min_dist == best_min_dist and candidate == config.DEFAULT_SELFLOOP_ANGLE
-            ):
-                best_min_dist = min_dist
-                best_angle = candidate
-
-        return best_angle
-
-    def _recompute_unpinned_selfloop_angles(self, moved_node_ids):
-        """Recompute angles for unpinned self-loops affected by moved nodes.
-
-        Args:
-            moved_node_ids: set of node_ids that were moved. Self-loops on these
-                nodes AND self-loops on nodes connected to these nodes are affected.
-        """
-        if not config.DYNAMIC_ADJUST_SELFLOOP_ANGLE:
-            return
-
-        # Find all affected node IDs (moved nodes + their neighbors)
-        affected_node_ids = set(moved_node_ids)
-        for edge in self.edges:
-            if edge.get('is_self_loop', False):
-                continue
-            fid = edge.get('from_node_id')
-            tid = edge.get('to_node_id')
-            if fid in moved_node_ids:
-                affected_node_ids.add(tid)
-            if tid in moved_node_ids:
-                affected_node_ids.add(fid)
-
-        # Recompute unpinned self-loops on affected nodes
-        for edge in self.edges:
-            if (edge.get('is_self_loop', False) and
-                    not edge.get('angle_pinned', False) and
-                    edge.get('from_node_id') in affected_node_ids):
-                node = edge.get('from_node')
-                if node:
-                    edge['selfloopangle'] = self._compute_best_selfloop_angle(node, exclude_edge=edge)
 
     def _on_click_edge_mode(self, event):
         """Handle click in edge mode - connect two nodes."""
@@ -15081,20 +14202,18 @@ class Graphulator(QMainWindow):
 
         # Clear scattering assignments for deleted nodes/edges
         # Keep only assignments for nodes/edges that still exist
-        # Note: scattering_assignments uses Python id() as keys, not node['node_id']
         if hasattr(self, 'scattering_assignments') and self.scattering_assignments:
-            node_obj_ids = {id(n) for n in self.nodes}
-            edge_obj_ids = {id(e) for e in self.edges}
+            node_obj_ids = {_node_key(n) for n in self.nodes}
+            edge_obj_ids = {_edge_key(e) for e in self.edges}
 
             # Find nodes that have self-loops (ports)
             port_node_obj_ids = set()
             for edge in self.edges:
                 if edge.get('is_self_loop', False):
-                    port_node_obj_ids.add(id(edge['from_node']))
+                    port_node_obj_ids.add(_node_key(edge['from_node']))
 
             valid_assignments = {}
             for key, value in self.scattering_assignments.items():
-                # Both node and edge assignments use Python id() as keys
                 if key in node_obj_ids:
                     # Node assignment - check if it's a port (has self-loop)
                     if key in port_node_obj_ids:
@@ -15232,121 +14351,25 @@ class Graphulator(QMainWindow):
 
         return components
 
-    def _save_state(self):
-        """Save current state to undo stack"""
-        # Don't invalidate Kron reduction - we update it dynamically when nodes move
-        # self._invalidate_kron_reduction()
 
-        # Deep copy the nodes list
-        nodes_state = []
-        for node in self.nodes:
-            nodes_state.append({
-                'node_id': node['node_id'],
-                'label': node['label'],
-                'pos': node['pos'],
-                'color': node['color'],
-                'color_key': node['color_key'],
-                'node_size_mult': node.get('node_size_mult', 1.0),
-                'label_size_mult': node.get('label_size_mult', 1.0),
-                'conj': node.get('conj', False),
-                'nodelabelnudge': node.get('nodelabelnudge', (0.0, 0.0))
-            })
+    def _capture_state(self):
+        """Deep-copy the full graph state (every node/edge field) plus the
+        scattering assignments and constraint groups that belong with it."""
+        return capture_graph_state(self.nodes, self.edges, extra={
+            'scattering_assignments': self.scattering_assignments,
+            'scattering_constraint_groups': self.scattering_constraint_groups,
+            'next_constraint_group_id': self._next_constraint_group_id,
+        })
 
-        # Deep copy the edges list
-        edges_state = []
-        for edge in self.edges:
-            # Store edge by node IDs so we can reconnect after undo
-            edge_state = {
-                'from_node_id': edge['from_node_id'],
-                'to_node_id': edge['to_node_id'],
-                'label1': edge.get('label1', ''),
-                'label2': edge.get('label2', ''),
-                'linewidth_mult': edge['linewidth_mult'],
-                'label_size_mult': edge['label_size_mult'],
-                'label_offset_mult': edge.get('label_offset_mult', 1.0),
-                'style': edge['style'],
-                'direction': edge['direction'],
-                'flip_labels': edge.get('flip_labels', False),
-                'label_rotation_offset': edge.get('label_rotation_offset', 0),
-                'is_self_loop': edge['is_self_loop']
-            }
-            # Save self-loop specific parameters
-            if edge['is_self_loop']:
-                edge_state['selfloopangle'] = edge.get('selfloopangle', 0)
-                edge_state['selfloopscale'] = edge.get('selfloopscale', 1.0)
-                edge_state['arrowlengthsc'] = edge.get('arrowlengthsc', 1.0)
-                edge_state['flip'] = edge.get('flip', False)
-                edge_state['angle_pinned'] = edge.get('angle_pinned', False)
-            edges_state.append(edge_state)
+    def _restore_state(self, state):
+        """Install a captured state as the live graph."""
+        self.nodes = state['nodes']
+        self.edges = state['edges']
+        self.scattering_assignments = state['scattering_assignments']
+        self.scattering_constraint_groups = state['scattering_constraint_groups']
+        self._next_constraint_group_id = state['next_constraint_group_id']
 
-        state = {'nodes': nodes_state, 'edges': edges_state}
-        self.undo_stack.append(state)
-
-        # Limit stack size
-        if len(self.undo_stack) > self.max_undo:
-            self.undo_stack.pop(0)
-
-        # Mark as modified
-        self._set_modified(True)
-
-    def _undo(self):
-        """Undo last action"""
-        # In basis ordering mode, undo basis selection instead
-        if self.basis_ordering_mode:
-            self._undo_basis_selection()
-            return
-
-        if not self.undo_stack:
-            print("Nothing to undo")
-            return
-
-        # Restore previous state
-        previous_state = self.undo_stack.pop()
-
-        # Restore nodes
-        self.nodes = previous_state['nodes']
-
-        # Build node_id-to-node mapping for reconnecting edges
-        id_to_node = {}
-        for node in self.nodes:
-            id_to_node[node['node_id']] = node
-
-        # Restore edges by reconnecting to nodes via IDs
-        self.edges = []
-        for edge_state in previous_state['edges']:
-            from_node_id = edge_state['from_node_id']
-            to_node_id = edge_state['to_node_id']
-
-            # Only restore edge if both nodes still exist
-            if from_node_id in id_to_node and to_node_id in id_to_node:
-                edge = {
-                    'from_node': id_to_node[from_node_id],
-                    'to_node': id_to_node[to_node_id],
-                    'from_node_id': from_node_id,
-                    'to_node_id': to_node_id,
-                    'label1': edge_state.get('label1', ''),
-                    'label2': edge_state.get('label2', ''),
-                    'linewidth_mult': edge_state['linewidth_mult'],
-                    'label_size_mult': edge_state['label_size_mult'],
-                    'label_offset_mult': edge_state.get('label_offset_mult', 1.0),
-                    'style': edge_state['style'],
-                    'direction': edge_state['direction'],
-                    'flip_labels': edge_state.get('flip_labels', False),
-                    'label_rotation_offset': edge_state.get('label_rotation_offset', 0),
-                    'looptheta': edge_state.get('looptheta', 30),
-                    'is_self_loop': edge_state['is_self_loop']
-                }
-                # Restore self-loop specific parameters
-                if edge_state['is_self_loop']:
-                    edge['selfloopangle'] = edge_state.get('selfloopangle', 0)
-                    edge['selfloopscale'] = edge_state.get('selfloopscale', 1.0)
-                    edge['arrowlengthsc'] = edge_state.get('arrowlengthsc', 1.0)
-                    edge['flip'] = edge_state.get('flip', False)
-                    edge['angle_pinned'] = edge_state.get('angle_pinned', False)
-                    edge['selflooplabelnudge'] = edge_state.get('selflooplabelnudge', (0.0, 0.0))
-                self.edges.append(edge)
-
-        # Clear selections
+        # Clear selections (they reference the replaced dicts)
         self.selected_nodes.clear()
         self.selected_edges.clear()
 
@@ -15358,15 +14381,8 @@ class Graphulator(QMainWindow):
         if hasattr(self, 'properties_panel'):
             self.properties_panel._update_matrix_display()
 
-        print(f"Undo - restored to {len(self.nodes)} node(s) and {len(self.edges)} edge(s)")
         self._update_plot()
 
-    def _select_all(self):
-        """Select all nodes and edges"""
-        self.selected_nodes = self.nodes.copy()
-        self.selected_edges = self.edges.copy()
-        print(f"Selected all: {len(self.selected_nodes)} node(s) and {len(self.selected_edges)} edge(s)")
-        self._update_plot()
 
     def _create_node_copy_dict(self, node):
         """Create a serializable copy of a node for clipboard operations."""
@@ -15381,7 +14397,7 @@ class Graphulator(QMainWindow):
             'conj': node.get('conj', False),
             'nodelabelnudge': node.get('nodelabelnudge', (0.0, 0.0))
         }
-        node_obj_id = id(node)
+        node_obj_id = _node_key(node)
         if node_obj_id in self.scattering_assignments:
             node_copy['scattering_params'] = dict(self.scattering_assignments[node_obj_id])
         else:
@@ -15414,7 +14430,7 @@ class Graphulator(QMainWindow):
         else:
             edge_copy['label1_bgcolor'] = edge.get('label1_bgcolor', None)
             edge_copy['label2_bgcolor'] = edge.get('label2_bgcolor', None)
-        edge_obj_id = id(edge)
+        edge_obj_id = _edge_key(edge)
         if edge_obj_id in self.scattering_assignments:
             edge_copy['scattering_params'] = dict(self.scattering_assignments[edge_obj_id])
         else:
@@ -15424,7 +14440,8 @@ class Graphulator(QMainWindow):
     def _copy_nodes(self):
         """Copy selected nodes and edges to clipboard"""
         if not self.selected_nodes and not self.selected_edges:
-            print("No nodes or edges selected to copy")
+            logger.info("No nodes or edges selected to copy")
+            self._status_message("Nothing selected to copy")
             return
 
         self.clipboard = {'nodes': [], 'edges': []}
@@ -15490,7 +14507,8 @@ class Graphulator(QMainWindow):
     def _cut_nodes(self):
         """Cut selected nodes and edges to clipboard"""
         if not self.selected_nodes and not self.selected_edges:
-            print("No nodes or edges selected to cut")
+            logger.info("No nodes or edges selected to cut")
+            self._status_message("Nothing selected to cut")
             return
 
         self._save_state()
@@ -15651,7 +14669,7 @@ class Graphulator(QMainWindow):
 
                 # Restore scattering parameters if present
                 if clip_node.get('scattering_params'):
-                    self.scattering_assignments[id(new_node)] = dict(clip_node['scattering_params'])
+                    self.scattering_assignments[_node_key(new_node)] = dict(clip_node['scattering_params'])
 
         # Invalidate Kron reduction if nodes were pasted
         # Note: scattering data invalidation moved to after edges are pasted
@@ -15703,7 +14721,7 @@ class Graphulator(QMainWindow):
 
                 # Restore scattering parameters if present
                 if clip_edge.get('scattering_params'):
-                    self.scattering_assignments[id(new_edge)] = dict(clip_edge['scattering_params'])
+                    self.scattering_assignments[_edge_key(new_edge)] = dict(clip_edge['scattering_params'])
 
         # Invalidate scattering data after edges are pasted (so B_ext is preserved for port nodes)
         # Note: Kron invalidation already done above when nodes were pasted
@@ -15858,7 +14876,7 @@ class Graphulator(QMainWindow):
 
                 # Restore scattering parameters if present
                 if clip_node.get('scattering_params'):
-                    self.scattering_assignments[id(new_node)] = dict(clip_node['scattering_params'])
+                    self.scattering_assignments[_node_key(new_node)] = dict(clip_node['scattering_params'])
 
         # Invalidate Kron reduction if nodes were pasted
         # Note: scattering data invalidation moved to after edges are pasted
@@ -15910,7 +14928,7 @@ class Graphulator(QMainWindow):
 
                 # Restore scattering parameters if present
                 if clip_edge.get('scattering_params'):
-                    self.scattering_assignments[id(new_edge)] = dict(clip_edge['scattering_params'])
+                    self.scattering_assignments[_edge_key(new_edge)] = dict(clip_edge['scattering_params'])
 
         # Invalidate scattering data after edges are pasted (so B_ext is preserved for port nodes)
         if len(old_id_to_new_node) > 0:
@@ -16034,51 +15052,6 @@ class Graphulator(QMainWindow):
         self.selected_edges.clear()
         self._update_plot()
 
-    def _color_key_to_mode(self, color_key):
-        """Map color key to prettynode mode letter"""
-        # Map based on prettynode's default colors:
-        # A=indianred, B=cornflowerblue, C=darkseagreen, D=sandybrown, E=cadetblue, F=mediumaquamarine
-        color_to_mode = {
-            'RED': 'A',      # indianred
-            'BLUE': 'B',     # cornflowerblue
-            'GREEN': 'C',    # darkseagreen
-            'ORANGE': 'D',   # sandybrown
-            'PURPLE': 'E',   # cadetblue (we use mediumpurple, close enough)
-            'TEAL': 'F',     # mediumaquamarine
-        }
-        return color_to_mode.get(color_key, 'A')  # Default to 'A' if not found
-
-    def _parse_prettynode_label(self, label):
-        """Parse label into mode and subscript for prettynode, or return None if not applicable"""
-        # Check if label matches pattern: single letter (A-F) optionally followed by subscript
-        match = re.match(r'^([A-F])(.*)$', label)
-        if match:
-            mode = match.group(1)
-            sub = match.group(2)
-            return mode, sub
-        return None
-
-    def _toggle_latex_mode(self):
-        """Toggle between MathText and LaTeX rendering"""
-        self.use_latex = not self.use_latex
-        matplotlib.rcParams['text.usetex'] = self.use_latex
-
-        if self.use_latex:
-            # Set up LaTeX preamble with sfmath for bold sans-serif fonts
-            matplotlib.rcParams['text.latex.preamble'] = r'\usepackage{amsmath}\usepackage{sfmath}\renewcommand{\familydefault}{\sfdefault}'
-        else:
-            # Reset to MathText mode
-            matplotlib.rcParams['text.latex.preamble'] = ''
-            matplotlib.rcParams['mathtext.fontset'] = 'stix'
-            matplotlib.rcParams['font.family'] = 'STIXGeneral'
-
-        # The label cache keys include the usetex flag, but the global LaTeX
-        # preamble/fontset just changed, so drop cached paths to be safe.
-        self._label_cache.clear()
-
-        render_mode = "LaTeX" if self.use_latex else "MathText"
-        print(f"Rendering mode: {render_mode}")
-        self._update_plot()
 
     def _copy_matrix_latex(self):
         """Copy the matrix LaTeX markup to clipboard (Ctrl+Shift+L)"""
@@ -16095,52 +15068,6 @@ class Graphulator(QMainWindow):
         else:
             print("No matrix generated yet")
 
-    def _calculate_graph_extents(self):
-        """Calculate the full extents of the graph including all objects (nodes, edges, self-loops, labels)"""
-        if not self.nodes:
-            return 0, 0, 0, 0
-
-        xlims = []
-        ylims = []
-
-        # Collect bounds from all nodes, labels, and self-loops
-        for node in self.nodes:
-            xy = node['pos']
-            node_size_mult = node.get('node_size_mult', 1.0)
-            R = self.node_radius * node_size_mult
-
-            # Account for node radius and label extent
-            label_padding = R * 3.5  # Estimate for label extent
-            xlims.extend([xy[0] - label_padding, xy[0] + label_padding])
-            ylims.extend([xy[1] - label_padding, xy[1] + label_padding])
-
-            # Check if this node has a self-loop
-            for edge in self.edges:
-                if edge['is_self_loop'] and edge['from_node_id'] == node['node_id']:
-                    selfloopscale = edge.get('selfloopscale', 1.0)
-                    loop_extent = R * 6 * selfloopscale  # loopR radius
-                    selfloopangle = edge.get('selfloopangle', 0)
-                    angle_rad = selfloopangle * np.pi / 180
-                    loop_x = xy[0] + loop_extent * np.cos(angle_rad)
-                    loop_y = xy[1] + loop_extent * np.sin(angle_rad)
-                    xlims.extend([loop_x - loop_extent/2, loop_x + loop_extent/2])
-                    ylims.extend([loop_y - loop_extent/2, loop_y + loop_extent/2])
-                    break
-
-        # Account for edge extents
-        for edge in self.edges:
-            if not edge['is_self_loop']:
-                from_pos = edge['from_node']['pos']
-                to_pos = edge['to_node']['pos']
-                # Loopy edges can extend significantly - add extra padding
-                edge_padding = max(abs(from_pos[0] - to_pos[0]), abs(from_pos[1] - to_pos[1])) * 0.5
-                xlims.extend([from_pos[0] - edge_padding, to_pos[0] + edge_padding])
-                ylims.extend([from_pos[1] - edge_padding, to_pos[1] + edge_padding])
-
-        x_min, x_max = min(xlims), max(xlims)
-        y_min, y_max = min(ylims), max(ylims)
-
-        return x_min, x_max, y_min, y_max
 
     def _export_code(self):
         """Export graph as Python code using graph_primitives GraphCircuit"""
@@ -16725,12 +15652,6 @@ class Graphulator(QMainWindow):
         """
         self._do_plot_render(use_idle=use_idle)
 
-    def _render_with_latex(self):
-        """Deprecated: the debounced LaTeX re-render is no longer used.
-
-        Kept as a no-op so the (now-unused) debounce timer connection is safe.
-        """
-        return
 
     def _do_plot_render(self, use_idle=False):
         """Actually perform the plot rendering
@@ -16806,10 +15727,11 @@ class Graphulator(QMainWindow):
             # Non-blocking render (better for smooth scrolling)
             self.canvas.draw_idle()
         else:
-            # Blocking render (ensures immediate update)
+            # Blocking render (ensures immediate update). Note: no
+            # processEvents() here - pumping the event loop mid-render can
+            # re-enter input handlers; export paths that need a completed
+            # renderer use _update_plot_no_grid instead.
             self.canvas.draw()
-            # Force Qt to process events immediately
-            QApplication.processEvents()
 
         # Update properties panel based on selection
         self._update_properties_panel()
@@ -16835,15 +15757,6 @@ class Graphulator(QMainWindow):
                 if a.get_gid() != 'grid' and a.get_linewidth()
             ]
 
-    def _points_per_data_unit(self, xlim, ylim):
-        """Points per data unit for the current figure size and view limits."""
-        fig = self.canvas.fig
-        data_width = xlim[1] - xlim[0]
-        data_height = ylim[1] - ylim[0]
-        if data_width <= 0 or data_height <= 0:
-            return None
-        return min(fig.get_figwidth() * 72 / data_width,
-                   fig.get_figheight() * 72 / data_height)
 
     def _update_status_label(self):
         """Refresh the status bar text (cheap; used by both full and fast renders)."""
@@ -16858,55 +15771,6 @@ class Graphulator(QMainWindow):
             f'zoom={self.zoom_level:.3f}x) | Nodes: {len(self.nodes)}'
             f'{edge_str}{mode_str}{latex_str}{basis_str}{kron_str}{fast_str}'
         )
-
-    def _rebuild_grid_only(self):
-        """Remove just the grid line artists and redraw the grid for the current view."""
-        for artist in [a for a in self.canvas.ax.lines if a.get_gid() == 'grid']:
-            try:
-                artist.remove()
-            except Exception:
-                pass
-        self._draw_grid()
-
-    def _apply_view_fast(self, use_idle=True):
-        """Fast pan/zoom for the main canvas: update axis limits and rescale
-        zoom-dependent linewidths on the EXISTING artists instead of rebuilding
-        the scene.
-
-        Node circles, edge paths and the cached label glyphs all live in data
-        coordinates, so they rescale/reposition for free when the limits change;
-        only stroke widths (which scale with zoom) and the grid extent need
-        touching. Falls back to a full render if the scene hasn't been built yet.
-        """
-        ax = self.canvas.ax
-        if (self._zoom_lw_snapshot is None or self._build_ppu is None
-                or self.canvas is not getattr(self, 'original_canvas', None)):
-            self._update_plot(use_idle=use_idle)
-            return
-
-        new_xlim = self._get_xlim()
-        new_ylim = self._get_ylim()
-
-        # Keep strokes proportional to zoom (grid excluded; it has fixed width).
-        new_ppu = self._points_per_data_unit(new_xlim, new_ylim)
-        if new_ppu and self._build_ppu:
-            factor = new_ppu / self._build_ppu
-            for artist, base_lw in self._zoom_lw_snapshot:
-                try:
-                    artist.set_linewidth(base_lw * factor)
-                except Exception:
-                    pass
-
-        # Rebuild the grid only if the view grew beyond the extent it covers.
-        new_extent = max(abs(new_xlim[0]), abs(new_xlim[1]),
-                         abs(new_ylim[0]), abs(new_ylim[1])) * 1.5
-        if self._grid_built_extent is not None and new_extent > self._grid_built_extent:
-            self._rebuild_grid_only()
-
-        ax.set_xlim(*new_xlim)
-        ax.set_ylim(*new_ylim)
-        self._update_status_label()
-        self.canvas.draw_idle()
 
 
 def main():

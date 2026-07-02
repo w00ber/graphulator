@@ -1588,10 +1588,6 @@ class GraphScatteringMatrix:
 
     def _build_M_matrix(self):
         # Assemble diagonals
-        accumulated_frequencies_flattened = list(
-            collapse(self.extractor.get_accumulated_frequencies(), base_type=tuple)
-        )
-
         if self.verbose:
             logger.debug("[_build_M_matrix] Node diagonal values:")
 
@@ -1606,20 +1602,12 @@ class GraphScatteringMatrix:
             if self.verbose:
                 logger.debug("  Node %s: f0=%s, B_int=%s, B_ext=%s, Btot=%s", node_id, f0, node['B_int'], node['B_ext'], Btot)
 
-            for f_idx, f_root in enumerate(self.f_root_s):
-                # Compute drive signals for this f_root
-                drive_signals = {
-                    node_id: f_root + f_offset
-                    for node_id, f_offset in accumulated_frequencies_flattened
-                }
+            # drive_signals holds the (N,) array f_root_s + f_offset per node;
+            # single-node case: node absent from drive_signals uses f_root_s directly
+            f_drive = self.drive_signals.get(node_id, self.f_root_s)
 
-                # Handle single-node case: if node not in drive_signals, use f_root directly
-                f_drive = drive_signals.get(node_id, f_root)
-
-                if conj_state:
-                    self.M[f_idx, idx, idx] = f_drive + f0 + Btot * 1j / 2
-                else:
-                    self.M[f_idx, idx, idx] = f_drive - f0 + Btot * 1j / 2
+            sign = 1.0 if conj_state else -1.0
+            self.M[:, idx, idx] = f_drive + sign * f0 + Btot * 1j / 2
 
         # Assemble off-diagonals
         basis = self.extractor.graph_data['basis_order']
@@ -1687,15 +1675,11 @@ class GraphScatteringMatrix:
                 logger.debug("  K[%d,%d] = sqrt(%s) = %s", mode_idx, port_idx, B_ext, np.sqrt(B_ext))
 
     def _build_S_matrix(self):
-        self.S = np.empty(shape=(len(self.f_root_s), self.num_ports, self.num_ports), dtype=complex)
-        self.SdB = np.empty(shape=(len(self.f_root_s), self.num_ports, self.num_ports), dtype=float)
-        for idx,_ in enumerate(self.f_root_s):
-            M = self.M[idx,:,:]
-            I = np.eye(self.num_ports)
-            K = self.K
-
-            self.S[idx,:,:] = 1j * K.T @ np.linalg.inv(M) @ K - I
-            self.SdB[idx,:,:] = 20 * np.log10(np.abs(self.S[idx,:,:]))
+        # Batched inverse over the (N, m, m) stack; matmul broadcasts K across
+        # the frequency axis, so the whole sweep is one vectorized expression
+        Minv = np.linalg.inv(self.M)
+        self.S = 1j * (self.K.T @ Minv @ self.K) - np.eye(self.num_ports)
+        self.SdB = 20 * np.log10(np.abs(self.S))
 
         # Initialize empty trace list for plotting
         self._plot_traces = []
@@ -1709,9 +1693,7 @@ class GraphScatteringMatrix:
             self.det_M_dB : np.ndarray
                 Magnitude of determinant in dB, shape (len(f_root_s),)
         """
-        self.det_M = np.empty(len(self.f_root_s), dtype=complex)
-        for idx in range(len(self.f_root_s)):
-            self.det_M[idx] = np.linalg.det(self.M[idx, :, :])
+        self.det_M = np.linalg.det(self.M)
         self.det_M_dB = 20 * np.log10(np.abs(self.det_M))
 
     # =========================================================================

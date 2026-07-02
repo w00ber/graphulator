@@ -5,16 +5,15 @@ JAA
 
 Library for drawing graphs. Build up the primitives (loops, arrows, bubbles).
 '''
-import matplotlib.path as mpath
-import matplotlib.patches as mpatches
-import matplotlib.pyplot as plt
-from matplotlib import rcParams
-
-from numpy import pi,cos,sin,angle,real,asarray,sqrt,arctan2,abs,diff,linspace
-
 import logging
 import os
 import warnings
+
+import matplotlib.patches as mpatches
+import matplotlib.path as mpath
+import matplotlib.pyplot as plt
+from matplotlib import rcParams
+from numpy import abs, angle, arctan2, asarray, cos, diff, linspace, pi, real, sin, sqrt
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +229,7 @@ def plotnode(ax = None,
 
     Ranchor = 3.2*R
 
-    if nodealpha == None:
+    if nodealpha is None:
         nodealpha = 1
 
     if conj is True:
@@ -1048,7 +1047,7 @@ class GraphCircuit:
                 raise ValueError(f"No node found with label '{tonode}'")
 
             if len(from_nodes) > 1 or len(to_nodes) > 1:
-                error_msg = f"Ambiguous node labels detected:\n"
+                error_msg = "Ambiguous node labels detected:\n"
                 if len(from_nodes) > 1:
                     from_ids = [n['node_id'] for n in from_nodes]
                     error_msg += f"  - Label '{fromnode}' matches {len(from_nodes)} nodes with node_ids: {from_ids}\n"
@@ -1148,7 +1147,7 @@ class GraphCircuit:
             rcParams['font.family'] = 'STIXGeneral'
 
         if ax is None:
-            _, self.ax = plt.subplots(figsize=(figsize,figsize));
+            _, self.ax = plt.subplots(figsize=(figsize,figsize))
             # Set the x and y limits of the axes
             # self.ax.set_xlim(-xylim/2,xylim/2);self.ax.set_ylim(-xylim/2,xylim/2)
             # self._setminmaxnodecoords(overfrac=overfrac,debug=debug)
@@ -1387,15 +1386,14 @@ def prettynode(
     plot = True will plot the node on a given axis for debugging.
     """    
 
-    if ax == None and plot == True:
+    if ax is None and plot:
         _,ax = plt.subplots()
-        ax.set_xlim(-10*D,10*D);ax.set_ylim(-10*D,10*D)
+        ax.set_xlim(-10*D,10*D)
+        ax.set_ylim(-10*D,10*D)
 
-    elif ax == None and plot == False:
-        figwidth = 6
+    elif ax is None and not plot:
         xylim = [10*D]
     else:
-        figwidth = plt.gcf().get_figwidth()
         xylim = abs(diff(plt.gca().get_xlim()))
 
 
@@ -1443,7 +1441,8 @@ def prettynode(
  
     if plot:
         plotnode(ax=ax,**NODEPREFS,**NODESCALING,**kwargs)
-        ax.set_xlim(-xylim/2,xylim/2);ax.set_ylim(-xylim/2,xylim/2)
+        ax.set_xlim(-xylim/2,xylim/2)
+        ax.set_ylim(-xylim/2,xylim/2)
         plt.tight_layout()
 
 

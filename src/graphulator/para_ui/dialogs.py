@@ -4,15 +4,23 @@ Dialog widgets for paragraphulator.
 This module contains the node and edge input dialogs.
 """
 
-from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QComboBox, QSlider, QCheckBox, QDialogButtonBox, QSpinBox
-)
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QSlider,
+    QSpinBox,
+    QVBoxLayout,
+)
 
 from .. import graphulator_para_config as config
-from .widgets import FineControlSpinBox
 from .color_utils import populate_color_combo
+from .widgets import FineControlSpinBox
 
 
 class NodeInputDialog(QDialog):

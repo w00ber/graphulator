@@ -5,9 +5,9 @@ This module contains custom LaTeX printing and symbolic math utilities.
 """
 
 import re
-from sympy.printing.latex import LatexPrinter
-from sympy.core.mul import Mul
+
 from sympy.functions.elementary.complexes import conjugate as Conjugate
+from sympy.printing.latex import LatexPrinter
 
 
 class CustomLaTeXPrinter(LatexPrinter):
@@ -61,7 +61,7 @@ class CustomLaTeXPrinter(LatexPrinter):
 
     def _print_Mul(self, expr):
         """Override multiplication printing to detect conjugate pairs and handle -1 coefficients"""
-        from sympy import Mul, Pow, Integer
+        from sympy import Integer, Mul
 
         # Get the factors
         args = list(expr.args)
@@ -174,8 +174,9 @@ def latex_matrix_factored(matrix, printer_func=None, **settings):
     str
         LaTeX string representation with factored common terms
     """
-    from sympy import Matrix, gcd, simplify, fraction, lcm
     from functools import reduce
+
+    from sympy import Matrix, fraction, lcm, simplify
 
     if printer_func is None:
         printer_func = latex_custom
@@ -185,7 +186,6 @@ def latex_matrix_factored(matrix, printer_func=None, **settings):
 
     # Get numerators and denominators
     fractions = [fraction(simplify(elem)) for elem in elements]
-    numerators = [f[0] for f in fractions]
     denominators = [f[1] for f in fractions]
 
     # Find common denominator (LCM of all denominators)

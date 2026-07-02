@@ -1,5 +1,5 @@
 # Graphulator & Paragraphulator
-[![Python Version](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Release](https://img.shields.io/github/v/release/w00ber/graphulator)](https://github.com/w00ber/graphulator/releases)
 [![Build](https://github.com/w00ber/graphulator/actions/workflows/build-apps.yml/badge.svg)](https://github.com/w00ber/graphulator/actions/workflows/build-apps.yml)
@@ -209,7 +209,7 @@ jupyter notebook examples/notebooks/graphulator_tutorial.ipynb
 
 ## Requirements
 
-- Python >= 3.9
+- Python >= 3.10
 - PySide6 >= 6.4.0, < 6.9.0
 - matplotlib >= 3.6.0
 - numpy >= 1.23.0

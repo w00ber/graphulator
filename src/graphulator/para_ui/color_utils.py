@@ -4,9 +4,9 @@ Color utility functions for Graphulator UI.
 Consolidates duplicated color combo box setup code from dialogs.
 """
 
-from PySide6.QtWidgets import QComboBox
-from PySide6.QtGui import QColor
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QComboBox
 
 from .. import graphulator_para_config as config
 

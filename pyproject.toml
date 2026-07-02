@@ -16,7 +16,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -24,7 +23,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 keywords = ["graph", "visualization", "quantum", "circuit", "coupled-mode-theory"]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "PySide6>=6.4.0,<6.9.0",  # 6.9+ has DLL issues on Windows
     "matplotlib>=3.6.0",
@@ -33,6 +32,15 @@ dependencies = [
     "seaborn>=0.12.0",
     "more-itertools>=9.0.0",
     "pymupdf>=1.23.0",  # SVG->PDF conversion so clipboard/PDF text exports as outlines (no font dependency)
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
 ]
 
 [project.urls]
@@ -60,4 +68,30 @@ graphulator = [
     "katex/fonts/*",
     "katex/contrib/*.js",
     "assets/*.png",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+# The two monolithic app files predate the tooling; lint the maintained
+# modules first and shrink this list as code migrates out of them.
+extend-exclude = [
+    "src/graphulator/graphulator_qt.py",
+    "src/graphulator/graphulator_para.py",
+    "src/graphulator/autograph.py",
+    "examples",
+    "building",
+    "misc",
+]
+
+[tool.ruff.lint]
+# Conservative starter set: errors, pyflakes, import order
+select = ["E", "F", "I"]
+ignore = [
+    "E501",  # long lines: legacy code has many; revisit after refactors
+    "E741",  # ambiguous variable names (I, l) common in matrix math
 ]

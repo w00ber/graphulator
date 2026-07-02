@@ -2,8 +2,8 @@
 Core data models and utilities for paragraphulator.
 """
 
-from .settings_manager import SettingsManager, get_settings_manager
 from .interaction_state import InteractionMode, PlacementMode
+from .settings_manager import SettingsManager, get_settings_manager
 
 __all__ = [
     'SettingsManager',

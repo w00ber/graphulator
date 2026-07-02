@@ -11,7 +11,7 @@ Example: {{shortcut:file.new}} -> `Ctrl+N` (on Windows/Linux) or `Cmd+N` (on mac
 
 import re
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from .shortcut_manager import ShortcutManager

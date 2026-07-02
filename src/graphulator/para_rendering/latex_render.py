@@ -8,10 +8,10 @@ import io
 import logging
 import traceback
 
-logger = logging.getLogger(__name__)
-
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QPixmap
+
+logger = logging.getLogger(__name__)
 
 
 class MatrixRenderWorker(QThread):
@@ -28,8 +28,8 @@ class MatrixRenderWorker(QThread):
         """Render the LaTeX to a pixmap in background thread"""
         import matplotlib
         import matplotlib.pyplot as plt
-        from matplotlib.figure import Figure
         from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.figure import Figure
 
         # Save original settings
         old_usetex = matplotlib.rcParams['text.usetex']

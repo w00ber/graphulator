@@ -1,11 +1,7 @@
 """Tests for the SettingsManager module."""
 
 import json
-import tempfile
-from pathlib import Path
 from unittest import mock
-
-import pytest
 
 from graphulator.para_core.settings_manager import SettingsManager
 

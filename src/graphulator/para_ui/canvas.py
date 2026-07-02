@@ -4,9 +4,9 @@ Matplotlib canvas widget for paragraphulator.
 This module contains the MplCanvas class for embedding matplotlib in Qt.
 """
 
-from PySide6.QtCore import Signal, Qt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from PySide6.QtCore import Qt, Signal
 
 
 class MplCanvas(FigureCanvas):

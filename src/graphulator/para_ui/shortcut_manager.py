@@ -11,20 +11,19 @@ This module provides a centralized system for managing keyboard shortcuts with:
 
 import logging
 import sys
-from typing import Dict, Optional, Callable, List, Any
+from typing import Callable, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
-
-from PySide6.QtCore import QObject, Signal, Qt
-from PySide6.QtGui import QKeySequence, QShortcut, QAction
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import QWidget
 
 from .shortcut_definitions import (
-    ShortcutDefinition,
-    SHORTCUT_DEFINITIONS,
     SHORTCUT_CATEGORIES,
-    get_definitions_by_category,
+    SHORTCUT_DEFINITIONS,
+    ShortcutDefinition,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ShortcutManager(QObject):

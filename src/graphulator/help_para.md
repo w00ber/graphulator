@@ -64,6 +64,7 @@
 | {{shortcut:clipboard.cut}} | Cut selection |
 | {{shortcut:clipboard.paste}} | Paste |
 | {{shortcut:edit.undo}} | Undo |
+| {{shortcut:edit.redo_basis}} | Redo |
 | {{shortcut:edit.delete_d}} or {{shortcut:edit.delete}} | Delete selection |
 
 ## Node/Edge Size & Labels
