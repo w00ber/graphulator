@@ -5653,18 +5653,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # Edge label rotation mode
         self.edge_rotation_mode = False  # True when adjusting edge label rotation
 
-        # Initialize export_rescale with defaults, then merge any saved user settings
-        self.export_rescale = EXPORT_RESCALE_DEFAULTS.copy()
-        # Update with any saved export rescale settings
-        if USER_SETTINGS_FILE.exists():
-            try:
-                with open(USER_SETTINGS_FILE, 'r') as f:
-                    saved = json.load(f)
-                for key in self.export_rescale:
-                    if key in saved:
-                        self.export_rescale[key] = saved[key]
-            except Exception:
-                pass  # Silently ignore errors
+        # Initialize export_rescale with defaults merged with saved settings
+        # (read through the manager so per-app namespacing is honored)
+        self.export_rescale = get_settings_manager().get_export_rescale(
+            EXPORT_RESCALE_DEFAULTS)
 
         # Node parameters
         self.nodes = []
@@ -5798,15 +5790,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         # Initialize shortcut manager
         self.shortcut_manager = ShortcutManager(self)
-        # Load saved shortcut bindings from settings
-        if USER_SETTINGS_FILE.exists():
-            try:
-                with open(USER_SETTINGS_FILE, 'r') as f:
-                    saved = json.load(f)
-                if 'shortcuts' in saved:
-                    self.shortcut_manager.import_bindings(saved['shortcuts'])
-            except Exception:
-                pass  # Silently ignore errors
+        # Load saved shortcut bindings from settings (namespace-aware)
+        saved_shortcuts = get_settings_manager().get_shortcuts()
+        if saved_shortcuts:
+            self.shortcut_manager.import_bindings(saved_shortcuts)
 
         # Initialize documentation template processor (for dynamic Help/Tutorial)
         self.doc_processor = CachedDocumentationProcessor(self.shortcut_manager)
@@ -7528,8 +7515,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         # Create a default settings file if it doesn't exist
         if not USER_SETTINGS_FILE.exists():
-            # Save current settings to create the file
-            save_user_settings()
+            # Save current (empty-override) settings to create the file
+            save_user_settings({})
 
         # Open file manager with the settings file selected (platform-specific)
         if sys.platform == 'darwin':
