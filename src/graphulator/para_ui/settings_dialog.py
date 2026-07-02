@@ -274,10 +274,12 @@ class SettingsDialog(SettingsDialogBase):
         # circular imports)
         from ..graphulator_para import (
             EXPORT_RESCALE_DEFAULTS,
+            LIVE_PARAMS,
             SETTINGS_PARAMS,
             sync_dialog_defaults_from_config,
         )
         from ..para_core.settings_manager import get_settings_manager
+        from ..settings_dialog import make_style_sample_scene
         self._EXPORT_RESCALE_DEFAULTS = EXPORT_RESCALE_DEFAULTS
         self._sync_dialog_defaults_from_config = sync_dialog_defaults_from_config
 
@@ -287,6 +289,8 @@ class SettingsDialog(SettingsDialogBase):
             params_table=SETTINGS_PARAMS,
             settings_manager=get_settings_manager(),
             auto_refresh_tabs=('S-Parameter Plot',),
+            live_params=LIVE_PARAMS,
+            sample_scene=make_style_sample_scene(config),
         )
 
     # ---- Export-rescale parameters live on the window, not the config ----
@@ -389,10 +393,15 @@ class SettingsDialog(SettingsDialogBase):
 
     def _refresh_ui(self):
         """Refresh the Paragraphulator UI after settings change."""
+        g = self.graphulator
         # Update node_radius from config (in case DEFAULT_NODE_RADIUS changed)
-        self.graphulator.node_radius = config.DEFAULT_NODE_RADIUS
+        g.node_radius = config.DEFAULT_NODE_RADIUS
+        # Edge styles are derived from the conjugation convention; recompute
+        # them so CONJ_SAME/DIFF_EDGE_STYLE changes take effect immediately
+        for node in g.nodes:
+            g._update_edge_styles_for_node(node)
         # Update main plot
-        self.graphulator._update_plot()
+        g._update_plot()
         # Update S-parameter plot if in scattering mode
         if self.graphulator.scattering_mode:
             try:

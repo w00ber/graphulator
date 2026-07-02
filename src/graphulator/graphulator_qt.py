@@ -542,6 +542,7 @@ class PropertiesPanel(QWidget):
 • Ctrl+C/X/V: Copy/cut/paste<br>
 • Ctrl+Z: Undo<br>
 • Ctrl+Shift+Z / Ctrl+Y: Redo<br>
+• Ctrl+,: Settings (defaults & conventions)<br>
 • Ctrl+R: Rotate nodes 15° CCW<br>
 • Ctrl+Shift+R: Rotate nodes 15° CW<br>
 • d or Delete: Delete<br>

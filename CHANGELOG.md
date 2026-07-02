@@ -1,5 +1,46 @@
 # Changelog
 
+## [Unreleased]
+### Added
+- Graphulator now has a Settings dialog (File → Settings…, `Ctrl+,`) for
+  styling defaults, with a live sample preview pane. Both apps store their
+  settings in per-app sections of `~/.graphulator/settings.json` (existing
+  files migrate automatically); Paragraphulator's dialog gains the same
+  preview pane and a new Conventions tab.
+- New arrowhead styles in Graphulator: `open` (classic), `filled`
+  (publication-style closed triangle), and `stealth` (swept-back), with a
+  per-edge relative scale. Editable in the edge Properties Panel
+  (single and multi-select), the edge right-click menu, and as app
+  defaults in Settings (with an "Apply to Existing…" button).
+- Conjugated-mode appearance (node fill, label scale, and — in
+  Paragraphulator — the single/double edge-style convention) is now
+  configurable per app and applies live from the Settings dialog.
+  Graphulator adds a `transparent` conjugated-node mode (colored ring,
+  no fill).
+- Undo now has a matching Redo (`Ctrl+Shift+Z` / `Ctrl+Y`) in both apps.
+
+### Changed
+- Each edge and its arrowhead are now drawn as one compound path, so
+  SVG exports contain a single named group per edge (`edge_<n>`) that
+  stays together when edited in Illustrator/Inkscape.
+- The S-parameter sweep is vectorized (~15× faster) and runs on a
+  background thread, so large frequency point counts no longer freeze
+  the GUI.
+- Requires Python 3.10+ (3.9 is EOL and Paragraphulator never actually
+  imported on it).
+
+### Fixed
+- Undo restored only a subset of node/edge properties (curved edges
+  straightened to 30°, label background colors and outline styling were
+  lost, and Paragraphulator dropped all scattering assignments). Undo
+  snapshots are now full-fidelity.
+- Paragraphulator's scattering parameter assignments survive undo,
+  copy/paste, and reload (they were keyed by transient object identity).
+- Copy/paste preserved neither edge curvature (`looptheta`) nor label
+  flip/rotation in Graphulator.
+- "Reset to Defaults" in Settings now restores true as-coded values
+  (it previously re-read the already-overridden values).
+
 ## [0.11.0] - 2026-06-30
 ### Changed
 - Canvas text labels (node, edge, and self-loop) are now rendered from cached

@@ -156,6 +156,16 @@ SETTINGS_PARAMS = {
         ('DEFAULT_EDGE_LINEWIDTH_MULT', 'Edge Line Width (×)', 'float', 0.5, 3.0, 0.25),
         # Note: Edge Style and Direction are auto-determined from node conjugation states
     ],
+    'Conventions': [
+        # Conjugated-mode rendering conventions (apply to the whole graph
+        # live as they are changed; Cancel reverts)
+        ('CONJ_NODE_FILL_ALPHA', 'Conjugated Node Fill Alpha', 'float', 0.1, 1.0, 0.05),
+        ('CONJ_LABEL_SCALE', 'Conjugated Label Scale', 'float', 0.5, 1.0, 0.02),
+        ('CONJ_SAME_EDGE_STYLE', 'Same-Conjugation Edge Style', 'dropdown',
+         [('Single', 'single'), ('Double', 'double'), ('Loopy', 'loopy')], None, None),
+        ('CONJ_DIFF_EDGE_STYLE', 'Opposite-Conjugation Edge Style', 'dropdown',
+         [('Double', 'double'), ('Single', 'single'), ('Loopy', 'loopy')], None, None),
+    ],
     'Self-Loop Defaults': [
         ('DEFAULT_SELFLOOP_SCALE', 'Size Scale', 'float', 0.5, 2.0, 0.1),
         ('DEFAULT_SELFLOOP_ARROWLENGTH', 'Linewidth', 'float', 0.5, 3.0, 0.1),
@@ -195,6 +205,16 @@ SETTINGS_PARAMS = {
         ('EDGELABELOFFSET', 'Edge Label Offset', 'float', 0.1, 3.0, 0.05),
     ],
 }
+
+# Rendering conventions (read at draw time): the Settings dialog live-applies
+# these to the open graph, debounced, as they change; Cancel reverts.
+LIVE_PARAMS = (
+    'CONJ_NODE_FILL_ALPHA',
+    'CONJ_LABEL_SCALE',
+    'CONJ_SAME_EDGE_STYLE',
+    'CONJ_DIFF_EDGE_STYLE',
+    'DEFAULT_NODE_RADIUS',
+)
 
 
 def _get_original_config_value(param_name):

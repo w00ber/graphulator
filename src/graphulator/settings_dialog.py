@@ -105,9 +105,12 @@ def make_style_sample_scene(config_module):
             arrowopenang=float(val('ARROWHEAD_OPEN_ANGLE', 60)),
         )
 
-        # Edge with arrowheads between the two nodes
+        # Edge between the two nodes. The sample pair is (A, A*) — opposite
+        # conjugation — so apps with an edge-style convention (Paragraphulator)
+        # preview it here; otherwise a loopy edge shows the arrowheads.
+        edge_style = val('CONJ_DIFF_EDGE_STYLE', 'loopy')
         gp.edge(ax=ax, nodexy=[(-1.8, 0), (1.8, 0)], nodeR=[R, R],
-                style='loopy', whichedges='both', label=[None, None],
+                style=edge_style, whichedges='both', label=[None, None],
                 loopkwargs=dict(lw=2.0, arrowlength=0.3, **arrow_kwargs))
 
         # Self-loop on the normal node
