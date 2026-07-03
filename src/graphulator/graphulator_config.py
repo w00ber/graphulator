@@ -35,7 +35,8 @@ CONJ_NODE_FILL_MODE = 'dimmed'  # 'dimmed' (alpha fill) | 'transparent' (colored
 CONJ_NODE_FILL_ALPHA = 0.5      # fill alpha for 'dimmed' mode
 CONJ_LABEL_SCALE = 0.92         # label shrink to accommodate the asterisk
 
-# Default edge arrowhead settings
+# Default edge settings
+DEFAULT_EDGE_STYLE = 'loopy'      # 'loopy' | 'single' | 'double' (for new edges)
 DEFAULT_EDGE_ARROWSTYLE = 'open'  # 'open' | 'filled' | 'stealth'
 DEFAULT_EDGE_ARROWSCALE = 1.0     # relative arrowhead scaling for new edges
 ARROWHEAD_OPEN_ANGLE = 60         # arrowhead opening angle in degrees (convention; applies at draw time)
@@ -80,6 +81,8 @@ SETTINGS_PARAMS = {
         ('DEFAULT_NODE_OUTLINE_ALPHA', 'Outline Opacity', 'float', 0.0, 1.0, 0.05),
     ],
     'Edge Defaults': [
+        ('DEFAULT_EDGE_STYLE', 'Edge Style', 'dropdown',
+         [('Loopy', 'loopy'), ('Single', 'single'), ('Double', 'double')], None, None),
         ('DEFAULT_EDGE_ARROWSTYLE', 'Arrowhead Style', 'dropdown',
          [('Open', 'open'), ('Filled', 'filled'), ('Stealth', 'stealth')], None, None),
         ('DEFAULT_EDGE_ARROWSCALE', 'Arrowhead Scale (×)', 'float', 0.2, 3.0, 0.1),

@@ -250,16 +250,21 @@ def test_apply_and_reset_resync_dialog_defaults(qt_window, settings_tmp):
     original_key = config.DEFAULT_NODE_COLOR_KEY
     dialog = gq.GraphulatorSettingsDialog(win)
     try:
-        # Simulate stale dialog memory from prior node placements
+        # Simulate stale dialog memory from prior node/edge placements
         gq.NodeInputDialog.last_color = 'BLUE'
+        gq.EdgeInputDialog.last_style = 'loopy'
         win.last_node_props = {'label': 'C', 'color_key': 'BLUE'}
+        win.last_edge_props = {'style': 'loopy'}
 
         dialog._set_widget_value('DEFAULT_NODE_COLOR_KEY', 'GREEN')
+        dialog._set_widget_value('DEFAULT_EDGE_STYLE', 'double')
         dialog._on_apply()
         assert config.DEFAULT_NODE_COLOR_KEY == 'GREEN'
         assert config.DEFAULT_NODE_COLOR == config.MYCOLORS['GREEN']
         assert gq.NodeInputDialog.last_color == 'GREEN'
+        assert gq.EdgeInputDialog.last_style == 'double'
         assert win.last_node_props is None  # duplicate template rebuilds from config
+        assert win.last_edge_props is None  # continuous-edge template too
 
         # Reset must resync the same way (back to the code defaults)
         gq.NodeInputDialog.last_color = 'BLUE'
@@ -268,10 +273,12 @@ def test_apply_and_reset_resync_dialog_defaults(qt_window, settings_tmp):
             dialog._on_reset_defaults()
         assert config.DEFAULT_NODE_COLOR_KEY == original_key
         assert gq.NodeInputDialog.last_color == original_key
+        assert gq.EdgeInputDialog.last_style == 'loopy'  # code default
         assert win.last_node_props is None
     finally:
         config.DEFAULT_NODE_COLOR_KEY = original_key
         config.DEFAULT_NODE_COLOR = config.MYCOLORS[original_key]
+        config.DEFAULT_EDGE_STYLE = 'loopy'
         gq.sync_dialog_defaults_from_config(win)
 
 
@@ -301,3 +308,44 @@ def test_sample_scene_previews_radius_and_outline(qt_window, settings_tmp):
                'CONJ_NODE_FILL_MODE': 'dimmed'})
     circles2 = [p for p in ax2.patches if isinstance(p, mpatches.Circle)]
     assert not [c for c in circles2 if not c.get_fill()]
+
+
+def test_sample_scene_labels_use_app_mathtext_convention(qt_window, settings_tmp):
+    """Preview labels render with the apps' bold sans-serif mathtext."""
+    from matplotlib.figure import Figure
+
+    gq, _win = qt_window
+    from graphulator.settings_dialog import make_style_sample_scene
+    draw = make_style_sample_scene(gq.config)
+    fig = Figure()
+    ax = fig.add_subplot()
+    draw(ax, {})
+    texts = [t.get_text() for t in ax.texts]
+    assert any(r'\mathsf' in t and t.startswith('$') for t in texts)
+    assert any(r'\ast' in t for t in texts)  # conjugated sample label
+
+
+def test_sample_scene_previews_default_edge_style(qt_window, settings_tmp):
+    """The qt preview honors the pending DEFAULT_EDGE_STYLE value."""
+    import matplotlib.patches as mpatches
+    from matplotlib.figure import Figure
+
+    gq, _win = qt_window
+    from graphulator.settings_dialog import make_style_sample_scene
+    draw = make_style_sample_scene(gq.config)
+    fig = Figure()
+    ax = fig.add_subplot()
+    draw(ax, {'DEFAULT_EDGE_STYLE': 'double'})
+    # The double style draws a fat stroke plus a white overlay, both with
+    # flush butt caps; the loopy default would draw no white path patch
+    whites = [p for p in ax.patches
+              if isinstance(p, mpatches.PathPatch)
+              and p.get_edgecolor()[:3] == (1.0, 1.0, 1.0)]
+    assert len(whites) == 1
+    assert whites[0].get_capstyle() == 'butt'
+
+
+def test_qt_dialog_exposes_edge_style_default(qt_window, settings_tmp):
+    gq, win = qt_window
+    dialog = gq.GraphulatorSettingsDialog(win)
+    assert 'DEFAULT_EDGE_STYLE' in dialog._widgets

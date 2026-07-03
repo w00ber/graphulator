@@ -120,11 +120,15 @@ def make_style_sample_scene(config_module):
 
         # Edge between the two nodes. The sample pair is (A, A*) — opposite
         # conjugation — so apps with an edge-style convention (Paragraphulator)
-        # preview it here; otherwise a loopy edge shows the arrowheads.
-        edge_style = val('CONJ_DIFF_EDGE_STYLE', 'loopy')
+        # preview it here; otherwise the app's default edge style is shown.
+        edge_style = val('CONJ_DIFF_EDGE_STYLE') or val('DEFAULT_EDGE_STYLE', 'loopy')
+        # The apps pre-multiply single/double linewidths (those styles draw one
+        # stroke instead of the loopy pair), so mirror that scaling here
+        style_lw = {'single': 3.0, 'double': 6.0}.get(edge_style, 1.0)
         gp.edge(ax=ax, nodexy=[(-1.8, 0), (1.8, 0)], nodeR=[R, R],
                 style=edge_style, whichedges='both', label=[None, None],
-                loopkwargs=dict(lw=2.0 * lw_mult, arrowlength=0.3, **arrow_kwargs))
+                loopkwargs=dict(lw=2.0 * lw_mult * style_lw,
+                                arrowlength=0.3, **arrow_kwargs))
 
         # Self-loop on the normal node (size/angle track the app defaults)
         sl_scale = float(val('DEFAULT_SELFLOOP_SCALE', 1.0))
@@ -147,12 +151,17 @@ def make_style_sample_scene(config_module):
                 alpha=float(val('DEFAULT_NODE_OUTLINE_ALPHA', 1.0)),
                 zorder=10.5))
 
+        # Node labels use the apps' convention: bold sans-serif mathtext
+        # (the same \mathbf{\mathsf{...}} both apps render labels with)
+        label_normal = r'$\mathbf{\mathsf{A}}$'
+        label_conj = r'$\mathbf{\mathsf{A}}\ast$'
+
         # Normal node
         ax.add_patch(mpatches.Circle((-1.8, 0), R, facecolor=node_color,
                                      edgecolor='none', zorder=10))
         outline_ring((-1.8, 0))
-        ax.text(-1.8, 0, 'A', ha='center', va='center', fontsize=13,
-                color=label_color, fontweight='bold', zorder=11)
+        ax.text(-1.8, 0, label_normal, ha='center', va='center', fontsize=13,
+                color=label_color, zorder=11)
 
         # Conjugated node per the convention settings
         conj_scale = float(val('CONJ_LABEL_SCALE', 0.92))
@@ -167,9 +176,9 @@ def make_style_sample_scene(config_module):
                 alpha=float(val('CONJ_NODE_FILL_ALPHA', 0.5)), zorder=10))
             conj_label_color = label_color
         outline_ring((1.8, 0))
-        ax.text(1.8, 0, 'A*', ha='center', va='center',
+        ax.text(1.8, 0, label_conj, ha='center', va='center',
                 fontsize=13 * conj_scale, color=conj_label_color,
-                fontweight='bold', zorder=11)
+                zorder=11)
 
         ax.set_xlim(-4.6, 3.1)
         ax.set_ylim(-1.9, 1.9)

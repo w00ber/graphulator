@@ -476,9 +476,11 @@ def sync_dialog_defaults_from_config(window=None):
     config.DEFAULT_NODE_COLOR = config.MYCOLORS.get(
         config.DEFAULT_NODE_COLOR_KEY, config.DEFAULT_NODE_COLOR)
     NodeInputDialog.last_color = config.DEFAULT_NODE_COLOR_KEY
+    EdgeInputDialog.last_style = config.DEFAULT_EDGE_STYLE
     if window is not None:
-        # Continuous-duplicate mode rebuilds its template from config
+        # Continuous modes rebuild their templates from the new defaults
         window.last_node_props = None
+        window.last_edge_props = None
 
 
 class PropertiesPanel(QWidget):
