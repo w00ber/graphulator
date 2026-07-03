@@ -179,7 +179,7 @@ SETTINGS_PARAMS = {
     ],
     'Self-Loop Defaults': [
         ('DEFAULT_SELFLOOP_SCALE', 'Size Scale', 'float', 0.5, 2.0, 0.1),
-        ('DEFAULT_SELFLOOP_ARROWLENGTH', 'Linewidth', 'float', 0.5, 3.0, 0.1),
+        ('DEFAULT_SELFLOOP_ARROWLENGTH', 'Arrowhead Length (×)', 'float', 0.5, 3.0, 0.1),
         ('DEFAULT_SELFLOOP_ANGLE', 'Default Angle', 'dropdown', [
             ('0° (Right)', 0), ('45° (Up-Right)', 45), ('90° (Up)', 90),
             ('135° (Up-Left)', 135), ('180° (Left)', 180), ('225° (Down-Left)', 225),

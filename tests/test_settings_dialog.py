@@ -548,7 +548,9 @@ def test_qt_dialog_exposes_new_layout_defaults(qt_window, settings_tmp):
     dialog = gq.GraphulatorSettingsDialog(win)
     for param in ('DEFAULT_NODE_LABEL_SIZE_MULT', 'DEFAULT_EDGE_LOOPTHETA',
                   'DEFAULT_EDGE_LABEL_SIZE_MULT',
-                  'DEFAULT_EDGE_LABEL_OFFSET_MULT', 'DEFAULT_SELFLOOP_SCALE'):
+                  'DEFAULT_EDGE_LABEL_OFFSET_MULT', 'DEFAULT_SELFLOOP_SCALE',
+                  'DEFAULT_EDGE_LINEWIDTH_MULT',
+                  'DEFAULT_SELFLOOP_LINEWIDTH_MULT'):
         assert param in dialog._widgets, param
 
 
@@ -560,7 +562,8 @@ def test_qt_layout_defaults_flow_to_placed_edges(qt_window, settings_tmp):
     originals = {k: getattr(config, k) for k in (
         'DEFAULT_EDGE_LOOPTHETA', 'DEFAULT_EDGE_LABEL_SIZE_MULT',
         'DEFAULT_EDGE_LABEL_OFFSET_MULT', 'DEFAULT_SELFLOOP_SCALE',
-        'AUTO_ADJUST_SELFLOOP_ANGLE', 'DEFAULT_SELFLOOP_ANGLE')}
+        'AUTO_ADJUST_SELFLOOP_ANGLE', 'DEFAULT_SELFLOOP_ANGLE',
+        'DEFAULT_EDGE_LINEWIDTH_MULT', 'DEFAULT_SELFLOOP_LINEWIDTH_MULT')}
     nodes = [{'node_id': i, 'label': lbl, 'pos': pos, 'color': 'indianred',
               'color_key': 'RED', 'node_size_mult': 1.0,
               'label_size_mult': 1.4, 'conj': False}
@@ -578,6 +581,8 @@ def test_qt_layout_defaults_flow_to_placed_edges(qt_window, settings_tmp):
         config.DEFAULT_SELFLOOP_SCALE = 1.3
         config.AUTO_ADJUST_SELFLOOP_ANGLE = False
         config.DEFAULT_SELFLOOP_ANGLE = 135
+        config.DEFAULT_EDGE_LINEWIDTH_MULT = 2.0
+        config.DEFAULT_SELFLOOP_LINEWIDTH_MULT = 2.5
         gq.sync_dialog_defaults_from_config(win)
 
         _click(win, 0, 0)
@@ -586,12 +591,14 @@ def test_qt_layout_defaults_flow_to_placed_edges(qt_window, settings_tmp):
         assert edge['looptheta'] == 55
         assert edge['label_size_mult'] == pytest.approx(1.8)
         assert edge['label_offset_mult'] == pytest.approx(1.2)
+        assert edge['linewidth_mult'] == pytest.approx(2.0)
 
         _click(win, 4, 0)
         _click(win, 4, 0)
         loop = [e for e in win.edges if e['is_self_loop']][-1]
         assert loop['selfloopscale'] == pytest.approx(1.3)
         assert loop['selfloopangle'] == 135  # auto-orient off -> the default
+        assert loop['linewidth_mult'] == pytest.approx(2.5)
     finally:
         for k, v in originals.items():
             setattr(config, k, v)

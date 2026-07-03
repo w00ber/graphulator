@@ -488,6 +488,9 @@ def sync_dialog_defaults_from_config(window=None):
         config.DEFAULT_NODE_LABEL_SIZE_MULT,
         {0.6: 'Small', 1.0: 'Medium', 1.4: 'Large', 1.8: 'X-Large'})
     EdgeInputDialog.last_style = config.DEFAULT_EDGE_STYLE
+    EdgeInputDialog.last_linewidth = closest_name(
+        config.DEFAULT_EDGE_LINEWIDTH_MULT,
+        {1.0: 'Thin', 1.5: 'Medium', 2.0: 'Thick', 2.5: 'X-Thick'})
     EdgeInputDialog.last_label_size = closest_name(
         config.DEFAULT_EDGE_LABEL_SIZE_MULT,
         {1.0: 'Small', 1.4: 'Medium', 1.8: 'Large', 2.5: 'X-Large', 3.0: 'XX-Large'})
@@ -2949,7 +2952,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         """Properties for the first edge placed in a session."""
         return {
             'label1': '', 'label2': '',
-            'linewidth_mult': 1.5,
+            'linewidth_mult': config.DEFAULT_EDGE_LINEWIDTH_MULT,
             'label_size_mult': config.DEFAULT_EDGE_LABEL_SIZE_MULT,
             'label_offset_mult': config.DEFAULT_EDGE_LABEL_OFFSET_MULT,
             'style': config.DEFAULT_EDGE_STYLE,
@@ -2964,7 +2967,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         """Properties for the first self-loop placed in a session."""
         return {
             'label1': '', 'label2': '',
-            'linewidth_mult': 1.5,
+            'linewidth_mult': config.DEFAULT_SELFLOOP_LINEWIDTH_MULT,
             'label_size_mult': config.DEFAULT_EDGE_LABEL_SIZE_MULT,
             'label_offset_mult': config.DEFAULT_EDGE_LABEL_OFFSET_MULT,
             'style': 'loopy',

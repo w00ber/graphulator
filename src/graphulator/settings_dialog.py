@@ -145,14 +145,17 @@ def make_style_sample_scene(config_module):
                 loopkwargs=dict(lw=2.0 * lw_mult * style_lw,
                                 arrowlength=0.3, **arrow_kwargs))
 
-        # Self-loop on the normal node (size/angle track the app defaults)
+        # Self-loop on the normal node (size/angle/linewidth track the app
+        # defaults; apps without a dedicated self-loop width follow the edge
+        # width)
         sl_scale = float(val('DEFAULT_SELFLOOP_SCALE', 1.0))
         sl_angle = float(val('DEFAULT_SELFLOOP_ANGLE', 180))
+        sl_lw_mult = float(val('DEFAULT_SELFLOOP_LINEWIDTH_MULT', 0)) or lw_mult
         gp.selfloop(ax=ax, nodecent=(-1.8, 0), R=R * 1.2,
                     loopR=R * 6 * sl_scale,
                     baseangle=sl_angle, dtheta=-34,
                     arrowlength=R / 2 * 2.25 / 4,
-                    lw=1.8, **arrow_kwargs)
+                    lw=1.2 * sl_lw_mult, **arrow_kwargs)
 
         def outline_ring(center):
             if not val('DEFAULT_NODE_OUTLINE_ENABLED', False):
