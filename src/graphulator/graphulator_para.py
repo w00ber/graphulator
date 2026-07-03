@@ -159,18 +159,23 @@ SETTINGS_PARAMS = {
     'Conventions': [
         # Conjugated-mode rendering conventions (apply to the whole graph
         # live as they are changed; Cancel reverts)
-        ('CONJ_NODE_FILL_ALPHA', 'Conjugated Node Fill Alpha', 'float', 0.1, 1.0, 0.05),
+        ('CONJ_NODE_FILL_MODE', 'Conjugated Node Style', 'dropdown',
+         [('Dimmed (reduced opacity)', 'dimmed'),
+          ('Hollow (ring in node color)', 'transparent'),
+          ('Custom color', 'custom')], None, None),
+        ('CONJ_NODE_FILL_ALPHA', 'Conjugated Fill Opacity', 'float', 0.1, 1.0, 0.05),
+        ('CONJ_NODE_FILL_COLOR', 'Custom Fill Color', 'color', None, None, None),
+        ('CONJ_LABEL_COLOR_AUTO', 'Auto Conjugated Label Color', 'bool', None, None, None),
+        ('CONJ_LABEL_COLOR_MODE', 'Conjugated Label Color', 'dropdown',
+         [('Same as normal labels', 'default'),
+          ('Unconjugated node color', 'node'),
+          ('Custom color', 'custom')], None, None),
+        ('CONJ_NODE_LABEL_COLOR', 'Custom Label Color', 'color', None, None, None),
         ('CONJ_LABEL_SCALE', 'Conjugated Label Scale', 'float', 0.5, 1.0, 0.02),
         ('CONJ_SAME_EDGE_STYLE', 'Same-Conjugation Edge Style', 'dropdown',
          [('Single', 'single'), ('Double', 'double'), ('Loopy', 'loopy')], None, None),
         ('CONJ_DIFF_EDGE_STYLE', 'Opposite-Conjugation Edge Style', 'dropdown',
          [('Double', 'double'), ('Single', 'single'), ('Loopy', 'loopy')], None, None),
-        ('CONJ_NODE_FILL_COLOR_ENABLED', 'Custom Conjugated Fill Color', 'bool', None, None, None),
-        ('CONJ_NODE_FILL_COLOR', 'Conjugated Fill Color', 'color', None, None, None),
-        ('CONJ_NODE_LABEL_COLOR_ENABLED', 'Custom Conjugated Label Color', 'bool', None, None, None),
-        ('CONJ_NODE_LABEL_COLOR', 'Conjugated Label Color', 'color', None, None, None),
-        ('CONJ_NODE_OUTLINE_COLOR_ENABLED', 'Custom Conjugated Outline Color', 'bool', None, None, None),
-        ('CONJ_NODE_OUTLINE_COLOR', 'Conjugated Outline Color', 'color', None, None, None),
     ],
     'Self-Loop Defaults': [
         ('DEFAULT_SELFLOOP_SCALE', 'Size Scale', 'float', 0.5, 2.0, 0.1),
@@ -215,16 +220,15 @@ SETTINGS_PARAMS = {
 # Rendering conventions (read at draw time): the Settings dialog live-applies
 # these to the open graph, debounced, as they change; Cancel reverts.
 LIVE_PARAMS = (
+    'CONJ_NODE_FILL_MODE',
     'CONJ_NODE_FILL_ALPHA',
+    'CONJ_NODE_FILL_COLOR',
+    'CONJ_LABEL_COLOR_AUTO',
+    'CONJ_LABEL_COLOR_MODE',
+    'CONJ_NODE_LABEL_COLOR',
     'CONJ_LABEL_SCALE',
     'CONJ_SAME_EDGE_STYLE',
     'CONJ_DIFF_EDGE_STYLE',
-    'CONJ_NODE_FILL_COLOR_ENABLED',
-    'CONJ_NODE_FILL_COLOR',
-    'CONJ_NODE_LABEL_COLOR_ENABLED',
-    'CONJ_NODE_LABEL_COLOR',
-    'CONJ_NODE_OUTLINE_COLOR_ENABLED',
-    'CONJ_NODE_OUTLINE_COLOR',
     'DEFAULT_NODE_RADIUS',
 )
 
@@ -12277,12 +12281,21 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             # Draw circle with size multiplier (no outline, like prettynodes)
             node_radius = self.node_radius * node_size_mult
 
-            # Apply conjugation convention: explicit fill color override, or
-            # the alpha-dimming default
+            # Apply the conjugated-node convention (config-driven):
+            # dimmed (alpha), hollow (ring in node color), or a custom fill
+            fill_mode = getattr(config, 'CONJ_NODE_FILL_MODE', 'dimmed')
             fill_color = node['color']
+            edge_color = node.get('edgecolor', 'none')  # Kron graph styling
+            edge_lw = 4 if node.get('edgecolor') else 0
             node_alpha = config.CONJ_NODE_FILL_ALPHA if conj else 1.0
-            if conj and config.CONJ_NODE_FILL_COLOR_ENABLED:
+            if conj and fill_mode == 'custom':
                 fill_color = config.CONJ_NODE_FILL_COLOR
+                node_alpha = 1.0
+            elif conj and fill_mode == 'transparent':
+                # Hollow: unfilled with a ring in the unconjugated fill color
+                fill_color = 'none'
+                edge_color = node['color']
+                edge_lw = 2.5 * node_size_mult * (points_per_data_unit / 43.0)
                 node_alpha = 1.0
 
             # Apply scattering mode transparency
@@ -12296,8 +12309,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             circle = patches.Circle(
                 node['pos'], node_radius,
                 facecolor=fill_color,
-                edgecolor=node.get('edgecolor', 'none'),  # Support Kron graph styling
-                linewidth=4 if node.get('edgecolor') else 0,  # Add visible linewidth for edges
+                edgecolor=edge_color,
+                linewidth=edge_lw,
                 alpha=node_alpha,
                 zorder=10
             )
@@ -12305,11 +12318,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
             # Draw custom outline if enabled
             if node.get('outline_enabled', False):
-                if conj and config.CONJ_NODE_OUTLINE_COLOR_ENABLED:
-                    outline_color = config.CONJ_NODE_OUTLINE_COLOR
-                else:
-                    outline_color = node.get(
-                        'outline_color', config.DEFAULT_NODE_OUTLINE_COLOR)
+                outline_color = node.get(
+                    'outline_color', config.DEFAULT_NODE_OUTLINE_COLOR)
                 outline_width = node.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH)
                 outline_alpha = node.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA)
                 # Convert outline width to display units (similar to how we handle other linewidths)
@@ -12405,12 +12415,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
             # Draw the label via the cached vector glyph-path renderer so it stays
             # crisp and fast across pan/zoom (no per-frame layout recompilation).
-            # An explicit conjugated label color takes precedence over the
-            # default (but not over a per-node label_color)
-            if conj and config.CONJ_NODE_LABEL_COLOR_ENABLED:
-                default_label_color = config.CONJ_NODE_LABEL_COLOR
-            else:
-                default_label_color = config.DEFAULT_NODE_LABEL_COLOR
+            # Conjugated label color per the convention (auto-derived or the
+            # literal choice); per-node label_color still wins
+            default_label_color = self._resolve_conj_label_color(node)
             self._label_cache.draw(
                 self.canvas.ax, formatted_text, label_x, label_y,
                 fontsize_points=font_size_points,

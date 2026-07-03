@@ -45,7 +45,11 @@ from .common_window import GraphWindowCommonMixin
 from .para_core.graph_state import capture_graph_state
 from .para_core.settings_manager import get_settings_manager
 from .para_rendering.label_cache import LabelPathCache
-from .settings_dialog import SettingsDialogBase, make_style_sample_scene
+from .settings_dialog import (
+    SettingsDialogBase,
+    make_style_sample_scene,
+    wire_conjugation_dependencies,
+)
 
 
 EXPORT_RESCALE_DEFAULTS = {
@@ -1653,6 +1657,9 @@ class GraphulatorSettingsDialog(SettingsDialogBase):
         """Refresh the Graphulator canvas after settings change."""
         self.graphulator.node_radius = config.DEFAULT_NODE_RADIUS
         self.graphulator._update_plot()
+
+    def _wire_dependencies(self):
+        wire_conjugation_dependencies(self)
 
     def _after_apply(self):
         """Sync dialog memory so new nodes pick up the changed defaults."""
@@ -3448,7 +3455,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             node_radius = self.node_radius * node_size_mult
 
             # Apply the conjugated-node convention (config-driven)
-            if conj and config.CONJ_NODE_FILL_COLOR_ENABLED:
+            if conj and config.CONJ_NODE_FILL_MODE == 'custom':
                 # Explicit conjugated fill color (full opacity; the color
                 # itself IS the conjugated appearance)
                 circle = patches.Circle(
@@ -3480,14 +3487,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
             # Draw custom outline if enabled (same convention as Paragraphulator)
             if node.get('outline_enabled', False):
-                if conj and config.CONJ_NODE_OUTLINE_COLOR_ENABLED:
-                    outline_color = config.CONJ_NODE_OUTLINE_COLOR
-                else:
-                    outline_color = node.get('outline_color', config.DEFAULT_NODE_OUTLINE_COLOR)
                 outline_circle = patches.Circle(
                     node['pos'], node_radius,
                     fill=False,
-                    edgecolor=outline_color,
+                    edgecolor=node.get('outline_color', config.DEFAULT_NODE_OUTLINE_COLOR),
                     linewidth=node.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH),
                     alpha=node.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA),
                     zorder=10.5  # on top of the fill, below labels
@@ -3576,16 +3579,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
             # Draw the label via the cached vector glyph-path renderer so it stays
             # crisp and fast across pan/zoom (no per-frame layout recompilation).
-            # Transparent conjugated nodes have no fill, so the default white
-            # label would vanish; use the node color instead. An explicit
-            # conjugated label color takes precedence over both.
-            if conj and config.CONJ_NODE_LABEL_COLOR_ENABLED:
-                default_label_color = config.CONJ_NODE_LABEL_COLOR
-            elif (conj and config.CONJ_NODE_FILL_MODE == 'transparent'
-                    and not config.CONJ_NODE_FILL_COLOR_ENABLED):
-                default_label_color = node['color']
-            else:
-                default_label_color = config.DEFAULT_NODE_LABEL_COLOR
+            # Conjugated label color per the convention (auto-derived or the
+            # literal choice); per-node label_color still wins below
+            default_label_color = self._resolve_conj_label_color(node)
             self._label_cache.draw(
                 self.canvas.ax, formatted_text, label_x, label_y,
                 fontsize_points=font_size_points,

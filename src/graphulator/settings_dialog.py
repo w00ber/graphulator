@@ -139,14 +139,11 @@ def make_style_sample_scene(config_module):
                     arrowlength=R / 2 * 2.25 / 4,
                     lw=1.8, **arrow_kwargs)
 
-        def outline_ring(center, conj=False):
+        def outline_ring(center):
             if not val('DEFAULT_NODE_OUTLINE_ENABLED', False):
                 return
-            if conj and val('CONJ_NODE_OUTLINE_COLOR_ENABLED', False):
-                outline_color = val('CONJ_NODE_OUTLINE_COLOR', 'black')
-            else:
-                outline_color = resolve_color('DEFAULT_NODE_OUTLINE_COLOR_KEY',
-                                              'DEFAULT_NODE_OUTLINE_COLOR', 'black')
+            outline_color = resolve_color('DEFAULT_NODE_OUTLINE_COLOR_KEY',
+                                          'DEFAULT_NODE_OUTLINE_COLOR', 'black')
             ax.add_patch(mpatches.Circle(
                 center, R, fill=False,
                 edgecolor=outline_color,
@@ -168,27 +165,37 @@ def make_style_sample_scene(config_module):
         ax.text(-1.8, 0, label_normal, ha='center', va='center',
                 fontsize=label_pts, color=label_color, zorder=11)
 
-        # Conjugated node per the convention settings (explicit color
-        # overrides take precedence over the dimmed/transparent modes)
+        # Conjugated node per the convention: dimmed, hollow (ring in node
+        # color), or a custom fill
         conj_scale = float(val('CONJ_LABEL_SCALE', 0.92))
-        if val('CONJ_NODE_FILL_COLOR_ENABLED', False):
+        fill_mode = val('CONJ_NODE_FILL_MODE', 'dimmed')
+        if fill_mode == 'custom':
             ax.add_patch(mpatches.Circle(
                 (1.8, 0), R, facecolor=val('CONJ_NODE_FILL_COLOR', 'lightsteelblue'),
                 edgecolor='none', zorder=10))
-            conj_label_color = label_color
-        elif val('CONJ_NODE_FILL_MODE', 'dimmed') == 'transparent':
+        elif fill_mode == 'transparent':
             ax.add_patch(mpatches.Circle((1.8, 0), R, facecolor='none',
                                          edgecolor=node_color, linewidth=2.0,
                                          zorder=10))
-            conj_label_color = node_color
         else:
             ax.add_patch(mpatches.Circle(
                 (1.8, 0), R, facecolor=node_color, edgecolor='none',
                 alpha=float(val('CONJ_NODE_FILL_ALPHA', 0.5)), zorder=10))
-            conj_label_color = label_color
-        if val('CONJ_NODE_LABEL_COLOR_ENABLED', False):
-            conj_label_color = val('CONJ_NODE_LABEL_COLOR', 'white')
-        outline_ring((1.8, 0), conj=True)
+
+        # Conjugated label color: auto-derived from the fill mode, or the
+        # literal choice (mirrors _resolve_conj_label_color in the apps)
+        if val('CONJ_LABEL_COLOR_AUTO', True):
+            conj_label_color = (node_color if fill_mode == 'transparent'
+                                else label_color)
+        else:
+            label_mode = val('CONJ_LABEL_COLOR_MODE', 'default')
+            if label_mode == 'node':
+                conj_label_color = node_color
+            elif label_mode == 'custom':
+                conj_label_color = val('CONJ_NODE_LABEL_COLOR', 'white')
+            else:
+                conj_label_color = label_color
+        outline_ring((1.8, 0))
         ax.text(1.8, 0, label_conj, ha='center', va='center',
                 fontsize=label_pts * conj_scale, color=conj_label_color,
                 zorder=11)
@@ -197,6 +204,30 @@ def make_style_sample_scene(config_module):
         ax.set_ylim(-1.9, 1.9)
 
     return draw
+
+
+def wire_conjugation_dependencies(dialog):
+    """Standard enable/disable rules for the shared conjugation settings.
+
+    Fill opacity applies to the Dimmed style only; the custom fill color to
+    the Custom style; the label-color dropdown activates when Auto is off,
+    and its custom color picker only for the Custom choice.
+    """
+    gv = dialog._get_widget_value
+    dialog._bind_row_enabled(
+        ('CONJ_NODE_FILL_MODE',), ('CONJ_NODE_FILL_ALPHA',),
+        lambda: gv('CONJ_NODE_FILL_MODE') == 'dimmed')
+    dialog._bind_row_enabled(
+        ('CONJ_NODE_FILL_MODE',), ('CONJ_NODE_FILL_COLOR',),
+        lambda: gv('CONJ_NODE_FILL_MODE') == 'custom')
+    dialog._bind_row_enabled(
+        ('CONJ_LABEL_COLOR_AUTO',), ('CONJ_LABEL_COLOR_MODE',),
+        lambda: not gv('CONJ_LABEL_COLOR_AUTO'))
+    dialog._bind_row_enabled(
+        ('CONJ_LABEL_COLOR_AUTO', 'CONJ_LABEL_COLOR_MODE'),
+        ('CONJ_NODE_LABEL_COLOR',),
+        lambda: (not gv('CONJ_LABEL_COLOR_AUTO')
+                 and gv('CONJ_LABEL_COLOR_MODE') == 'custom'))
 
 
 class SettingsDialogBase(QDialog):
@@ -293,6 +324,9 @@ class SettingsDialogBase(QDialog):
         button_layout.addStretch()
         main_layout.addLayout(button_layout)
 
+        # Subclass hook: enable/disable rows based on other rows' values
+        self._wire_dependencies()
+
         # Standard dialog buttons
         dialog_buttons = QHBoxLayout()
 
@@ -340,6 +374,37 @@ class SettingsDialogBase(QDialog):
 
     def _add_extra_buttons(self, button_layout):
         """Add app-specific buttons to the bottom-left button row."""
+
+    def _wire_dependencies(self):
+        """Wire dependent-row enabling (see _bind_row_enabled). Default: none."""
+
+    def _bind_row_enabled(self, controllers, dependents, predicate):
+        """Enable/disable dependent rows based on controller widget values.
+
+        Args:
+            controllers: parameter names whose widgets drive the rule; the
+                rule re-evaluates whenever any of them changes.
+            dependents: parameter names whose widgets get setEnabled().
+            predicate: called with no args (read pending values via
+                _get_widget_value) -> bool.
+        """
+        def apply_rule(*_args):
+            enabled = bool(predicate())
+            for name in dependents:
+                if name in self._widgets:
+                    self._widgets[name][0].setEnabled(enabled)
+
+        for name in controllers:
+            if name not in self._widgets:
+                continue
+            widget, param_type = self._widgets[name]
+            if param_type == 'bool':
+                widget.stateChanged.connect(apply_rule)
+            elif param_type == 'dropdown':
+                widget.currentIndexChanged.connect(apply_rule)
+            elif param_type in ('float', 'int'):
+                widget.valueChanged.connect(apply_rule)
+        apply_rule()
 
     # ---- Values ----
 

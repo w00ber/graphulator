@@ -368,8 +368,8 @@ def test_sample_scene_scales_labels_with_label_size_mult(qt_window, settings_tmp
     assert sizes[2.0] == pytest.approx(2 * sizes[1.0])
 
 
-def test_sample_scene_conjugated_color_overrides(qt_window, settings_tmp):
-    """The preview honors the explicit conjugated fill/label color overrides."""
+def test_sample_scene_conjugated_modes(qt_window, settings_tmp):
+    """The preview honors the conjugated fill mode and label-color choice."""
     import matplotlib.colors as mcolors
     import matplotlib.patches as mpatches
     from matplotlib.figure import Figure
@@ -378,10 +378,13 @@ def test_sample_scene_conjugated_color_overrides(qt_window, settings_tmp):
     from graphulator.settings_dialog import make_style_sample_scene
     draw = make_style_sample_scene(gq.config)
     fig = Figure()
+
+    # Custom fill + literal custom label color
     ax = fig.add_subplot()
-    draw(ax, {'CONJ_NODE_FILL_COLOR_ENABLED': True,
+    draw(ax, {'CONJ_NODE_FILL_MODE': 'custom',
               'CONJ_NODE_FILL_COLOR': 'navy',
-              'CONJ_NODE_LABEL_COLOR_ENABLED': True,
+              'CONJ_LABEL_COLOR_AUTO': False,
+              'CONJ_LABEL_COLOR_MODE': 'custom',
               'CONJ_NODE_LABEL_COLOR': 'yellow'})
     fills = [p for p in ax.patches if isinstance(p, mpatches.Circle)
              and p.get_facecolor()[:3] == mcolors.to_rgb('navy')]
@@ -389,39 +392,92 @@ def test_sample_scene_conjugated_color_overrides(qt_window, settings_tmp):
     conj_texts = [t for t in ax.texts if r'\ast' in t.get_text()]
     assert conj_texts and conj_texts[0].get_color() == 'yellow'
 
+    # Hollow + auto: label derives the node color so it never vanishes
+    fig.clear()
+    ax = fig.add_subplot()
+    draw(ax, {'CONJ_NODE_FILL_MODE': 'transparent',
+              'CONJ_LABEL_COLOR_AUTO': True,
+              'DEFAULT_NODE_COLOR_KEY': 'GREEN'})
+    conj_texts = [t for t in ax.texts if r'\ast' in t.get_text()]
+    assert conj_texts[0].get_color() == gq.config.MYCOLORS['GREEN']
 
-def test_qt_conjugated_overrides_render_on_canvas(qt_window, settings_tmp):
-    """Conjugated fill/outline color overrides apply at draw time (live)."""
+
+def test_qt_conjugated_modes_render_on_canvas(qt_window, settings_tmp):
+    """Conjugated fill mode and label choice apply at draw time (live)."""
     import matplotlib.colors as mcolors
     import matplotlib.patches as mpatches
 
     gq, win = qt_window
     config = gq.config
-    win.nodes = [{'node_id': 0, 'label': 'A', 'pos': (0.0, 0.0),
-                  'color': 'indianred', 'color_key': 'RED',
-                  'node_size_mult': 1.0, 'label_size_mult': 1.4,
-                  'conj': True, 'outline_enabled': True,
-                  'outline_color': 'black', 'outline_width': 2.0,
-                  'outline_alpha': 1.0}]
+    node = {'node_id': 0, 'label': 'A', 'pos': (0.0, 0.0),
+            'color': 'indianred', 'color_key': 'RED',
+            'node_size_mult': 1.0, 'label_size_mult': 1.4, 'conj': True}
+    win.nodes = [node]
     win.edges = []
     try:
-        config.CONJ_NODE_FILL_COLOR_ENABLED = True
+        # Custom fill mode
+        config.CONJ_NODE_FILL_MODE = 'custom'
         config.CONJ_NODE_FILL_COLOR = 'navy'
-        config.CONJ_NODE_OUTLINE_COLOR_ENABLED = True
-        config.CONJ_NODE_OUTLINE_COLOR = 'gold'
         win._update_plot()
         circles = [p for p in win.canvas.ax.patches
                    if isinstance(p, mpatches.Circle)]
         assert any(c.get_facecolor()[:3] == mcolors.to_rgb('navy')
                    for c in circles if c.get_fill())
-        rings = [c for c in circles if not c.get_fill()]
-        assert any(c.get_edgecolor()[:3] == mcolors.to_rgb('gold')
+
+        # Hollow mode: unfilled ring in the node's own color (facecolor
+        # 'none' -> fully transparent face)
+        config.CONJ_NODE_FILL_MODE = 'transparent'
+        win._update_plot()
+        rings = [p for p in win.canvas.ax.patches
+                 if isinstance(p, mpatches.Circle)
+                 and p.get_facecolor()[3] == 0.0]
+        assert any(c.get_edgecolor()[:3] == mcolors.to_rgb('indianred')
                    for c in rings)
+
+        # Label resolver: auto follows the fill mode; literal choices win
+        assert win._resolve_conj_label_color(node) == 'indianred'  # hollow+auto
+        config.CONJ_LABEL_COLOR_AUTO = False
+        config.CONJ_LABEL_COLOR_MODE = 'custom'
+        config.CONJ_NODE_LABEL_COLOR = 'yellow'
+        assert win._resolve_conj_label_color(node) == 'yellow'
+        config.CONJ_LABEL_COLOR_MODE = 'node'
+        assert win._resolve_conj_label_color(node) == 'indianred'
+        config.CONJ_LABEL_COLOR_MODE = 'default'
+        assert (win._resolve_conj_label_color(node)
+                == config.DEFAULT_NODE_LABEL_COLOR)
     finally:
-        config.CONJ_NODE_FILL_COLOR_ENABLED = False
-        config.CONJ_NODE_OUTLINE_COLOR_ENABLED = False
+        config.CONJ_NODE_FILL_MODE = 'dimmed'
+        config.CONJ_LABEL_COLOR_AUTO = True
+        config.CONJ_LABEL_COLOR_MODE = 'default'
         win.nodes = []
         win._update_plot()
+
+
+def test_conjugation_dependent_rows_enable(qt_window, settings_tmp):
+    """Dependent settings rows activate with the controlling choices."""
+    gq, win = qt_window
+    dialog = gq.GraphulatorSettingsDialog(win)
+    w = {name: dialog._widgets[name][0] for name in (
+        'CONJ_NODE_FILL_ALPHA', 'CONJ_NODE_FILL_COLOR',
+        'CONJ_LABEL_COLOR_MODE', 'CONJ_NODE_LABEL_COLOR')}
+    # Defaults: dimmed fill + auto label
+    assert w['CONJ_NODE_FILL_ALPHA'].isEnabled()
+    assert not w['CONJ_NODE_FILL_COLOR'].isEnabled()
+    assert not w['CONJ_LABEL_COLOR_MODE'].isEnabled()
+    assert not w['CONJ_NODE_LABEL_COLOR'].isEnabled()
+
+    dialog._set_widget_value('CONJ_NODE_FILL_MODE', 'custom')
+    assert w['CONJ_NODE_FILL_COLOR'].isEnabled()
+    assert not w['CONJ_NODE_FILL_ALPHA'].isEnabled()
+
+    dialog._set_widget_value('CONJ_LABEL_COLOR_AUTO', True)  # no-op state
+    dialog._widgets['CONJ_LABEL_COLOR_AUTO'][0].setChecked(False)
+    assert w['CONJ_LABEL_COLOR_MODE'].isEnabled()
+    assert not w['CONJ_NODE_LABEL_COLOR'].isEnabled()
+    dialog._set_widget_value('CONJ_LABEL_COLOR_MODE', 'custom')
+    assert w['CONJ_NODE_LABEL_COLOR'].isEnabled()
+
+    dialog._on_cancel()  # revert any applied state
 
 
 def _click(win, x, y):

@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import graphulator_para_config as config
-from ..settings_dialog import SettingsDialogBase
+from ..settings_dialog import SettingsDialogBase, wire_conjugation_dependencies
 from .shortcut_editor import ShortcutEditorWidget
 
 logger = logging.getLogger(__name__)
@@ -294,6 +294,9 @@ class SettingsDialog(SettingsDialogBase):
             preview_tabs=('Node & Edge Defaults', 'Conventions',
                           'Self-Loop Defaults'),
         )
+
+    def _wire_dependencies(self):
+        wire_conjugation_dependencies(self)
 
     # ---- Export-rescale parameters live on the window, not the config ----
 

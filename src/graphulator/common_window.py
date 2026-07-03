@@ -60,6 +60,29 @@ class GraphWindowCommonMixin:
         """Refresh the display after the grid type/rotation changed."""
         self._update_plot()
 
+    def _resolve_conj_label_color(self, node):
+        """Default label color for a node under the conjugation convention.
+
+        Conjugation reads as an inversion of the unconjugated appearance:
+        with AUTO on the color derives from the fill mode (hollow nodes take
+        the node's own color so the label never vanishes); otherwise the
+        literal CONJ_LABEL_COLOR_MODE choice applies. A per-node
+        'label_color' override still wins over this default at the call
+        site.
+        """
+        config = self.APP_CONFIG
+        if not node.get('conj', False):
+            return config.DEFAULT_NODE_LABEL_COLOR
+        hollow = getattr(config, 'CONJ_NODE_FILL_MODE', 'dimmed') == 'transparent'
+        if getattr(config, 'CONJ_LABEL_COLOR_AUTO', True):
+            return node['color'] if hollow else config.DEFAULT_NODE_LABEL_COLOR
+        mode = getattr(config, 'CONJ_LABEL_COLOR_MODE', 'default')
+        if mode == 'node':
+            return node['color']
+        if mode == 'custom':
+            return getattr(config, 'CONJ_NODE_LABEL_COLOR', 'white')
+        return config.DEFAULT_NODE_LABEL_COLOR
+
     # ---- Hand-parametrized shared methods ----
 
     def _update_window_title(self):

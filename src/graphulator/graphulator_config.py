@@ -30,19 +30,16 @@ DEFAULT_NODE_LABEL_COLOR = 'white'
 DEFAULT_NODE_LABEL_SIZE = 28
 
 # Conjugated-mode rendering convention (applies to the whole graph at draw
-# time; nodes store only their 'conj' flag)
-CONJ_NODE_FILL_MODE = 'dimmed'  # 'dimmed' (alpha fill) | 'transparent' (colored ring, no fill)
+# time; nodes store only their 'conj' flag). Conjugation reads as an
+# "inversion" of the unconjugated appearance, so the styles derive from the
+# node's own colors; 'custom' escapes to an explicit color where needed.
+CONJ_NODE_FILL_MODE = 'dimmed'  # 'dimmed' (alpha fill) | 'transparent' (hollow: ring in node color) | 'custom'
 CONJ_NODE_FILL_ALPHA = 0.5      # fill alpha for 'dimmed' mode
+CONJ_NODE_FILL_COLOR = 'lightsteelblue'  # fill for 'custom' mode
+CONJ_LABEL_COLOR_AUTO = True    # True: derive (hollow -> node color, else normal label color)
+CONJ_LABEL_COLOR_MODE = 'default'  # literal choice when AUTO is off: 'default' | 'node' | 'custom'
+CONJ_NODE_LABEL_COLOR = 'white'    # label color for the 'custom' literal choice
 CONJ_LABEL_SCALE = 0.92         # label shrink to accommodate the asterisk
-# Optional explicit colors for conjugated nodes. When an override is off the
-# color derives from the node's own color / the normal defaults (the
-# dimmed/transparent conventions above).
-CONJ_NODE_FILL_COLOR_ENABLED = False
-CONJ_NODE_FILL_COLOR = 'lightsteelblue'
-CONJ_NODE_LABEL_COLOR_ENABLED = False
-CONJ_NODE_LABEL_COLOR = 'white'
-CONJ_NODE_OUTLINE_COLOR_ENABLED = False
-CONJ_NODE_OUTLINE_COLOR = 'black'
 
 # Default edge settings
 DEFAULT_EDGE_STYLE = 'loopy'      # 'loopy' | 'single' | 'double' (for new edges)
@@ -98,16 +95,19 @@ SETTINGS_PARAMS = {
         ('ARROWHEAD_OPEN_ANGLE', 'Arrowhead Opening Angle (°)', 'int', 20, 120, 5),
     ],
     'Conventions': [
-        ('CONJ_NODE_FILL_MODE', 'Conjugated Node Fill', 'dropdown',
-         [('Dimmed', 'dimmed'), ('Transparent', 'transparent')], None, None),
-        ('CONJ_NODE_FILL_ALPHA', 'Conjugated Fill Alpha', 'float', 0.1, 1.0, 0.05),
+        ('CONJ_NODE_FILL_MODE', 'Conjugated Node Style', 'dropdown',
+         [('Dimmed (reduced opacity)', 'dimmed'),
+          ('Hollow (ring in node color)', 'transparent'),
+          ('Custom color', 'custom')], None, None),
+        ('CONJ_NODE_FILL_ALPHA', 'Conjugated Fill Opacity', 'float', 0.1, 1.0, 0.05),
+        ('CONJ_NODE_FILL_COLOR', 'Custom Fill Color', 'color', None, None, None),
+        ('CONJ_LABEL_COLOR_AUTO', 'Auto Conjugated Label Color', 'bool', None, None, None),
+        ('CONJ_LABEL_COLOR_MODE', 'Conjugated Label Color', 'dropdown',
+         [('Same as normal labels', 'default'),
+          ('Unconjugated node color', 'node'),
+          ('Custom color', 'custom')], None, None),
+        ('CONJ_NODE_LABEL_COLOR', 'Custom Label Color', 'color', None, None, None),
         ('CONJ_LABEL_SCALE', 'Conjugated Label Scale', 'float', 0.5, 1.0, 0.02),
-        ('CONJ_NODE_FILL_COLOR_ENABLED', 'Custom Conjugated Fill Color', 'bool', None, None, None),
-        ('CONJ_NODE_FILL_COLOR', 'Conjugated Fill Color', 'color', None, None, None),
-        ('CONJ_NODE_LABEL_COLOR_ENABLED', 'Custom Conjugated Label Color', 'bool', None, None, None),
-        ('CONJ_NODE_LABEL_COLOR', 'Conjugated Label Color', 'color', None, None, None),
-        ('CONJ_NODE_OUTLINE_COLOR_ENABLED', 'Custom Conjugated Outline Color', 'bool', None, None, None),
-        ('CONJ_NODE_OUTLINE_COLOR', 'Conjugated Outline Color', 'color', None, None, None),
     ],
     'Self-Loop Defaults': [
         ('DEFAULT_SELFLOOP_ANGLE', 'Default Angle (°)', 'int', 0, 355, 15),
@@ -121,13 +121,11 @@ SETTINGS_PARAMS = {
 LIVE_PARAMS = (
     'CONJ_NODE_FILL_MODE',
     'CONJ_NODE_FILL_ALPHA',
-    'CONJ_LABEL_SCALE',
-    'CONJ_NODE_FILL_COLOR_ENABLED',
     'CONJ_NODE_FILL_COLOR',
-    'CONJ_NODE_LABEL_COLOR_ENABLED',
+    'CONJ_LABEL_COLOR_AUTO',
+    'CONJ_LABEL_COLOR_MODE',
     'CONJ_NODE_LABEL_COLOR',
-    'CONJ_NODE_OUTLINE_COLOR_ENABLED',
-    'CONJ_NODE_OUTLINE_COLOR',
+    'CONJ_LABEL_SCALE',
     'ARROWHEAD_OPEN_ANGLE',
     'DEFAULT_NODE_RADIUS',
     'DEFAULT_NODE_LABEL_COLOR',  # read at draw time for nodes without an override
