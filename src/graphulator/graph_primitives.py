@@ -165,6 +165,7 @@ def looparrow(ax=None,
               arrowscale=1.0,      # relative arrowhead scaling
               arrowopenang=60.0,   # arrowhead opening angle (degrees)
               gid=None,            # SVG group id for the whole edge
+              capstyle='round',    # 'round' for arrowhead strokes; 'butt' for flush line ends
               debug=False):
     '''
     Draw the whole loopy arrow: curve plus arrowhead as ONE compound
@@ -217,7 +218,7 @@ def looparrow(ax=None,
     pp = mpatches.PathPatch(mpath.Path(verts, codes),
                             facecolor=(color if filled else 'none'),
                             edgecolor=color, lw=lw, alpha=alpha,
-                            capstyle='round', joinstyle='miter')
+                            capstyle=capstyle, joinstyle='miter')
     if gid:
         pp.set_gid(gid)
 
@@ -668,6 +669,7 @@ def edge(ax = None,
                     theta = thetaoffsetangles,
                     arrowlength = None, # no arrow
                     gid = gid,
+                    capstyle = 'butt', # flush line ends (legacy appearance)
                     **singleloopkwargs
                     )
 
@@ -686,12 +688,16 @@ def edge(ax = None,
 
 
         # draw the fat line ----------------------------------------------
+        # Both passes need flush 'butt' ends: the white overlay runs slightly
+        # past the fat stroke and cuts its ends open, so the pair reads as two
+        # parallel rails. Round caps would bulge the fat stroke past the white.
         looparrow(ax,
                 vstartend = voffsetendpts,
                 R = [0,0], # single line so no loopiness
                 theta = thetaoffsetangles,
                 arrowlength = None, # no arrow
                 gid = gid,
+                capstyle = 'butt',
                 **doubleloopkwargs
                 )
 
@@ -709,8 +715,9 @@ def edge(ax = None,
                 theta = thetaoffsetangles,
                 arrowlength = None, # no arrow
                 gid = f'{gid}_inner' if gid else None,
+                capstyle = 'butt',
                 **doubleloopkwargs
-                )            
+                )
 
     if label:
         # Calculate dynamic points_per_data_unit to keep labels proportional to node circles

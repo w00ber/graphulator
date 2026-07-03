@@ -159,3 +159,47 @@ def test_legacy_api_still_callable():
     gp.selfloop(ax=ax, baseangle=90, dtheta=-34, nodecent=[0, 0], R=1.2,
                 loopR=6.0, arrowlength=0.3, color="black", lw=2, flip=False)
     plt.close(fig)
+
+
+def test_double_style_uses_flush_butt_caps():
+    """The double-line kludge (fat stroke + longer white overlay) only reads
+    as two open-ended rails when both strokes end flush; round caps would
+    bulge the fat stroke past the white stripe (regression seen in the field).
+    """
+    fig, ax = make_ax()
+    gp.edge(ax=ax, nodexy=[(-4, 0), (4, 0)], nodeR=[2, 2], style="double",
+            whichedges="both", label=[None, None],
+            loopkwargs={"lw": 6.0, "arrowlength": 0.4})
+    assert len(ax.patches) == 2  # fat colored pass + thin white overlay
+    for p in ax.patches:
+        assert p.get_capstyle() == "butt"
+    whites = [p for p in ax.patches
+              if p.get_edgecolor()[:3] == (1.0, 1.0, 1.0)]
+    assert len(whites) == 1
+    fat = next(p for p in ax.patches if p is not whites[0])
+    assert fat.get_linewidth() > whites[0].get_linewidth()
+    plt.close(fig)
+
+
+def test_single_style_uses_flush_butt_caps():
+    fig, ax = make_ax()
+    gp.edge(ax=ax, nodexy=[(-4, 0), (4, 0)], nodeR=[2, 2], style="single",
+            whichedges="both", label=[None, None],
+            loopkwargs={"lw": 6.0, "arrowlength": 0.4})
+    assert len(ax.patches) == 1
+    assert ax.patches[0].get_capstyle() == "butt"
+    plt.close(fig)
+
+
+def test_loopy_style_keeps_round_caps():
+    """Loopy edges carry the arrowhead in the same compound patch; round
+    caps are the verified rendering for the stroked open-V head.
+    """
+    fig, ax = make_ax()
+    gp.edge(ax=ax, nodexy=[(-4, 0), (4, 0)], nodeR=[2, 2], style="loopy",
+            whichedges="both", label=[None, None],
+            loopkwargs={"lw": 2.0, "arrowlength": 0.4})
+    assert len(ax.patches) == 2
+    for p in ax.patches:
+        assert p.get_capstyle() == "round"
+    plt.close(fig)
