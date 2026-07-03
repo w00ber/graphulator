@@ -1,28 +1,42 @@
 # Changelog
 
-## [Unreleased]
+## [0.12.0] - 2026-07-03
 ### Added
 - Graphulator now has a Settings dialog (File → Settings…, `Ctrl+,`) for
   styling defaults, with a live sample preview pane. Both apps store their
   settings in per-app sections of `~/.graphulator/settings.json` (existing
   files migrate automatically); Paragraphulator's dialog gains the same
-  preview pane and a new Conventions tab.
+  preview pane (appearance tabs only) and a new Conventions tab.
 - New arrowhead styles in Graphulator: `open` (classic), `filled`
   (publication-style closed triangle), and `stealth` (swept-back), with a
   per-edge relative scale. Editable in the edge Properties Panel
   (single and multi-select), the edge right-click menu, and as app
   defaults in Settings (with an "Apply to Existing…" button).
-- Conjugated-mode appearance (node fill, label scale, and — in
-  Paragraphulator — the single/double edge-style convention) is now
-  configurable per app and applies live from the Settings dialog.
-  Graphulator adds a `transparent` conjugated-node mode (colored ring,
-  no fill).
+- Conjugated-mode appearance is organized as an "inversion" of the
+  unconjugated look in both apps: node style (Dimmed / Hollow ring in
+  node color / Custom color) and label color (Auto-derived, same as
+  normal, node color, or custom), plus label scale — all live-applied
+  conventions.
+- Per-node outlines in Graphulator (enabled/color/width/opacity),
+  matching Paragraphulator: config defaults, Properties Panel controls,
+  save/copy round-trip, and code-export support.
+- Graphulator Settings now covers the full set of new-object defaults:
+  node color/label scale/label color, edge style, line width, loopy
+  curvature θ, edge label scale/offset, arrowheads, and self-loop
+  angle/size/line width — all shown in the preview pane.
 - Undo now has a matching Redo (`Ctrl+Shift+Z` / `Ctrl+Y`) in both apps.
 
 ### Changed
+- Placing an edge in Graphulator no longer opens a dialog: new edges and
+  self-loops inherit the properties of the last placed or modified one,
+  and any per-edge change (Properties Panel, context menu, edit dialog)
+  carries forward to subsequent placements.
 - Each edge and its arrowhead are now drawn as one compound path, so
   SVG exports contain a single named group per edge (`edge_<n>`) that
   stays together when edited in Illustrator/Inkscape.
+- The Settings preview renders node labels in the apps' bold sans-serif
+  math style and reflects every appearance default, including pending
+  (unapplied) values.
 - The S-parameter sweep is vectorized (~15× faster) and runs on a
   background thread, so large frequency point counts no longer freeze
   the GUI.
@@ -39,7 +53,15 @@
 - Copy/paste preserved neither edge curvature (`looptheta`) nor label
   flip/rotation in Graphulator.
 - "Reset to Defaults" in Settings now restores true as-coded values
-  (it previously re-read the already-overridden values).
+  (it previously re-read the already-overridden values), and both Apply
+  and Reset propagate changed defaults to newly placed objects (dialog
+  memory was never resynced, so applying settings only worked
+  sporadically).
+- Single/double edge styles regained their flush (butt) endcaps; the
+  compound-path rewrite had given them rounded caps, which broke the
+  double-line rendering into a rounded capsule.
+- Paragraphulator's self-loop "Linewidth" setting was mislabeled — it
+  scales the arrowhead length and is now labeled accordingly.
 
 ## [0.11.0] - 2026-06-30
 ### Changed
