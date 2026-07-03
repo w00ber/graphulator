@@ -104,6 +104,12 @@ def make_style_sample_scene(config_module):
                 return palette[key]
             return val(color_name, fallback)
 
+        # Fixed view, set BEFORE drawing: gp.edge sizes labels from the
+        # current axes limits, and a fixed frame keeps size changes visibly
+        # proportional
+        ax.set_xlim(-4.6, 3.1)
+        ax.set_ylim(-1.9, 1.9)
+
         node_color = resolve_color('DEFAULT_NODE_COLOR_KEY',
                                    'DEFAULT_NODE_COLOR', 'indianred')
         label_color = val('DEFAULT_NODE_LABEL_COLOR', 'white')
@@ -125,8 +131,17 @@ def make_style_sample_scene(config_module):
         # The apps pre-multiply single/double linewidths (those styles draw one
         # stroke instead of the loopy pair), so mirror that scaling here
         style_lw = {'single': 3.0, 'double': 6.0}.get(edge_style, 1.0)
+        # Show a sample edge label when the app exposes edge-label defaults
+        if getattr(config_module, 'DEFAULT_EDGE_LABEL_SIZE_MULT', None) is not None:
+            edge_labels = [r'$\mathbf{\mathsf{g}}$', None]
+        else:
+            edge_labels = [None, None]
         gp.edge(ax=ax, nodexy=[(-1.8, 0), (1.8, 0)], nodeR=[R, R],
-                style=edge_style, whichedges='both', label=[None, None],
+                style=edge_style, whichedges='both',
+                theta=float(val('DEFAULT_EDGE_LOOPTHETA', 30)),
+                label=edge_labels,
+                labelfontsize=20 * float(val('DEFAULT_EDGE_LABEL_SIZE_MULT', 1.4)),
+                labeloffset=1.0 * float(val('DEFAULT_EDGE_LABEL_OFFSET_MULT', 0.8)),
                 loopkwargs=dict(lw=2.0 * lw_mult * style_lw,
                                 arrowlength=0.3, **arrow_kwargs))
 
@@ -199,9 +214,6 @@ def make_style_sample_scene(config_module):
         ax.text(1.8, 0, label_conj, ha='center', va='center',
                 fontsize=label_pts * conj_scale, color=conj_label_color,
                 zorder=11)
-
-        ax.set_xlim(-4.6, 3.1)
-        ax.set_ylim(-1.9, 1.9)
 
     return draw
 

@@ -477,10 +477,23 @@ def sync_dialog_defaults_from_config(window=None):
     change (Apply / Reset / startup load) so the changed defaults actually
     reach newly placed nodes.
     """
+    def closest_name(value, mapping):
+        """Nearest named option for a multiplier (dialogs work in names)."""
+        return mapping[min(mapping, key=lambda k: abs(k - value))]
+
     config.DEFAULT_NODE_COLOR = config.MYCOLORS.get(
         config.DEFAULT_NODE_COLOR_KEY, config.DEFAULT_NODE_COLOR)
     NodeInputDialog.last_color = config.DEFAULT_NODE_COLOR_KEY
+    NodeInputDialog.last_label_size = closest_name(
+        config.DEFAULT_NODE_LABEL_SIZE_MULT,
+        {0.6: 'Small', 1.0: 'Medium', 1.4: 'Large', 1.8: 'X-Large'})
     EdgeInputDialog.last_style = config.DEFAULT_EDGE_STYLE
+    EdgeInputDialog.last_label_size = closest_name(
+        config.DEFAULT_EDGE_LABEL_SIZE_MULT,
+        {1.0: 'Small', 1.4: 'Medium', 1.8: 'Large', 2.5: 'X-Large', 3.0: 'XX-Large'})
+    EdgeInputDialog.last_label_offset = closest_name(
+        config.DEFAULT_EDGE_LABEL_OFFSET_MULT,
+        {0.5: 'Close', 0.8: 'Medium', 1.2: 'Far'})
     if window is not None:
         # Placement templates rebuild from the new defaults
         window.last_node_props = None
@@ -2790,7 +2803,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                                                  config.DEFAULT_NODE_COLOR),
                     'color_key': config.DEFAULT_NODE_COLOR_KEY,
                     'node_size_mult': 1.0,  # Medium
-                    'label_size_mult': 1.4,  # Large
+                    'label_size_mult': config.DEFAULT_NODE_LABEL_SIZE_MULT,
                     'conj': False
                 }
                 logger.debug("Continuous duplicate mode - starting with 'A'")
@@ -2937,12 +2950,12 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         return {
             'label1': '', 'label2': '',
             'linewidth_mult': 1.5,
-            'label_size_mult': 1.4,
-            'label_offset_mult': 0.8,
+            'label_size_mult': config.DEFAULT_EDGE_LABEL_SIZE_MULT,
+            'label_offset_mult': config.DEFAULT_EDGE_LABEL_OFFSET_MULT,
             'style': config.DEFAULT_EDGE_STYLE,
             'direction': 'both',
             'flip_labels': False,
-            'looptheta': 30,
+            'looptheta': config.DEFAULT_EDGE_LOOPTHETA,
             'arrowstyle': config.DEFAULT_EDGE_ARROWSTYLE,
             'arrowscale': config.DEFAULT_EDGE_ARROWSCALE,
         }
@@ -2952,13 +2965,15 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         return {
             'label1': '', 'label2': '',
             'linewidth_mult': 1.5,
-            'label_size_mult': 1.4,
-            'label_offset_mult': 0.8,
+            'label_size_mult': config.DEFAULT_EDGE_LABEL_SIZE_MULT,
+            'label_offset_mult': config.DEFAULT_EDGE_LABEL_OFFSET_MULT,
             'style': 'loopy',
             'direction': 'both',
             'flip_labels': False,
-            'selfloopangle': 0,
-            'selfloopscale': 1.0,
+            # Used when auto-orientation is off; otherwise recomputed at
+            # placement
+            'selfloopangle': config.DEFAULT_SELFLOOP_ANGLE,
+            'selfloopscale': config.DEFAULT_SELFLOOP_SCALE,
             'arrowlengthsc': 1.0,
             'flip': False,
             'arrowstyle': config.DEFAULT_EDGE_ARROWSTYLE,

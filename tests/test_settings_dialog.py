@@ -363,7 +363,9 @@ def test_sample_scene_scales_labels_with_label_size_mult(qt_window, settings_tmp
     for mult in (1.0, 2.0):
         ax = fig.add_subplot()
         draw(ax, {'DEFAULT_NODE_LABEL_SIZE_MULT': mult})
-        sizes[mult] = max(t.get_fontsize() for t in ax.texts)
+        # Node labels only (the edge label scales with its own setting)
+        sizes[mult] = max(t.get_fontsize() for t in ax.texts
+                          if r'\mathsf{A}' in t.get_text())
         fig.clear()
     assert sizes[2.0] == pytest.approx(2 * sizes[1.0])
 
@@ -538,4 +540,64 @@ def test_edge_placement_without_dialog_carries_forward(qt_window, settings_tmp):
         win.edges = []
         win.last_edge_props = None
         win.last_selfloop_props = None
+        win._update_plot()
+
+
+def test_qt_dialog_exposes_new_layout_defaults(qt_window, settings_tmp):
+    gq, win = qt_window
+    dialog = gq.GraphulatorSettingsDialog(win)
+    for param in ('DEFAULT_NODE_LABEL_SIZE_MULT', 'DEFAULT_EDGE_LOOPTHETA',
+                  'DEFAULT_EDGE_LABEL_SIZE_MULT',
+                  'DEFAULT_EDGE_LABEL_OFFSET_MULT', 'DEFAULT_SELFLOOP_SCALE'):
+        assert param in dialog._widgets, param
+
+
+def test_qt_layout_defaults_flow_to_placed_edges(qt_window, settings_tmp):
+    """Looptheta, edge-label size/offset, and self-loop scale defaults reach
+    newly placed edges after a settings change (sync clears templates)."""
+    gq, win = qt_window
+    config = gq.config
+    originals = {k: getattr(config, k) for k in (
+        'DEFAULT_EDGE_LOOPTHETA', 'DEFAULT_EDGE_LABEL_SIZE_MULT',
+        'DEFAULT_EDGE_LABEL_OFFSET_MULT', 'DEFAULT_SELFLOOP_SCALE',
+        'AUTO_ADJUST_SELFLOOP_ANGLE', 'DEFAULT_SELFLOOP_ANGLE')}
+    nodes = [{'node_id': i, 'label': lbl, 'pos': pos, 'color': 'indianred',
+              'color_key': 'RED', 'node_size_mult': 1.0,
+              'label_size_mult': 1.4, 'conj': False}
+             for i, (lbl, pos) in enumerate((('A', (0.0, 0.0)),
+                                             ('B', (4.0, 0.0))))]
+    original_mode = win.placement_mode
+    win.nodes = nodes
+    win.edges = []
+    win.placement_mode = 'edge_continuous'
+    win.edge_mode_first_node = None
+    try:
+        config.DEFAULT_EDGE_LOOPTHETA = 55
+        config.DEFAULT_EDGE_LABEL_SIZE_MULT = 1.8
+        config.DEFAULT_EDGE_LABEL_OFFSET_MULT = 1.2
+        config.DEFAULT_SELFLOOP_SCALE = 1.3
+        config.AUTO_ADJUST_SELFLOOP_ANGLE = False
+        config.DEFAULT_SELFLOOP_ANGLE = 135
+        gq.sync_dialog_defaults_from_config(win)
+
+        _click(win, 0, 0)
+        _click(win, 4, 0)
+        edge = win.edges[-1]
+        assert edge['looptheta'] == 55
+        assert edge['label_size_mult'] == pytest.approx(1.8)
+        assert edge['label_offset_mult'] == pytest.approx(1.2)
+
+        _click(win, 4, 0)
+        _click(win, 4, 0)
+        loop = [e for e in win.edges if e['is_self_loop']][-1]
+        assert loop['selfloopscale'] == pytest.approx(1.3)
+        assert loop['selfloopangle'] == 135  # auto-orient off -> the default
+    finally:
+        for k, v in originals.items():
+            setattr(config, k, v)
+        win.placement_mode = original_mode
+        win.edge_mode_first_node = None
+        win.nodes = []
+        win.edges = []
+        gq.sync_dialog_defaults_from_config(win)
         win._update_plot()

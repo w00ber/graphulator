@@ -22,6 +22,7 @@ MYCOLORS = dict(
 DEFAULT_NODE_COLOR_KEY = 'RED'  # key into MYCOLORS; the node dialogs work in keys
 DEFAULT_NODE_COLOR = MYCOLORS[DEFAULT_NODE_COLOR_KEY]  # derived; kept in sync
 DEFAULT_NODE_RADIUS = 0.6
+DEFAULT_NODE_LABEL_SIZE_MULT = 1.4  # label scale for new nodes (dialog 'Large')
 DEFAULT_NODE_OUTLINE_ENABLED = False
 DEFAULT_NODE_OUTLINE_COLOR = 'black'
 DEFAULT_NODE_OUTLINE_WIDTH = 2.5
@@ -43,6 +44,9 @@ CONJ_LABEL_SCALE = 0.92         # label shrink to accommodate the asterisk
 
 # Default edge settings
 DEFAULT_EDGE_STYLE = 'loopy'      # 'loopy' | 'single' | 'double' (for new edges)
+DEFAULT_EDGE_LOOPTHETA = 30       # loopy-style curvature angle for new edges (degrees)
+DEFAULT_EDGE_LABEL_SIZE_MULT = 1.4    # edge label scale for new edges (dialog 'Medium')
+DEFAULT_EDGE_LABEL_OFFSET_MULT = 0.8  # edge label offset for new edges (dialog 'Medium')
 DEFAULT_EDGE_ARROWSTYLE = 'open'  # 'open' | 'filled' | 'stealth'
 DEFAULT_EDGE_ARROWSCALE = 1.0     # relative arrowhead scaling for new edges
 ARROWHEAD_OPEN_ANGLE = 60         # arrowhead opening angle in degrees (convention; applies at draw time)
@@ -67,6 +71,7 @@ TRIANGULAR_GRID_ROTATION_INCREMENT = 30
 
 # Self-loop settings
 DEFAULT_SELFLOOP_ANGLE = 90  # degrees (90° = Up)
+DEFAULT_SELFLOOP_SCALE = 1.0  # size scale for new self-loops
 SELFLOOP_ANGLE_KEYBOARD_INCREMENT = 15  # degrees per keypress (must be multiple of 5)
 AUTO_ADJUST_SELFLOOP_ANGLE = True  # When True, new self-loops auto-orient away from edges
 DYNAMIC_ADJUST_SELFLOOP_ANGLE = True  # When True, unpinned self-loops reorient on drag-end
@@ -80,6 +85,7 @@ SETTINGS_PARAMS = {
     'Node Defaults': [
         ('DEFAULT_NODE_COLOR_KEY', 'Node Color', 'dropdown', 'MYCOLORS_KEYS', None, None),
         ('DEFAULT_NODE_RADIUS', 'Node Base Radius', 'float', 0.1, 2.0, 0.1),
+        ('DEFAULT_NODE_LABEL_SIZE_MULT', 'Node Label Scale (×)', 'float', 0.5, 3.0, 0.1),
         ('DEFAULT_NODE_LABEL_COLOR', 'Node Label Color', 'color', None, None, None),
         ('DEFAULT_NODE_OUTLINE_ENABLED', 'Show Node Outline', 'bool', None, None, None),
         ('DEFAULT_NODE_OUTLINE_COLOR', 'Outline Color', 'color', None, None, None),
@@ -89,6 +95,9 @@ SETTINGS_PARAMS = {
     'Edge Defaults': [
         ('DEFAULT_EDGE_STYLE', 'Edge Style', 'dropdown',
          [('Loopy', 'loopy'), ('Single', 'single'), ('Double', 'double')], None, None),
+        ('DEFAULT_EDGE_LOOPTHETA', 'Loopy Curvature θ (°)', 'int', -180, 180, 5),
+        ('DEFAULT_EDGE_LABEL_SIZE_MULT', 'Edge Label Scale (×)', 'float', 0.5, 3.0, 0.1),
+        ('DEFAULT_EDGE_LABEL_OFFSET_MULT', 'Edge Label Offset (×)', 'float', 0.3, 3.0, 0.1),
         ('DEFAULT_EDGE_ARROWSTYLE', 'Arrowhead Style', 'dropdown',
          [('Open', 'open'), ('Filled', 'filled'), ('Stealth', 'stealth')], None, None),
         ('DEFAULT_EDGE_ARROWSCALE', 'Arrowhead Scale (×)', 'float', 0.2, 3.0, 0.1),
@@ -111,6 +120,7 @@ SETTINGS_PARAMS = {
     ],
     'Self-Loop Defaults': [
         ('DEFAULT_SELFLOOP_ANGLE', 'Default Angle (°)', 'int', 0, 355, 15),
+        ('DEFAULT_SELFLOOP_SCALE', 'Size Scale (×)', 'float', 0.5, 2.0, 0.1),
         ('AUTO_ADJUST_SELFLOOP_ANGLE', 'Auto-Orient New Self-Loops', 'bool', None, None, None),
         ('DYNAMIC_ADJUST_SELFLOOP_ANGLE', 'Re-Orient Unpinned on Drag', 'bool', None, None, None),
     ],
