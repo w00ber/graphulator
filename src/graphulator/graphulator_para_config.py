@@ -36,6 +36,21 @@ DEFAULT_NODE_SIZE_MULT = 1.0  # Multiplier for node radius
 DEFAULT_NODE_LABEL_SIZE_MULT = 1.4  # Multiplier for label font size
 DEFAULT_NODE_CONJUGATED = False
 
+# Conjugated-mode rendering convention (Naaman-Aumentado; applies to the
+# whole graph at draw time - nodes store only their 'conj' flag)
+# Conjugation reads as an "inversion" of the unconjugated appearance, so the
+# styles derive from the node's own colors; 'custom' escapes to an explicit
+# color where needed.
+CONJ_NODE_FILL_MODE = 'dimmed'  # 'dimmed' (alpha fill) | 'transparent' (hollow: ring in node color) | 'custom'
+CONJ_NODE_FILL_ALPHA = 0.5   # fill alpha for 'dimmed' mode
+CONJ_NODE_FILL_COLOR = 'lightsteelblue'  # fill for 'custom' mode
+CONJ_LABEL_COLOR_AUTO = True    # True: derive (hollow -> node color, else normal label color)
+CONJ_LABEL_COLOR_MODE = 'default'  # literal choice when AUTO is off: 'default' | 'node' | 'custom'
+CONJ_NODE_LABEL_COLOR = 'white'    # label color for the 'custom' literal choice
+CONJ_LABEL_SCALE = 0.92      # label shrink to accommodate the asterisk
+CONJ_SAME_EDGE_STYLE = 'single'   # edge style between same-conjugation nodes
+CONJ_DIFF_EDGE_STYLE = 'double'   # edge style between opposite-conjugation nodes
+
 # Node outline (circle border) settings
 DEFAULT_NODE_OUTLINE_COLOR_KEY = 'BLACK'  # Key into MYCOLORS for outline color
 DEFAULT_NODE_OUTLINE_COLOR = 'black'  # Actual color value (derived from MYCOLORS[DEFAULT_NODE_OUTLINE_COLOR_KEY])

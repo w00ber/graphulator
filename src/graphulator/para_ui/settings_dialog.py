@@ -9,28 +9,20 @@ import logging
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox,
     QColorDialog,
-    QComboBox,
-    QDialog,
-    QFormLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPushButton,
     QScrollArea,
-    QSpinBox,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from .. import graphulator_para_config as config
+from ..settings_dialog import SettingsDialogBase, wire_conjugation_dependencies
 from .shortcut_editor import ShortcutEditorWidget
-from .widgets import FineControlSpinBox
 
 logger = logging.getLogger(__name__)
 
@@ -269,163 +261,61 @@ class ColorPaletteWidget(QWidget):
         self._refresh_list()
 
 
-class SettingsDialog(QDialog):
-    """Comprehensive Settings dialog for configuring graphulator parameters.
+class SettingsDialog(SettingsDialogBase):
+    """Paragraphulator Settings dialog.
 
-    Features:
-    - QTabWidget with organized parameter categories
-    - Session state tracking for Cancel functionality
-    - Persistent storage via JSON file for "Save as Defaults"
-    - Flexible parameter registration for easy expansion
+    Extends the shared table-driven dialog with the app's extras: the
+    export-rescale parameters (stored on the window, not the config
+    module), the Color Palettes tab, and the Keyboard Shortcuts tab.
     """
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.graphulator = parent
-        self.setWindowTitle("Settings")
-        self.setMinimumWidth(550)
-        self.setMinimumHeight(650)
-
-        # Import settings constants from main module (delayed to avoid circular imports)
+        # Import settings constants from the main module (delayed to avoid
+        # circular imports)
         from ..graphulator_para import (
             EXPORT_RESCALE_DEFAULTS,
+            LIVE_PARAMS,
             SETTINGS_PARAMS,
-            USER_SETTINGS_FILE,
-            _get_original_config_value,
-            delete_user_settings,
-            save_user_settings,
             sync_dialog_defaults_from_config,
         )
-        self._SETTINGS_PARAMS = SETTINGS_PARAMS
+        from ..para_core.settings_manager import get_settings_manager
+        from ..settings_dialog import make_style_sample_scene
         self._EXPORT_RESCALE_DEFAULTS = EXPORT_RESCALE_DEFAULTS
-        self._save_user_settings = save_user_settings
-        self._delete_user_settings = delete_user_settings
-        self._USER_SETTINGS_FILE = USER_SETTINGS_FILE
-        self._get_original_config_value = _get_original_config_value
         self._sync_dialog_defaults_from_config = sync_dialog_defaults_from_config
 
-        # Store original values when dialog opens (for Cancel functionality)
-        self._original_values = {}
-        self._store_original_values()
+        super().__init__(
+            parent,
+            config_module=config,
+            params_table=SETTINGS_PARAMS,
+            settings_manager=get_settings_manager(),
+            auto_refresh_tabs=('S-Parameter Plot',),
+            live_params=LIVE_PARAMS,
+            sample_scene=make_style_sample_scene(config),
+            preview_tabs=('Node & Edge Defaults', 'Conventions',
+                          'Self-Loop Defaults'),
+        )
 
-        # Widget references for accessing values
-        self._widgets = {}
+    def _wire_dependencies(self):
+        wire_conjugation_dependencies(self)
 
-        # Create main layout
-        main_layout = QVBoxLayout()
-        self.setLayout(main_layout)
-
-        # Create tab widget
-        self.tab_widget = QTabWidget()
-        main_layout.addWidget(self.tab_widget)
-
-        # Build tabs from SETTINGS_PARAMS
-        self._build_tabs()
-
-        # Create button layout
-        button_layout = QHBoxLayout()
-
-        # Reset to Defaults button
-        reset_btn = QPushButton("Reset to Defaults")
-        reset_btn.setAutoDefault(False)  # Prevent Return key from activating
-        reset_btn.setToolTip("Restore all parameters to their original code values")
-        reset_btn.clicked.connect(self._on_reset_defaults)
-        button_layout.addWidget(reset_btn)
-
-        # Save as Defaults button
-        save_defaults_btn = QPushButton("Save as Defaults")
-        save_defaults_btn.setAutoDefault(False)  # Prevent Return key from activating
-        save_defaults_btn.setToolTip("Save current settings to ~/.graphulator/settings.json")
-        save_defaults_btn.clicked.connect(self._on_save_defaults)
-        button_layout.addWidget(save_defaults_btn)
-
-        button_layout.addStretch()
-
-        main_layout.addLayout(button_layout)
-
-        # Standard dialog buttons
-        dialog_buttons = QHBoxLayout()
-
-        apply_btn = QPushButton("Apply")
-        apply_btn.setAutoDefault(False)  # Prevent Return key from activating
-        apply_btn.setToolTip("Apply changes and keep dialog open")
-        apply_btn.clicked.connect(self._on_apply)
-        dialog_buttons.addWidget(apply_btn)
-
-        ok_btn = QPushButton("OK")
-        ok_btn.setAutoDefault(False)  # Prevent Return key from activating
-        ok_btn.setToolTip("Apply changes and close dialog")
-        ok_btn.clicked.connect(self._on_ok)
-        dialog_buttons.addWidget(ok_btn)
-
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setAutoDefault(False)  # Prevent Return key from activating
-        cancel_btn.setToolTip("Revert changes and close dialog")
-        cancel_btn.clicked.connect(self._on_cancel)
-        dialog_buttons.addWidget(cancel_btn)
-
-        main_layout.addLayout(dialog_buttons)
-
-    def _store_original_values(self):
-        """Store current values when dialog opens for Cancel functionality."""
-        self._original_values = {}
-        for tab_name, params in self._SETTINGS_PARAMS.items():
-            for param_name, display_name, param_type, min_val, max_val, step in params:
-                self._original_values[param_name] = self._get_current_value(param_name)
-        # Store palette values
-        self._original_values['MYCOLORS'] = dict(config.MYCOLORS)
-        self._original_values['SPARAMS_TRACE_COLORS'] = list(config.SPARAMS_TRACE_COLORS)
+    # ---- Export-rescale parameters live on the window, not the config ----
 
     def _get_current_value(self, param_name):
-        """Get the current value of a parameter."""
-        # Check if it's an export rescale param (stored in graphulator instance)
         if param_name in self._EXPORT_RESCALE_DEFAULTS:
-            return self.graphulator.export_rescale.get(param_name,
-                   self._EXPORT_RESCALE_DEFAULTS.get(param_name))
-        # Otherwise get from config module
-        return getattr(config, param_name, None)
+            return self.graphulator.export_rescale.get(
+                param_name, self._EXPORT_RESCALE_DEFAULTS.get(param_name))
+        return super()._get_current_value(param_name)
 
     def _set_current_value(self, param_name, value):
-        """Set the current value of a parameter."""
-        # Check if it's an export rescale param (stored in graphulator instance)
         if param_name in self._EXPORT_RESCALE_DEFAULTS:
             self.graphulator.export_rescale[param_name] = value
         # Also always set in config module for consistency
-        if hasattr(config, param_name):
-            setattr(config, param_name, value)
+        super()._set_current_value(param_name, value)
 
-    def _build_tabs(self):
-        """Build UI tabs from SETTINGS_PARAMS definition."""
-        for tab_name, params in self._SETTINGS_PARAMS.items():
-            tab = QWidget()
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll_widget = QWidget()
-            form_layout = QFormLayout()
-            scroll_widget.setLayout(form_layout)
-            scroll.setWidget(scroll_widget)
+    # ---- App-specific tabs ----
 
-            tab_layout = QVBoxLayout()
-            tab_layout.addWidget(scroll)
-            tab.setLayout(tab_layout)
-
-            # Determine if this tab should auto-refresh (S-Parameter Plot tab)
-            auto_refresh = (tab_name == 'S-Parameter Plot')
-
-            for param_name, display_name, param_type, min_val, max_val, step in params:
-                current_value = self._get_current_value(param_name)
-                widget = self._create_widget(param_name, param_type, current_value,
-                                            min_val, max_val, step,
-                                            auto_refresh=auto_refresh)
-                form_layout.addRow(f"{display_name}:", widget)
-                self._widgets[param_name] = (widget, param_type)
-
-            self.tab_widget.addTab(tab, tab_name)
-
-        # Add Color Palettes tab
+    def _extra_tabs(self):
         self._build_color_palettes_tab()
-
-        # Add Keyboard Shortcuts tab
         self._build_keyboard_shortcuts_tab()
 
     def _build_color_palettes_tab(self):
@@ -489,202 +379,35 @@ class SettingsDialog(QDialog):
 
     def _on_shortcuts_modified(self):
         """Handle shortcut modifications."""
-        # Shortcuts are already applied by the editor
-        # Just mark that we have unsaved changes
+        # Shortcuts are already applied by the editor; nothing else to do.
         pass
 
     def _on_palette_changed(self):
         """Handle palette changes - apply and refresh."""
-        # Apply palette changes to config
         config.MYCOLORS = self._node_palette.get_colors()
         config.SPARAMS_TRACE_COLORS = self._trace_palette.get_colors()
         self._refresh_ui()
 
-    def _create_widget(self, param_name, param_type, current_value, min_val, max_val, step,
-                       auto_refresh=False):
-        """Create appropriate widget for parameter type.
+    # ---- App-specific dialog behavior ----
 
-        Args:
-            auto_refresh: If True, changes will auto-apply and refresh the UI immediately.
-        """
-        if param_type == 'float':
-            widget = FineControlSpinBox()
-            widget.setMinimum(min_val)
-            widget.setMaximum(max_val)
-            widget.setSingleStep(step)
-            # Determine decimal places from step
-            if step < 0.01:
-                widget.setDecimals(3)
-            elif step < 0.1:
-                widget.setDecimals(2)
-            else:
-                widget.setDecimals(2)
-            if current_value is not None:
-                widget.setValue(current_value)
-            # Connect auto-refresh if enabled
-            if auto_refresh:
-                widget.valueChanged.connect(
-                    lambda val, p=param_name: self._on_value_changed(p, val))
-            return widget
-
-        elif param_type == 'int':
-            widget = QSpinBox()
-            widget.setMinimum(int(min_val))
-            widget.setMaximum(int(max_val))
-            widget.setSingleStep(int(step))
-            if current_value is not None:
-                widget.setValue(int(current_value))
-            # Connect auto-refresh if enabled
-            if auto_refresh:
-                widget.valueChanged.connect(
-                    lambda val, p=param_name: self._on_value_changed(p, val))
-            return widget
-
-        elif param_type == 'color':
-            # Create a button that shows color picker
-            widget = QPushButton()
-            widget.setAutoDefault(False)  # Prevent Return key from activating
-            widget.setMinimumWidth(100)
-            if current_value:
-                widget.setStyleSheet(f"background-color: {current_value}; color: black;")
-                widget.setText(current_value)
-            else:
-                widget.setText("Select Color")
-            widget.clicked.connect(lambda checked, w=widget, p=param_name, ar=auto_refresh:
-                                   self._on_color_button_clicked(w, p, ar))
-            return widget
-
-        elif param_type == 'bool':
-            widget = QCheckBox()
-            if current_value is not None:
-                widget.setChecked(bool(current_value))
-            # Connect auto-refresh if enabled
-            if auto_refresh:
-                widget.stateChanged.connect(
-                    lambda state, p=param_name: self._on_value_changed(p, bool(state)))
-            return widget
-
-        elif param_type == 'dropdown':
-            widget = QComboBox()
-            # Handle different option formats
-            options = min_val  # min_val holds the options for dropdown type
-            if options == 'MYCOLORS_KEYS':
-                # Special case: use MYCOLORS keys as options
-                options = list(config.MYCOLORS.keys())
-
-            # Build combo items
-            if options and isinstance(options[0], tuple):
-                # Options are (display_name, value) tuples
-                for display_name, value in options:
-                    widget.addItem(display_name, value)
-                # Set current value by finding matching data
-                if current_value is not None:
-                    for i in range(widget.count()):
-                        if widget.itemData(i) == current_value:
-                            widget.setCurrentIndex(i)
-                            break
-            else:
-                # Options are simple values (display = value)
-                for value in options:
-                    widget.addItem(str(value), value)
-                if current_value is not None:
-                    idx = widget.findData(current_value)
-                    if idx >= 0:
-                        widget.setCurrentIndex(idx)
-
-            # Connect auto-refresh if enabled
-            if auto_refresh:
-                widget.currentIndexChanged.connect(
-                    lambda idx, w=widget, p=param_name: self._on_value_changed(p, w.currentData()))
-            return widget
-
-        else:
-            # Default to line edit
-            widget = QLineEdit()
-            if current_value is not None:
-                widget.setText(str(current_value))
-            return widget
-
-    def _on_color_button_clicked(self, button, param_name, auto_refresh=False):
-        """Handle color button click - open color picker."""
-        current_color = self._get_current_value(param_name)
-        color = QColorDialog.getColor(QColor(current_color) if current_color else QColor('white'),
-                                      self, f"Select {param_name}")
-        if color.isValid():
-            color_name = color.name()
-            button.setStyleSheet(f"background-color: {color_name}; color: black;")
-            button.setText(color_name)
-            # Auto-refresh if enabled
-            if auto_refresh:
-                self._on_value_changed(param_name, color_name)
-
-    def _on_value_changed(self, param_name, value):
-        """Handle value change - apply immediately and refresh UI."""
-        self._set_current_value(param_name, value)
-        self._refresh_ui()
-
-    def _get_widget_value(self, param_name):
-        """Get the current value from a widget."""
-        if param_name not in self._widgets:
-            return None
-
-        widget, param_type = self._widgets[param_name]
-
-        if param_type in ('float', 'int'):
-            return widget.value()
-        elif param_type == 'color':
-            text = widget.text()
-            return text if text != "Select Color" else None
-        elif param_type == 'bool':
-            return widget.isChecked()
-        elif param_type == 'dropdown':
-            return widget.currentData()
-        else:
-            return widget.text()
-
-    def _set_widget_value(self, param_name, value):
-        """Set a widget's displayed value."""
-        if param_name not in self._widgets:
-            return
-
-        widget, param_type = self._widgets[param_name]
-
-        if param_type == 'float':
-            widget.setValue(float(value) if value is not None else 0.0)
-        elif param_type == 'int':
-            widget.setValue(int(value) if value is not None else 0)
-        elif param_type == 'color':
-            if value:
-                widget.setStyleSheet(f"background-color: {value}; color: black;")
-                widget.setText(value)
-            else:
-                widget.setStyleSheet("")
-                widget.setText("Select Color")
-        elif param_type == 'bool':
-            widget.setChecked(bool(value) if value is not None else False)
-        elif param_type == 'dropdown':
-            if value is not None:
-                idx = widget.findData(value)
-                if idx >= 0:
-                    widget.setCurrentIndex(idx)
-        else:
-            widget.setText(str(value) if value is not None else "")
-
-    def _apply_all_values(self):
-        """Apply all widget values to the config/graphulator."""
-        for param_name in self._widgets:
-            value = self._get_widget_value(param_name)
-            if value is not None:
-                self._set_current_value(param_name, value)
+    def _extra_original_values(self):
+        return {
+            'MYCOLORS': dict(config.MYCOLORS),
+            'SPARAMS_TRACE_COLORS': list(config.SPARAMS_TRACE_COLORS),
+        }
 
     def _refresh_ui(self):
-        """Refresh the Graphulator UI after settings change."""
+        """Refresh the Paragraphulator UI after settings change."""
+        g = self.graphulator
         # Update node_radius from config (in case DEFAULT_NODE_RADIUS changed)
-        self.graphulator.node_radius = config.DEFAULT_NODE_RADIUS
+        g.node_radius = config.DEFAULT_NODE_RADIUS
+        # Edge styles are derived from the conjugation convention; recompute
+        # them so CONJ_SAME/DIFF_EDGE_STYLE changes take effect immediately
+        for node in g.nodes:
+            g._update_edge_styles_for_node(node)
         # Update main plot
-        self.graphulator._update_plot()
+        g._update_plot()
         # Update S-parameter plot if in scattering mode
-        # Note: sparams_data and sparams_canvas are on Graphulator, not PropertiesPanel
         if self.graphulator.scattering_mode:
             try:
                 g = self.graphulator
@@ -695,97 +418,39 @@ class SettingsDialog(QDialog):
             except Exception as e:
                 logger.error("Settings: Error refreshing S-param plot: %s", e)
 
-    def _on_apply(self):
-        """Apply button - apply changes, refresh UI, keep dialog open."""
-        self._apply_all_values()
+    def _after_apply(self):
         # Sync dialog defaults so new nodes/edges use updated settings
         self._sync_dialog_defaults_from_config()
         # Reset last_node_props so continuous duplicate mode uses new defaults
         self.graphulator._reset_last_node_props_to_defaults()
-        self._refresh_ui()
 
-    def _on_ok(self):
-        """OK button - apply changes, refresh UI, close dialog."""
-        self._apply_all_values()
-        # Sync dialog defaults so new nodes/edges use updated settings
-        self._sync_dialog_defaults_from_config()
-        # Reset last_node_props so continuous duplicate mode uses new defaults
-        self.graphulator._reset_last_node_props_to_defaults()
-        self._refresh_ui()
-        self.accept()
+    def _extra_cancel_restore(self, original_values):
+        if 'MYCOLORS' in original_values:
+            config.MYCOLORS = original_values['MYCOLORS']
+            if hasattr(self, '_node_palette'):
+                self._node_palette.set_colors(original_values['MYCOLORS'])
+        if 'SPARAMS_TRACE_COLORS' in original_values:
+            config.SPARAMS_TRACE_COLORS = original_values['SPARAMS_TRACE_COLORS']
+            if hasattr(self, '_trace_palette'):
+                self._trace_palette.set_colors(original_values['SPARAMS_TRACE_COLORS'])
 
-    def _on_cancel(self):
-        """Cancel button - revert to original values, close dialog."""
-        # Restore original values
-        for param_name, original_value in self._original_values.items():
-            if param_name == 'MYCOLORS':
-                config.MYCOLORS = original_value
-                if hasattr(self, '_node_palette'):
-                    self._node_palette.set_colors(original_value)
-            elif param_name == 'SPARAMS_TRACE_COLORS':
-                config.SPARAMS_TRACE_COLORS = original_value
-                if hasattr(self, '_trace_palette'):
-                    self._trace_palette.set_colors(original_value)
-            elif original_value is not None:
-                self._set_current_value(param_name, original_value)
-        self._refresh_ui()
-        self.reject()
-
-    def _on_reset_defaults(self):
-        """Reset to Defaults button - restore original config.py values."""
-        # Delete user settings file
-        self._delete_user_settings()
-
-        # Restore original values from config module
-        for tab_name, params in self._SETTINGS_PARAMS.items():
-            for param_name, display_name, param_type, min_val, max_val, step in params:
-                original_value = self._get_original_config_value(param_name)
-                if original_value is not None:
-                    self._set_current_value(param_name, original_value)
-                    self._set_widget_value(param_name, original_value)
-
-        # Reset palettes to defaults
+    def _extra_reset(self):
         if hasattr(self, '_node_palette'):
             self._node_palette._reset_to_defaults()
         if hasattr(self, '_trace_palette'):
             self._trace_palette._reset_to_defaults()
-
-        # Reset shortcuts to defaults
         if hasattr(self.graphulator, 'shortcut_manager'):
             self.graphulator.shortcut_manager.reset_to_defaults()
 
-        self._refresh_ui()
-        QMessageBox.information(self, "Reset Complete",
-                               "All settings have been reset to their original defaults.")
-
-    def _on_save_defaults(self):
-        """Save as Defaults button - save current settings to JSON file."""
-        # Apply current widget values first
-        self._apply_all_values()
-
-        # Collect all settings
+    def _extra_settings(self):
         settings = {}
-        for param_name in self._widgets:
-            value = self._get_widget_value(param_name)
-            if value is not None:
-                settings[param_name] = value
-
-        # Add palette settings
         if hasattr(self, '_node_palette'):
             settings['MYCOLORS'] = self._node_palette.get_colors()
         if hasattr(self, '_trace_palette'):
             settings['SPARAMS_TRACE_COLORS'] = self._trace_palette.get_colors()
-
         # Add shortcut bindings (only non-default ones)
         if hasattr(self.graphulator, 'shortcut_manager'):
             shortcut_bindings = self.graphulator.shortcut_manager.export_bindings()
             if shortcut_bindings:
                 settings['shortcuts'] = shortcut_bindings
-
-        # Save to file
-        if self._save_user_settings(settings):
-            QMessageBox.information(self, "Settings Saved",
-                                   f"Settings saved to:\n{self._USER_SETTINGS_FILE}")
-        else:
-            QMessageBox.warning(self, "Save Failed",
-                               "Could not save settings to file.")
+        return settings

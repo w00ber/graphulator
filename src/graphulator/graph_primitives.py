@@ -135,6 +135,23 @@ def angled(v):
     return real(angle(vv))*180/pi
 
 #- LESS PRIMITIVE --------------------------------------------------------------------------------------
+def _arrowhead_pts(tip, theta, openang, length):
+    '''
+    Barb points of an arrowhead at `tip` along angle `theta` (degrees).
+
+    Exactly the legacy arrowhead() convention: barbs at
+    tip + (-L*cos(theta±openang/2), +L*sin(theta±openang/2)) with
+    L = length/cos(openang/2), so `length` is the projection along the
+    arrow direction.
+    '''
+    L = length / cos(openang / 2 * pi / 180)
+    th0 = theta + openang / 2
+    th2 = theta - openang / 2
+    v0 = (tip[0] - L * cos(th0 * pi / 180), tip[1] + L * sin(th0 * pi / 180))
+    v2 = (tip[0] - L * cos(th2 * pi / 180), tip[1] + L * sin(th2 * pi / 180))
+    return v0, v2
+
+
 def looparrow(ax=None,
               vstartend=[[-1,0],[0,1]],
               R=[2,2],
@@ -144,15 +161,78 @@ def looparrow(ax=None,
               arrowthetatweak=0, # tweak the angle of the arrow. Useful with low loopiness.
               color='black',
               alpha=1.0,
+              arrowstyle='open',   # 'open' | 'filled' | 'stealth'
+              arrowscale=1.0,      # relative arrowhead scaling
+              arrowopenang=60.0,   # arrowhead opening angle (degrees)
+              gid=None,            # SVG group id for the whole edge
+              capstyle='round',    # 'round' for arrowhead strokes; 'butt' for flush line ends
               debug=False):
     '''
-    Draw the whole loopy arrow.
-    '''
+    Draw the whole loopy arrow: curve plus arrowhead as ONE compound
+    Path in a single PathPatch, so vector exports (SVG) keep each edge
+    and its arrowhead together as one group.
 
-    _,thetaarrow = drawloop(ax=ax,v=vstartend,R=R,theta=theta ,lw=lw,color=color,alpha=alpha,debug=debug)
+    Returns the PathPatch.
+    '''
+    v = vstartend
+    bz = [[vv[0] + RR / 2 * cos(pi * tht / 180), vv[1] + RR / 2 * sin(pi * tht / 180)]
+          for vv, RR, tht in zip(v, R, theta)]
+
+    Path = mpath.Path
+    verts = [v[0], bz[0], bz[1], v[1]]
+    codes = [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4]
+
+    filled = bool(arrowlength) and arrowstyle in ('filled', 'stealth')
+    if filled:
+        # Retrace the Bezier backward so the open curve subpath has zero
+        # net winding: matplotlib implicitly closes open subpaths when
+        # filling, which would otherwise fill the lens between the curve
+        # and its chord. Forward+reverse cancels under both nonzero and
+        # even-odd fill rules, and the stroke still renders in one paint
+        # op so alpha < 1 does not double-composite.
+        verts += [bz[1], bz[0], v[0]]
+        codes += [Path.CURVE4] * 3
 
     if arrowlength:
-        arrowhead(ax=ax,v=vstartend[1],length=arrowlength,lw=lw*0.8,theta=thetaarrow+arrowthetatweak,openang=60,color=color,alpha=alpha,debug=debug)
+        # drawloop's end tangent convention: 180 - theta[1]
+        th = (180 - theta[1]) + arrowthetatweak
+        length = arrowlength * arrowscale
+        tip = tuple(v[1])
+        v0, v2 = _arrowhead_pts(tip, th, arrowopenang, length)
+        if arrowstyle == 'filled':
+            # Closed triangle
+            verts += [v0, tip, v2, v0]
+            codes += [Path.MOVETO, Path.LINETO, Path.LINETO, Path.CLOSEPOLY]
+        elif arrowstyle == 'stealth':
+            # Swept-back head: concave quad (back point closer to the tip
+            # than the barb depth)
+            back = 0.45 * length
+            vb = (tip[0] - back * cos(th * pi / 180), tip[1] + back * sin(th * pi / 180))
+            verts += [tip, v0, vb, v2, tip]
+            codes += [Path.MOVETO, Path.LINETO, Path.LINETO, Path.LINETO, Path.CLOSEPOLY]
+        else:
+            # 'open': the legacy stroked V
+            verts += [v0, tip, v2]
+            codes += [Path.MOVETO, Path.LINETO, Path.LINETO]
+
+    pp = mpatches.PathPatch(mpath.Path(verts, codes),
+                            facecolor=(color if filled else 'none'),
+                            edgecolor=color, lw=lw, alpha=alpha,
+                            capstyle=capstyle, joinstyle='miter')
+    if gid:
+        pp.set_gid(gid)
+
+    if ax is None:
+        _, ax = plt.subplots()
+    ax.add_patch(pp)
+
+    if debug:
+        [plt.plot([vv[0], bbz[0]], [vv[1], bbz[1]], '-', lw=1, color='red')
+         for vv, bbz in zip(v, bz)]
+        [plt.plot(vv[0], vv[1], 'ro') for vv in v]
+        ax.grid(True)
+
+    return pp
 
 def selfloop(ax=None,
              baseangle=90,
@@ -165,6 +245,10 @@ def selfloop(ax=None,
              lw=3,
              flip=False,
              alpha=1.0,
+             arrowstyle='open',
+             arrowscale=1.0,
+             arrowopenang=60.0,
+             gid=None,
              debug=False):
     ''''
     Draw self-loop.
@@ -175,14 +259,14 @@ def selfloop(ax=None,
 
 
     R2 = [R,R]
-    theta = [baseangle+dtheta,baseangle-dtheta] 
+    theta = [baseangle+dtheta,baseangle-dtheta]
     v = [[RR*cos(th*pi/180)+nodecent[0],RR*sin(th*pi/180)+nodecent[1]] for RR,th in zip(R2,theta)]
 
     if flip:
         theta = theta[::-1]
         v = v[::-1]
 
-    looparrow(ax=ax,
+    return looparrow(ax=ax,
               vstartend=v,
               theta=theta,
               arrowlength=arrowlength,
@@ -190,6 +274,10 @@ def selfloop(ax=None,
               R=[loopR,loopR],
               color=color,
               alpha=alpha,
+              arrowstyle=arrowstyle,
+              arrowscale=arrowscale,
+              arrowopenang=arrowopenang,
+              gid=gid,
               debug=debug)
 
 
@@ -215,6 +303,7 @@ def plotnode(ax = None,
             selflooplabelbgcolor = None,  # Background color for self-loop label (None = no background)
             selflooplw = 2.5,
             arrowlengthsc = 1,
+            arrowstyle = 'open',  # 'open' | 'filled' | 'stealth' self-loop arrowhead
             drawlabels = True,
             drawselfloop = True,
             selflooplabelnudge = (0,0), # hacky way to nudge the labels into the center
@@ -300,6 +389,7 @@ def plotnode(ax = None,
                     nodecent=nodecent,baseangle=selfloopangle,dtheta=-34,
                     color=selfloopcolor,arrowlength=R/2*2.25/4*arrowlengthsc,
                     flip=flipselfloop,
+                    arrowstyle=arrowstyle,
                     lw=scaled_selflooplw,debug=debug)
     
     
@@ -482,6 +572,7 @@ def edge(ax = None,
         lw = 1.5,
         loopkwargs = {},
         reverse = False,
+        gid = None,          # SVG group id base; direction suffixes are added
         debug = False,
         label_cache = None,  # optional LabelPathCache for fast cached-glyph labels
         usetex = False,      # forwarded to the cache (LaTeX vs mathtext)
@@ -533,6 +624,7 @@ def edge(ax = None,
                     vstartend = voffsetendptsFORE,
                     R = [loopiness,loopiness],
                     theta = thetaoffsetanglesFORE,
+                    gid = gid,
                     **loopkwargs
                     )
         elif whichedges in ['backward','back']:
@@ -540,6 +632,7 @@ def edge(ax = None,
                     vstartend = voffsetendptsBACK,
                     R = [loopiness,loopiness],
                     theta = thetaoffsetanglesBACK,
+                    gid = gid,
                     **loopkwargs)
 
         elif whichedges in ['both','all']:
@@ -547,12 +640,14 @@ def edge(ax = None,
                     vstartend = voffsetendptsFORE,
                     R = [loopiness,loopiness],
                     theta = thetaoffsetanglesFORE,
+                    gid = f'{gid}_fore' if gid else None,
                     **loopkwargs
                     )
             looparrow(ax,
                     vstartend = voffsetendptsBACK,
                     R = [loopiness,loopiness],
                     theta = thetaoffsetanglesBACK,
+                    gid = f'{gid}_back' if gid else None,
                     **loopkwargs)
             
     elif style == 'single':
@@ -573,6 +668,8 @@ def edge(ax = None,
                     R = [0,0], # single line so no loopiness
                     theta = thetaoffsetangles,
                     arrowlength = None, # no arrow
+                    gid = gid,
+                    capstyle = 'butt', # flush line ends (legacy appearance)
                     **singleloopkwargs
                     )
 
@@ -591,29 +688,36 @@ def edge(ax = None,
 
 
         # draw the fat line ----------------------------------------------
+        # Both passes need flush 'butt' ends: the white overlay runs slightly
+        # past the fat stroke and cuts its ends open, so the pair reads as two
+        # parallel rails. Round caps would bulge the fat stroke past the white.
         looparrow(ax,
                 vstartend = voffsetendpts,
                 R = [0,0], # single line so no loopiness
                 theta = thetaoffsetangles,
                 arrowlength = None, # no arrow
+                gid = gid,
+                capstyle = 'butt',
                 **doubleloopkwargs
-                )            
+                )
 
         # draw the thin line ----------------------------------------------
         # modify the linewidth and change the color
         doubleloopkwargs['lw'] = doubleloopkwargs.pop('lw')*0.33
         doubleloopkwargs['color'] = 'white'
-        
-        voffsetendpts = [(n[0] + .98*RR * cos(pi/180*th), n[1] + .98*RR * sin(pi/180*th)) 
+
+        voffsetendpts = [(n[0] + .98*RR * cos(pi/180*th), n[1] + .98*RR * sin(pi/180*th))
                             for n,RR,th in zip(nodexy,Rtot,thetaoffsetangles)]
-        
+
         looparrow(ax,
                 vstartend = voffsetendpts,
                 R = [0,0], # single line so no loopiness
                 theta = thetaoffsetangles,
                 arrowlength = None, # no arrow
+                gid = f'{gid}_inner' if gid else None,
+                capstyle = 'butt',
                 **doubleloopkwargs
-                )            
+                )
 
     if label:
         # Calculate dynamic points_per_data_unit to keep labels proportional to node circles

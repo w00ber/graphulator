@@ -156,9 +156,30 @@ SETTINGS_PARAMS = {
         ('DEFAULT_EDGE_LINEWIDTH_MULT', 'Edge Line Width (×)', 'float', 0.5, 3.0, 0.25),
         # Note: Edge Style and Direction are auto-determined from node conjugation states
     ],
+    'Conventions': [
+        # Conjugated-mode rendering conventions (apply to the whole graph
+        # live as they are changed; Cancel reverts)
+        ('CONJ_NODE_FILL_MODE', 'Conjugated Node Style', 'dropdown',
+         [('Dimmed (reduced opacity)', 'dimmed'),
+          ('Hollow (ring in node color)', 'transparent'),
+          ('Custom color', 'custom')], None, None),
+        ('CONJ_NODE_FILL_ALPHA', 'Conjugated Fill Opacity', 'float', 0.1, 1.0, 0.05),
+        ('CONJ_NODE_FILL_COLOR', 'Custom Fill Color', 'color', None, None, None),
+        ('CONJ_LABEL_COLOR_AUTO', 'Auto Conjugated Label Color', 'bool', None, None, None),
+        ('CONJ_LABEL_COLOR_MODE', 'Conjugated Label Color', 'dropdown',
+         [('Same as normal labels', 'default'),
+          ('Unconjugated node color', 'node'),
+          ('Custom color', 'custom')], None, None),
+        ('CONJ_NODE_LABEL_COLOR', 'Custom Label Color', 'color', None, None, None),
+        ('CONJ_LABEL_SCALE', 'Conjugated Label Scale', 'float', 0.5, 1.0, 0.02),
+        ('CONJ_SAME_EDGE_STYLE', 'Same-Conjugation Edge Style', 'dropdown',
+         [('Single', 'single'), ('Double', 'double'), ('Loopy', 'loopy')], None, None),
+        ('CONJ_DIFF_EDGE_STYLE', 'Opposite-Conjugation Edge Style', 'dropdown',
+         [('Double', 'double'), ('Single', 'single'), ('Loopy', 'loopy')], None, None),
+    ],
     'Self-Loop Defaults': [
         ('DEFAULT_SELFLOOP_SCALE', 'Size Scale', 'float', 0.5, 2.0, 0.1),
-        ('DEFAULT_SELFLOOP_ARROWLENGTH', 'Linewidth', 'float', 0.5, 3.0, 0.1),
+        ('DEFAULT_SELFLOOP_ARROWLENGTH', 'Arrowhead Length (×)', 'float', 0.5, 3.0, 0.1),
         ('DEFAULT_SELFLOOP_ANGLE', 'Default Angle', 'dropdown', [
             ('0° (Right)', 0), ('45° (Up-Right)', 45), ('90° (Up)', 90),
             ('135° (Up-Left)', 135), ('180° (Left)', 180), ('225° (Down-Left)', 225),
@@ -195,6 +216,21 @@ SETTINGS_PARAMS = {
         ('EDGELABELOFFSET', 'Edge Label Offset', 'float', 0.1, 3.0, 0.05),
     ],
 }
+
+# Rendering conventions (read at draw time): the Settings dialog live-applies
+# these to the open graph, debounced, as they change; Cancel reverts.
+LIVE_PARAMS = (
+    'CONJ_NODE_FILL_MODE',
+    'CONJ_NODE_FILL_ALPHA',
+    'CONJ_NODE_FILL_COLOR',
+    'CONJ_LABEL_COLOR_AUTO',
+    'CONJ_LABEL_COLOR_MODE',
+    'CONJ_NODE_LABEL_COLOR',
+    'CONJ_LABEL_SCALE',
+    'CONJ_SAME_EDGE_STYLE',
+    'CONJ_DIFF_EDGE_STYLE',
+    'DEFAULT_NODE_RADIUS',
+)
 
 
 def _get_original_config_value(param_name):
@@ -5653,18 +5689,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # Edge label rotation mode
         self.edge_rotation_mode = False  # True when adjusting edge label rotation
 
-        # Initialize export_rescale with defaults, then merge any saved user settings
-        self.export_rescale = EXPORT_RESCALE_DEFAULTS.copy()
-        # Update with any saved export rescale settings
-        if USER_SETTINGS_FILE.exists():
-            try:
-                with open(USER_SETTINGS_FILE, 'r') as f:
-                    saved = json.load(f)
-                for key in self.export_rescale:
-                    if key in saved:
-                        self.export_rescale[key] = saved[key]
-            except Exception:
-                pass  # Silently ignore errors
+        # Initialize export_rescale with defaults merged with saved settings
+        # (read through the manager so per-app namespacing is honored)
+        self.export_rescale = get_settings_manager().get_export_rescale(
+            EXPORT_RESCALE_DEFAULTS)
 
         # Node parameters
         self.nodes = []
@@ -5798,15 +5826,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         # Initialize shortcut manager
         self.shortcut_manager = ShortcutManager(self)
-        # Load saved shortcut bindings from settings
-        if USER_SETTINGS_FILE.exists():
-            try:
-                with open(USER_SETTINGS_FILE, 'r') as f:
-                    saved = json.load(f)
-                if 'shortcuts' in saved:
-                    self.shortcut_manager.import_bindings(saved['shortcuts'])
-            except Exception:
-                pass  # Silently ignore errors
+        # Load saved shortcut bindings from settings (namespace-aware)
+        saved_shortcuts = get_settings_manager().get_shortcuts()
+        if saved_shortcuts:
+            self.shortcut_manager.import_bindings(saved_shortcuts)
 
         # Initialize documentation template processor (for dynamic Help/Tutorial)
         self.doc_processor = CachedDocumentationProcessor(self.shortcut_manager)
@@ -7528,8 +7551,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         # Create a default settings file if it doesn't exist
         if not USER_SETTINGS_FILE.exists():
-            # Save current settings to create the file
-            save_user_settings()
+            # Save current (empty-override) settings to create the file
+            save_user_settings({})
 
         # Open file manager with the settings file selected (platform-specific)
         if sys.platform == 'darwin':
@@ -11616,7 +11639,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
                 # Determine style based on conjugation states
                 same_conj = (from_conj == to_conj)
-                new_style = 'single' if same_conj else 'double'
+                new_style = config.CONJ_SAME_EDGE_STYLE if same_conj else config.CONJ_DIFF_EDGE_STYLE
 
                 # Update the edge style
                 edge['style'] = new_style
@@ -12258,8 +12281,22 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             # Draw circle with size multiplier (no outline, like prettynodes)
             node_radius = self.node_radius * node_size_mult
 
-            # Apply conjugation transparency
-            node_alpha = 0.5 if conj else 1.0
+            # Apply the conjugated-node convention (config-driven):
+            # dimmed (alpha), hollow (ring in node color), or a custom fill
+            fill_mode = getattr(config, 'CONJ_NODE_FILL_MODE', 'dimmed')
+            fill_color = node['color']
+            edge_color = node.get('edgecolor', 'none')  # Kron graph styling
+            edge_lw = 4 if node.get('edgecolor') else 0
+            node_alpha = config.CONJ_NODE_FILL_ALPHA if conj else 1.0
+            if conj and fill_mode == 'custom':
+                fill_color = config.CONJ_NODE_FILL_COLOR
+                node_alpha = 1.0
+            elif conj and fill_mode == 'transparent':
+                # Hollow: unfilled with a ring in the unconjugated fill color
+                fill_color = 'none'
+                edge_color = node['color']
+                edge_lw = 2.5 * node_size_mult * (points_per_data_unit / 43.0)
+                node_alpha = 1.0
 
             # Apply scattering mode transparency
             if self.canvas == self.scattering_canvas:
@@ -12271,9 +12308,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
             circle = patches.Circle(
                 node['pos'], node_radius,
-                facecolor=node['color'],
-                edgecolor=node.get('edgecolor', 'none'),  # Support Kron graph styling
-                linewidth=4 if node.get('edgecolor') else 0,  # Add visible linewidth for edges
+                facecolor=fill_color,
+                edgecolor=edge_color,
+                linewidth=edge_lw,
                 alpha=node_alpha,
                 zorder=10
             )
@@ -12281,7 +12318,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
             # Draw custom outline if enabled
             if node.get('outline_enabled', False):
-                outline_color = node.get('outline_color', config.DEFAULT_NODE_OUTLINE_COLOR)
+                outline_color = node.get(
+                    'outline_color', config.DEFAULT_NODE_OUTLINE_COLOR)
                 outline_width = node.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH)
                 outline_alpha = node.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA)
                 # Convert outline width to display units (similar to how we handle other linewidths)
@@ -12299,7 +12337,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             # Font size should be proportional to node radius
             # Aim for text to be about 35% of node diameter
             # Reduce size by 8% for conjugated nodes to accommodate asterisk
-            conj_scale = 0.92 if conj else 1.0
+            conj_scale = config.CONJ_LABEL_SCALE if conj else 1.0
             font_size_points = node_radius * 2 * points_per_data_unit * config.PLOT_NODE_LABEL_FONT_SCALE * label_size_mult * conj_scale
 
             # Draw label - use bold sans-serif text with proper subscript/superscript handling
@@ -12377,11 +12415,14 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
             # Draw the label via the cached vector glyph-path renderer so it stays
             # crisp and fast across pan/zoom (no per-frame layout recompilation).
+            # Conjugated label color per the convention (auto-derived or the
+            # literal choice); per-node label_color still wins
+            default_label_color = self._resolve_conj_label_color(node)
             self._label_cache.draw(
                 self.canvas.ax, formatted_text, label_x, label_y,
                 fontsize_points=font_size_points,
                 points_per_data_unit=points_per_data_unit,
-                color=node.get('label_color', config.DEFAULT_NODE_LABEL_COLOR),
+                color=node.get('label_color', default_label_color),
                 ha='center', va='center',
                 usetex=self.use_latex, zorder=11,
             )
@@ -13005,7 +13046,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 points_per_data_unit = fig_width_points / data_width
 
                 label_size_mult = node.get('label_size_mult', 1.0)
-                conj_scale = 0.92 if conj else 1.0
+                conj_scale = config.CONJ_LABEL_SCALE if conj else 1.0
                 font_size = ghost_radius * 2 * points_per_data_unit * config.PLOT_NODE_LABEL_FONT_SCALE * label_size_mult * conj_scale
 
                 preview_artists = self._label_cache.draw(
@@ -13165,7 +13206,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             data_width = xlim[1] - xlim[0]
             points_per_data_unit = fig_width_points / data_width
 
-            conj_scale = 0.92 if ghost_props['conj'] else 1.0
+            conj_scale = config.CONJ_LABEL_SCALE if ghost_props['conj'] else 1.0
             font_size = ghost_radius * 2 * points_per_data_unit * config.PLOT_NODE_LABEL_FONT_SCALE * ghost_props['label_size_mult'] * conj_scale
 
             self.preview_text = self._label_cache.draw(
@@ -13314,7 +13355,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 node1_conj = self.edge_mode_first_node.get('conj', False)
                 node2_conj = second_node.get('conj', False)
                 same_conj = (node1_conj == node2_conj)
-                style = 'single' if same_conj else 'double'
+                style = config.CONJ_SAME_EDGE_STYLE if same_conj else config.CONJ_DIFF_EDGE_STYLE
 
                 if is_self_loop:
                     # Self-loop: inherit from last_selfloop_props if available
@@ -13405,7 +13446,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                         node1_conj = self.edge_mode_first_node.get('conj', False)
                         node2_conj = second_node.get('conj', False)
                         same_conj = (node1_conj == node2_conj)
-                        result['style'] = 'single' if same_conj else 'double'
+                        result['style'] = config.CONJ_SAME_EDGE_STYLE if same_conj else config.CONJ_DIFF_EDGE_STYLE
 
                     # Check if edge already exists between these nodes (in either direction)
                     existing_edge = None
@@ -15228,7 +15269,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 if nudge != (0.0, 0.0) and (abs(nudge[0]) > 0.001 or abs(nudge[1]) > 0.001):
                     # Calculate vertical adjustment used in GUI rendering
                     # Use export parameters to calculate points_per_data_unit
-                    conj_scale = 0.92 if conj else 1.0
+                    conj_scale = config.CONJ_LABEL_SCALE if conj else 1.0
                     font_size_points = radius * 2 * export_points_per_data_unit * 0.35 * label_size_mult * conj_scale
                     adjustment_fraction = 0.05
                     vertical_adjustment_points = font_size_points * adjustment_fraction

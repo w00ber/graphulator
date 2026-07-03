@@ -1,17 +1,24 @@
 """
-Settings manager for Graphulator.
+Settings manager for Graphulator and Paragraphulator.
 
 Centralizes all settings loading, saving, and access into a single module.
-Replaces the scattered settings I/O code that was previously spread across
-graphulator_para.py and config modules.
+Both applications persist their overrides to ~/.graphulator/settings.json,
+namespaced per app::
+
+    {
+      "graphulator": { ... },
+      "paragraphulator": { ... }
+    }
+
+Legacy flat files (written before namespacing) belonged to Paragraphulator —
+the only app that had settings then — and are migrated in place on first read.
 """
 
+import copy
 import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
-
-from .. import graphulator_para_config as config
 
 logger = logging.getLogger(__name__)
 
@@ -27,19 +34,40 @@ LAST_DIRECTORY_PATH = Path.home() / '.graphulator_last_dir'
 # Maximum number of recent files to track
 MAX_RECENT_FILES = 10
 
+# Per-app namespaces in the settings file. A file whose top-level keys are
+# not a subset of these is a legacy flat (pre-namespacing) file.
+KNOWN_NAMESPACES = ('graphulator', 'paragraphulator')
+
 
 class SettingsManager:
-    """Centralized settings management for Graphulator.
+    """Centralized settings management for one application namespace.
 
     Handles loading, saving, and accessing user settings from
-    ~/.graphulator/settings.json. Consolidates settings I/O that was
-    previously scattered across multiple locations.
+    ~/.graphulator/settings.json. Each app reads and writes only its own
+    namespace, so Graphulator and Paragraphulator defaults never collide.
     """
 
-    def __init__(self):
+    def __init__(self, namespace: str = 'paragraphulator',
+                 config_module=None):
+        if config_module is None:
+            # Historical default: this module predates namespacing and was
+            # Paragraphulator-only.
+            from .. import graphulator_para_config as config_module
+        self.namespace = namespace
+        self._config = config_module
         self._settings: Dict[str, Any] = {}
         self._export_rescale: Dict[str, Any] = {}
         self._shortcuts: Dict[str, str] = {}
+        # Snapshot the as-coded constants before any override is applied so
+        # "Reset to Defaults" can restore true code values even after the
+        # config module has been mutated by load() or the Settings dialog.
+        self._code_defaults: Dict[str, Any] = {}
+        for name, value in vars(config_module).items():
+            if name.isupper():
+                try:
+                    self._code_defaults[name] = copy.deepcopy(value)
+                except Exception:
+                    self._code_defaults[name] = value
 
     @property
     def settings_file(self) -> Path:
@@ -49,55 +77,87 @@ class SettingsManager:
     def settings_dir(self) -> Path:
         return USER_SETTINGS_DIR
 
-    def load(self) -> Dict[str, Any]:
-        """Load user settings from disk and apply to config module.
+    # ---- Whole-file helpers (namespace-aware) ----
 
-        Returns the loaded settings dict (empty dict if no file or error).
+    def _read_all(self) -> Dict[str, Any]:
+        """Read the whole settings file, migrating a legacy flat file.
+
+        Legacy files (top-level keys not a subset of KNOWN_NAMESPACES) are
+        wrapped as {"paragraphulator": <old dict>} and persisted once.
         """
         if not USER_SETTINGS_FILE.exists():
             return {}
-
         try:
             with open(USER_SETTINGS_FILE, 'r') as f:
-                self._settings = json.load(f)
-
-            # Apply settings to config module
-            for param_name, value in self._settings.items():
-                if param_name == 'shortcuts':
-                    self._shortcuts = value
-                    continue
-                if hasattr(config, param_name):
-                    setattr(config, param_name, value)
-
-            return self._settings
+                raw = json.load(f)
         except Exception as e:
-            logger.warning("Could not load user settings: %s", e)
+            logger.warning("Could not read user settings: %s", e)
             return {}
+        if not isinstance(raw, dict):
+            logger.warning("Unexpected settings file format; ignoring")
+            return {}
+        if raw and not set(raw) <= set(KNOWN_NAMESPACES):
+            raw = {'paragraphulator': raw}
+            logger.info("Migrating legacy flat settings file to per-app namespaces")
+            self._write_all(raw)
+        return raw
 
-    def save(self, settings_dict: Dict[str, Any]) -> bool:
-        """Save settings to ~/.graphulator/settings.json.
-
-        Returns True on success, False on failure.
-        """
+    def _write_all(self, whole: Dict[str, Any]) -> bool:
         try:
             USER_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
             with open(USER_SETTINGS_FILE, 'w') as f:
-                json.dump(settings_dict, f, indent=2)
-            self._settings = settings_dict
+                json.dump(whole, f, indent=2)
             return True
         except Exception as e:
             logger.warning("Could not save user settings: %s", e)
             return False
 
-    def delete(self) -> bool:
-        """Delete the user settings file to reset to defaults.
+    # ---- Namespace-scoped API ----
+
+    def load(self) -> Dict[str, Any]:
+        """Load this app's settings from disk and apply to its config module.
+
+        Returns the loaded settings dict (empty dict if no file or error).
+        """
+        self._settings = self._read_all().get(self.namespace, {})
+
+        # Apply settings to the config module
+        for param_name, value in self._settings.items():
+            if param_name == 'shortcuts':
+                self._shortcuts = value
+                continue
+            if hasattr(self._config, param_name):
+                setattr(self._config, param_name, value)
+
+        return self._settings
+
+    def save(self, settings_dict: Dict[str, Any]) -> bool:
+        """Save this app's settings under its namespace.
 
         Returns True on success, False on failure.
         """
+        whole = self._read_all()
+        whole[self.namespace] = settings_dict
+        if self._write_all(whole):
+            self._settings = settings_dict
+            return True
+        return False
+
+    def delete(self) -> bool:
+        """Reset this app to defaults by clearing only its namespace.
+
+        The other app's settings are preserved; the file is removed only when
+        no namespaces remain. Returns True on success, False on failure.
+        """
         try:
+            whole = self._read_all()
+            whole.pop(self.namespace, None)
+            self._settings = {}
+            self._shortcuts = {}
+            if whole:
+                return self._write_all(whole)
             if USER_SETTINGS_FILE.exists():
                 USER_SETTINGS_FILE.unlink()
-            self._settings = {}
             return True
         except Exception as e:
             logger.warning("Could not delete user settings: %s", e)
@@ -113,15 +173,10 @@ class SettingsManager:
             Merged export rescale parameters.
         """
         result = defaults.copy()
-        if USER_SETTINGS_FILE.exists():
-            try:
-                with open(USER_SETTINGS_FILE, 'r') as f:
-                    saved = json.load(f)
-                for key in result:
-                    if key in saved:
-                        result[key] = saved[key]
-            except Exception:
-                pass
+        saved = self._read_all().get(self.namespace, {})
+        for key in result:
+            if key in saved:
+                result[key] = saved[key]
         self._export_rescale = result
         return result
 
@@ -130,33 +185,33 @@ class SettingsManager:
         if self._shortcuts:
             return self._shortcuts
 
-        if USER_SETTINGS_FILE.exists():
-            try:
-                with open(USER_SETTINGS_FILE, 'r') as f:
-                    saved = json.load(f)
-                self._shortcuts = saved.get('shortcuts', {})
-            except Exception:
-                pass
+        saved = self._read_all().get(self.namespace, {})
+        self._shortcuts = saved.get('shortcuts', {})
         return self._shortcuts
 
     def get_original_config_value(self, param_name: str) -> Optional[Any]:
         """Get the original value from the config module (as defined in code).
 
-        For export rescale params, checks the defaults dict in config.
-        Otherwise gets directly from config module.
+        For export rescale params, checks the defaults dict in config (apps
+        without one fall through to plain config attributes).
         """
-        if param_name in config.EXPORT_RESCALE_DEFAULTS:
-            return config.EXPORT_RESCALE_DEFAULTS[param_name]
-        return getattr(config, param_name, None)
+        rescale_defaults = self._code_defaults.get(
+            'EXPORT_RESCALE_DEFAULTS',
+            getattr(self._config, 'EXPORT_RESCALE_DEFAULTS', {}))
+        if param_name in rescale_defaults:
+            return rescale_defaults[param_name]
+        if param_name in self._code_defaults:
+            return copy.deepcopy(self._code_defaults[param_name])
+        return getattr(self._config, param_name, None)
 
 
-# Module-level singleton instance
-_instance: Optional[SettingsManager] = None
+# Per-namespace instances
+_instances: Dict[str, SettingsManager] = {}
 
 
-def get_settings_manager() -> SettingsManager:
-    """Get the singleton SettingsManager instance."""
-    global _instance
-    if _instance is None:
-        _instance = SettingsManager()
-    return _instance
+def get_settings_manager(namespace: str = 'paragraphulator',
+                         config_module=None) -> SettingsManager:
+    """Get the SettingsManager instance for an app namespace."""
+    if namespace not in _instances:
+        _instances[namespace] = SettingsManager(namespace, config_module)
+    return _instances[namespace]
