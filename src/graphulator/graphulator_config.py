@@ -34,6 +34,15 @@ DEFAULT_NODE_LABEL_SIZE = 28
 CONJ_NODE_FILL_MODE = 'dimmed'  # 'dimmed' (alpha fill) | 'transparent' (colored ring, no fill)
 CONJ_NODE_FILL_ALPHA = 0.5      # fill alpha for 'dimmed' mode
 CONJ_LABEL_SCALE = 0.92         # label shrink to accommodate the asterisk
+# Optional explicit colors for conjugated nodes. When an override is off the
+# color derives from the node's own color / the normal defaults (the
+# dimmed/transparent conventions above).
+CONJ_NODE_FILL_COLOR_ENABLED = False
+CONJ_NODE_FILL_COLOR = 'lightsteelblue'
+CONJ_NODE_LABEL_COLOR_ENABLED = False
+CONJ_NODE_LABEL_COLOR = 'white'
+CONJ_NODE_OUTLINE_COLOR_ENABLED = False
+CONJ_NODE_OUTLINE_COLOR = 'black'
 
 # Default edge settings
 DEFAULT_EDGE_STYLE = 'loopy'      # 'loopy' | 'single' | 'double' (for new edges)
@@ -93,6 +102,12 @@ SETTINGS_PARAMS = {
          [('Dimmed', 'dimmed'), ('Transparent', 'transparent')], None, None),
         ('CONJ_NODE_FILL_ALPHA', 'Conjugated Fill Alpha', 'float', 0.1, 1.0, 0.05),
         ('CONJ_LABEL_SCALE', 'Conjugated Label Scale', 'float', 0.5, 1.0, 0.02),
+        ('CONJ_NODE_FILL_COLOR_ENABLED', 'Custom Conjugated Fill Color', 'bool', None, None, None),
+        ('CONJ_NODE_FILL_COLOR', 'Conjugated Fill Color', 'color', None, None, None),
+        ('CONJ_NODE_LABEL_COLOR_ENABLED', 'Custom Conjugated Label Color', 'bool', None, None, None),
+        ('CONJ_NODE_LABEL_COLOR', 'Conjugated Label Color', 'color', None, None, None),
+        ('CONJ_NODE_OUTLINE_COLOR_ENABLED', 'Custom Conjugated Outline Color', 'bool', None, None, None),
+        ('CONJ_NODE_OUTLINE_COLOR', 'Conjugated Outline Color', 'color', None, None, None),
     ],
     'Self-Loop Defaults': [
         ('DEFAULT_SELFLOOP_ANGLE', 'Default Angle (°)', 'int', 0, 355, 15),
@@ -107,6 +122,12 @@ LIVE_PARAMS = (
     'CONJ_NODE_FILL_MODE',
     'CONJ_NODE_FILL_ALPHA',
     'CONJ_LABEL_SCALE',
+    'CONJ_NODE_FILL_COLOR_ENABLED',
+    'CONJ_NODE_FILL_COLOR',
+    'CONJ_NODE_LABEL_COLOR_ENABLED',
+    'CONJ_NODE_LABEL_COLOR',
+    'CONJ_NODE_OUTLINE_COLOR_ENABLED',
+    'CONJ_NODE_OUTLINE_COLOR',
     'ARROWHEAD_OPEN_ANGLE',
     'DEFAULT_NODE_RADIUS',
     'DEFAULT_NODE_LABEL_COLOR',  # read at draw time for nodes without an override

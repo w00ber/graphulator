@@ -349,3 +349,137 @@ def test_qt_dialog_exposes_edge_style_default(qt_window, settings_tmp):
     gq, win = qt_window
     dialog = gq.GraphulatorSettingsDialog(win)
     assert 'DEFAULT_EDGE_STYLE' in dialog._widgets
+
+
+def test_sample_scene_scales_labels_with_label_size_mult(qt_window, settings_tmp):
+    """The preview label size follows the node label scale setting."""
+    from matplotlib.figure import Figure
+
+    gq, _win = qt_window
+    from graphulator.settings_dialog import make_style_sample_scene
+    draw = make_style_sample_scene(gq.config)
+    fig = Figure()
+    sizes = {}
+    for mult in (1.0, 2.0):
+        ax = fig.add_subplot()
+        draw(ax, {'DEFAULT_NODE_LABEL_SIZE_MULT': mult})
+        sizes[mult] = max(t.get_fontsize() for t in ax.texts)
+        fig.clear()
+    assert sizes[2.0] == pytest.approx(2 * sizes[1.0])
+
+
+def test_sample_scene_conjugated_color_overrides(qt_window, settings_tmp):
+    """The preview honors the explicit conjugated fill/label color overrides."""
+    import matplotlib.colors as mcolors
+    import matplotlib.patches as mpatches
+    from matplotlib.figure import Figure
+
+    gq, _win = qt_window
+    from graphulator.settings_dialog import make_style_sample_scene
+    draw = make_style_sample_scene(gq.config)
+    fig = Figure()
+    ax = fig.add_subplot()
+    draw(ax, {'CONJ_NODE_FILL_COLOR_ENABLED': True,
+              'CONJ_NODE_FILL_COLOR': 'navy',
+              'CONJ_NODE_LABEL_COLOR_ENABLED': True,
+              'CONJ_NODE_LABEL_COLOR': 'yellow'})
+    fills = [p for p in ax.patches if isinstance(p, mpatches.Circle)
+             and p.get_facecolor()[:3] == mcolors.to_rgb('navy')]
+    assert len(fills) == 1  # the conjugated sample node
+    conj_texts = [t for t in ax.texts if r'\ast' in t.get_text()]
+    assert conj_texts and conj_texts[0].get_color() == 'yellow'
+
+
+def test_qt_conjugated_overrides_render_on_canvas(qt_window, settings_tmp):
+    """Conjugated fill/outline color overrides apply at draw time (live)."""
+    import matplotlib.colors as mcolors
+    import matplotlib.patches as mpatches
+
+    gq, win = qt_window
+    config = gq.config
+    win.nodes = [{'node_id': 0, 'label': 'A', 'pos': (0.0, 0.0),
+                  'color': 'indianred', 'color_key': 'RED',
+                  'node_size_mult': 1.0, 'label_size_mult': 1.4,
+                  'conj': True, 'outline_enabled': True,
+                  'outline_color': 'black', 'outline_width': 2.0,
+                  'outline_alpha': 1.0}]
+    win.edges = []
+    try:
+        config.CONJ_NODE_FILL_COLOR_ENABLED = True
+        config.CONJ_NODE_FILL_COLOR = 'navy'
+        config.CONJ_NODE_OUTLINE_COLOR_ENABLED = True
+        config.CONJ_NODE_OUTLINE_COLOR = 'gold'
+        win._update_plot()
+        circles = [p for p in win.canvas.ax.patches
+                   if isinstance(p, mpatches.Circle)]
+        assert any(c.get_facecolor()[:3] == mcolors.to_rgb('navy')
+                   for c in circles if c.get_fill())
+        rings = [c for c in circles if not c.get_fill()]
+        assert any(c.get_edgecolor()[:3] == mcolors.to_rgb('gold')
+                   for c in rings)
+    finally:
+        config.CONJ_NODE_FILL_COLOR_ENABLED = False
+        config.CONJ_NODE_OUTLINE_COLOR_ENABLED = False
+        win.nodes = []
+        win._update_plot()
+
+
+def _click(win, x, y):
+    event = mock.Mock()
+    event.inaxes = win.canvas.ax
+    event.button = 1
+    event.xdata, event.ydata = x, y
+    win._on_click(event)
+
+
+def test_edge_placement_without_dialog_carries_forward(qt_window, settings_tmp):
+    """Placing an edge never opens a dialog; new edges inherit the last-used
+    (or modified) edge properties."""
+    gq, win = qt_window
+    config = gq.config
+    nodes = [{'node_id': i, 'label': lbl, 'pos': pos, 'color': 'indianred',
+              'color_key': 'RED', 'node_size_mult': 1.0,
+              'label_size_mult': 1.4, 'conj': False}
+             for i, (lbl, pos) in enumerate(
+                 (('A', (0.0, 0.0)), ('B', (4.0, 0.0)), ('C', (0.0, 4.0))))]
+    original_mode = win.placement_mode
+    win.nodes = nodes
+    win.edges = []
+    win.last_edge_props = None
+    win.last_selfloop_props = None
+    win.placement_mode = 'edge_continuous'
+    win.edge_mode_first_node = None
+    try:
+        with mock.patch.object(gq.EdgeInputDialog, '__init__',
+                               side_effect=AssertionError('dialog opened')):
+            # First edge A->B: defaults (no dialog)
+            _click(win, 0, 0)
+            _click(win, 4, 0)
+            assert len(win.edges) == 1
+            assert win.edges[0]['style'] == config.DEFAULT_EDGE_STYLE
+            assert win.edges[0]['label1'] == ''
+
+            # Modify the placed edge's properties; next edge inherits them
+            win.edges[0]['style'] = 'double'
+            win.edges[0]['label1'] = 'g'
+            win._remember_edge_props(win.edges[0])
+            _click(win, 0, 0)
+            _click(win, 0, 4)
+            assert len(win.edges) == 2
+            assert win.edges[1]['style'] == 'double'
+            assert win.edges[1]['label1'] == 'g'
+
+            # Self-loop placement uses its own template (also dialog-free)
+            _click(win, 4, 0)
+            _click(win, 4, 0)
+            loops = [e for e in win.edges if e['is_self_loop']]
+            assert len(loops) == 1
+            assert loops[0]['style'] == 'loopy'
+    finally:
+        win.placement_mode = original_mode
+        win.edge_mode_first_node = None
+        win.nodes = []
+        win.edges = []
+        win.last_edge_props = None
+        win.last_selfloop_props = None
+        win._update_plot()

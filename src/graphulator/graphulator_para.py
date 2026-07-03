@@ -165,6 +165,12 @@ SETTINGS_PARAMS = {
          [('Single', 'single'), ('Double', 'double'), ('Loopy', 'loopy')], None, None),
         ('CONJ_DIFF_EDGE_STYLE', 'Opposite-Conjugation Edge Style', 'dropdown',
          [('Double', 'double'), ('Single', 'single'), ('Loopy', 'loopy')], None, None),
+        ('CONJ_NODE_FILL_COLOR_ENABLED', 'Custom Conjugated Fill Color', 'bool', None, None, None),
+        ('CONJ_NODE_FILL_COLOR', 'Conjugated Fill Color', 'color', None, None, None),
+        ('CONJ_NODE_LABEL_COLOR_ENABLED', 'Custom Conjugated Label Color', 'bool', None, None, None),
+        ('CONJ_NODE_LABEL_COLOR', 'Conjugated Label Color', 'color', None, None, None),
+        ('CONJ_NODE_OUTLINE_COLOR_ENABLED', 'Custom Conjugated Outline Color', 'bool', None, None, None),
+        ('CONJ_NODE_OUTLINE_COLOR', 'Conjugated Outline Color', 'color', None, None, None),
     ],
     'Self-Loop Defaults': [
         ('DEFAULT_SELFLOOP_SCALE', 'Size Scale', 'float', 0.5, 2.0, 0.1),
@@ -213,6 +219,12 @@ LIVE_PARAMS = (
     'CONJ_LABEL_SCALE',
     'CONJ_SAME_EDGE_STYLE',
     'CONJ_DIFF_EDGE_STYLE',
+    'CONJ_NODE_FILL_COLOR_ENABLED',
+    'CONJ_NODE_FILL_COLOR',
+    'CONJ_NODE_LABEL_COLOR_ENABLED',
+    'CONJ_NODE_LABEL_COLOR',
+    'CONJ_NODE_OUTLINE_COLOR_ENABLED',
+    'CONJ_NODE_OUTLINE_COLOR',
     'DEFAULT_NODE_RADIUS',
 )
 
@@ -12265,8 +12277,13 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             # Draw circle with size multiplier (no outline, like prettynodes)
             node_radius = self.node_radius * node_size_mult
 
-            # Apply conjugation transparency
+            # Apply conjugation convention: explicit fill color override, or
+            # the alpha-dimming default
+            fill_color = node['color']
             node_alpha = config.CONJ_NODE_FILL_ALPHA if conj else 1.0
+            if conj and config.CONJ_NODE_FILL_COLOR_ENABLED:
+                fill_color = config.CONJ_NODE_FILL_COLOR
+                node_alpha = 1.0
 
             # Apply scattering mode transparency
             if self.canvas == self.scattering_canvas:
@@ -12278,7 +12295,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
             circle = patches.Circle(
                 node['pos'], node_radius,
-                facecolor=node['color'],
+                facecolor=fill_color,
                 edgecolor=node.get('edgecolor', 'none'),  # Support Kron graph styling
                 linewidth=4 if node.get('edgecolor') else 0,  # Add visible linewidth for edges
                 alpha=node_alpha,
@@ -12288,7 +12305,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
             # Draw custom outline if enabled
             if node.get('outline_enabled', False):
-                outline_color = node.get('outline_color', config.DEFAULT_NODE_OUTLINE_COLOR)
+                if conj and config.CONJ_NODE_OUTLINE_COLOR_ENABLED:
+                    outline_color = config.CONJ_NODE_OUTLINE_COLOR
+                else:
+                    outline_color = node.get(
+                        'outline_color', config.DEFAULT_NODE_OUTLINE_COLOR)
                 outline_width = node.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH)
                 outline_alpha = node.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA)
                 # Convert outline width to display units (similar to how we handle other linewidths)
@@ -12384,11 +12405,17 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
             # Draw the label via the cached vector glyph-path renderer so it stays
             # crisp and fast across pan/zoom (no per-frame layout recompilation).
+            # An explicit conjugated label color takes precedence over the
+            # default (but not over a per-node label_color)
+            if conj and config.CONJ_NODE_LABEL_COLOR_ENABLED:
+                default_label_color = config.CONJ_NODE_LABEL_COLOR
+            else:
+                default_label_color = config.DEFAULT_NODE_LABEL_COLOR
             self._label_cache.draw(
                 self.canvas.ax, formatted_text, label_x, label_y,
                 fontsize_points=font_size_points,
                 points_per_data_unit=points_per_data_unit,
-                color=node.get('label_color', config.DEFAULT_NODE_LABEL_COLOR),
+                color=node.get('label_color', default_label_color),
                 ha='center', va='center',
                 usetex=self.use_latex, zorder=11,
             )

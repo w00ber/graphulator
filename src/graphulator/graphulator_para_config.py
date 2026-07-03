@@ -42,6 +42,15 @@ CONJ_NODE_FILL_ALPHA = 0.5   # fill alpha for conjugated nodes
 CONJ_LABEL_SCALE = 0.92      # label shrink to accommodate the asterisk
 CONJ_SAME_EDGE_STYLE = 'single'   # edge style between same-conjugation nodes
 CONJ_DIFF_EDGE_STYLE = 'double'   # edge style between opposite-conjugation nodes
+# Optional explicit colors for conjugated nodes. When an override is off the
+# color derives from the node's own color / the normal defaults (the
+# alpha-dimming convention above).
+CONJ_NODE_FILL_COLOR_ENABLED = False
+CONJ_NODE_FILL_COLOR = 'lightsteelblue'
+CONJ_NODE_LABEL_COLOR_ENABLED = False
+CONJ_NODE_LABEL_COLOR = 'white'
+CONJ_NODE_OUTLINE_COLOR_ENABLED = False
+CONJ_NODE_OUTLINE_COLOR = 'black'
 
 # Node outline (circle border) settings
 DEFAULT_NODE_OUTLINE_COLOR_KEY = 'BLACK'  # Key into MYCOLORS for outline color

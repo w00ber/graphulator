@@ -139,11 +139,14 @@ def make_style_sample_scene(config_module):
                     arrowlength=R / 2 * 2.25 / 4,
                     lw=1.8, **arrow_kwargs)
 
-        def outline_ring(center):
+        def outline_ring(center, conj=False):
             if not val('DEFAULT_NODE_OUTLINE_ENABLED', False):
                 return
-            outline_color = resolve_color('DEFAULT_NODE_OUTLINE_COLOR_KEY',
-                                          'DEFAULT_NODE_OUTLINE_COLOR', 'black')
+            if conj and val('CONJ_NODE_OUTLINE_COLOR_ENABLED', False):
+                outline_color = val('CONJ_NODE_OUTLINE_COLOR', 'black')
+            else:
+                outline_color = resolve_color('DEFAULT_NODE_OUTLINE_COLOR_KEY',
+                                              'DEFAULT_NODE_OUTLINE_COLOR', 'black')
             ax.add_patch(mpatches.Circle(
                 center, R, fill=False,
                 edgecolor=outline_color,
@@ -152,20 +155,28 @@ def make_style_sample_scene(config_module):
                 zorder=10.5))
 
         # Node labels use the apps' convention: bold sans-serif mathtext
-        # (the same \mathbf{\mathsf{...}} both apps render labels with)
+        # (the same \mathbf{\mathsf{...}} both apps render labels with),
+        # scaled by the label-size default when the app exposes one
         label_normal = r'$\mathbf{\mathsf{A}}$'
         label_conj = r'$\mathbf{\mathsf{A}}\ast$'
+        label_pts = 13 * float(val('DEFAULT_NODE_LABEL_SIZE_MULT', 1.0))
 
         # Normal node
         ax.add_patch(mpatches.Circle((-1.8, 0), R, facecolor=node_color,
                                      edgecolor='none', zorder=10))
         outline_ring((-1.8, 0))
-        ax.text(-1.8, 0, label_normal, ha='center', va='center', fontsize=13,
-                color=label_color, zorder=11)
+        ax.text(-1.8, 0, label_normal, ha='center', va='center',
+                fontsize=label_pts, color=label_color, zorder=11)
 
-        # Conjugated node per the convention settings
+        # Conjugated node per the convention settings (explicit color
+        # overrides take precedence over the dimmed/transparent modes)
         conj_scale = float(val('CONJ_LABEL_SCALE', 0.92))
-        if val('CONJ_NODE_FILL_MODE', 'dimmed') == 'transparent':
+        if val('CONJ_NODE_FILL_COLOR_ENABLED', False):
+            ax.add_patch(mpatches.Circle(
+                (1.8, 0), R, facecolor=val('CONJ_NODE_FILL_COLOR', 'lightsteelblue'),
+                edgecolor='none', zorder=10))
+            conj_label_color = label_color
+        elif val('CONJ_NODE_FILL_MODE', 'dimmed') == 'transparent':
             ax.add_patch(mpatches.Circle((1.8, 0), R, facecolor='none',
                                          edgecolor=node_color, linewidth=2.0,
                                          zorder=10))
@@ -175,9 +186,11 @@ def make_style_sample_scene(config_module):
                 (1.8, 0), R, facecolor=node_color, edgecolor='none',
                 alpha=float(val('CONJ_NODE_FILL_ALPHA', 0.5)), zorder=10))
             conj_label_color = label_color
-        outline_ring((1.8, 0))
+        if val('CONJ_NODE_LABEL_COLOR_ENABLED', False):
+            conj_label_color = val('CONJ_NODE_LABEL_COLOR', 'white')
+        outline_ring((1.8, 0), conj=True)
         ax.text(1.8, 0, label_conj, ha='center', va='center',
-                fontsize=13 * conj_scale, color=conj_label_color,
+                fontsize=label_pts * conj_scale, color=conj_label_color,
                 zorder=11)
 
         ax.set_xlim(-4.6, 3.1)

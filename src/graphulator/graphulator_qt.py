@@ -478,9 +478,10 @@ def sync_dialog_defaults_from_config(window=None):
     NodeInputDialog.last_color = config.DEFAULT_NODE_COLOR_KEY
     EdgeInputDialog.last_style = config.DEFAULT_EDGE_STYLE
     if window is not None:
-        # Continuous modes rebuild their templates from the new defaults
+        # Placement templates rebuild from the new defaults
         window.last_node_props = None
         window.last_edge_props = None
+        window.last_selfloop_props = None
 
 
 class PropertiesPanel(QWidget):
@@ -1340,6 +1341,7 @@ class PropertiesPanel(QWidget):
         g._save_state()
         for edge in g.selected_edges:
             edge[key] = value
+        g._remember_edge_props(g.selected_edges[-1])
         g._update_plot()
 
     def _choose_multi_node_color(self):
@@ -1436,6 +1438,7 @@ class PropertiesPanel(QWidget):
             color = QColorDialog.getColor(QColor(current), self.graphulator, "Choose Label Background Color")
             if color.isValid():
                 self.current_object['label_bgcolor'] = color.name()
+                self.graphulator._remember_edge_props(self.current_object)
                 self.graphulator._update_plot()
                 self.show_edge_properties(self.current_object)
 
@@ -1444,6 +1447,7 @@ class PropertiesPanel(QWidget):
         if self.current_object and self.current_type == 'edge' and self.current_object.get('is_self_loop', False):
             if 'label_bgcolor' in self.current_object:
                 del self.current_object['label_bgcolor']
+            self.graphulator._remember_edge_props(self.current_object)
             self.graphulator._update_plot()
             self.show_edge_properties(self.current_object)
 
@@ -1454,6 +1458,7 @@ class PropertiesPanel(QWidget):
             color = QColorDialog.getColor(QColor(current), self.graphulator, "Choose Label1 Background Color")
             if color.isValid():
                 self.current_object['label1_bgcolor'] = color.name()
+                self.graphulator._remember_edge_props(self.current_object)
                 self.graphulator._update_plot()
                 self.show_edge_properties(self.current_object)
 
@@ -1462,6 +1467,7 @@ class PropertiesPanel(QWidget):
         if self.current_object and self.current_type == 'edge' and not self.current_object.get('is_self_loop', False):
             if 'label1_bgcolor' in self.current_object:
                 del self.current_object['label1_bgcolor']
+            self.graphulator._remember_edge_props(self.current_object)
             self.graphulator._update_plot()
             self.show_edge_properties(self.current_object)
 
@@ -1472,6 +1478,7 @@ class PropertiesPanel(QWidget):
             color = QColorDialog.getColor(QColor(current), self.graphulator, "Choose Label2 Background Color")
             if color.isValid():
                 self.current_object['label2_bgcolor'] = color.name()
+                self.graphulator._remember_edge_props(self.current_object)
                 self.graphulator._update_plot()
                 self.show_edge_properties(self.current_object)
 
@@ -1480,6 +1487,7 @@ class PropertiesPanel(QWidget):
         if self.current_object and self.current_type == 'edge' and not self.current_object.get('is_self_loop', False):
             if 'label2_bgcolor' in self.current_object:
                 del self.current_object['label2_bgcolor']
+            self.graphulator._remember_edge_props(self.current_object)
             self.graphulator._update_plot()
             self.show_edge_properties(self.current_object)
 
@@ -1489,37 +1497,44 @@ class PropertiesPanel(QWidget):
             # Only update label2 if it exists (not present for self-loops)
             if hasattr(self, 'edge_label2_edit'):
                 self.current_object['label2'] = self.edge_label2_edit.text()
+            self.graphulator._remember_edge_props(self.current_object)
             self.graphulator._update_plot()
 
     def _update_edge_linewidth(self):
         if self.current_object and self.current_type == 'edge':
             lw_map = {'Thin': 1.0, 'Medium': 1.5, 'Thick': 2.0, 'X-Thick': 2.5}
             self.current_object['linewidth_mult'] = lw_map[self.linewidth_combo.currentText()]
+            self.graphulator._remember_edge_props(self.current_object)
             self.graphulator._update_plot()
 
     def _update_edge_style(self):
         if self.current_object and self.current_type == 'edge':
             self.current_object['style'] = self.style_combo.currentText()
+            self.graphulator._remember_edge_props(self.current_object)
             self.graphulator._update_plot()
 
     def _update_edge_direction(self):
         if self.current_object and self.current_type == 'edge':
             self.current_object['direction'] = self.direction_combo.currentText()
+            self.graphulator._remember_edge_props(self.current_object)
             self.graphulator._update_plot()
 
     def _update_edge_arrowstyle(self):
         if self.current_object and self.current_type == 'edge':
             self.current_object['arrowstyle'] = self.arrowstyle_combo.currentText()
+            self.graphulator._remember_edge_props(self.current_object)
             self.graphulator._update_plot()
 
     def _update_edge_arrowscale(self):
         if self.current_object and self.current_type == 'edge':
             self.current_object['arrowscale'] = self.arrowscale_spinbox.value()
+            self.graphulator._remember_edge_props(self.current_object)
             self.graphulator._update_plot()
 
     def _update_edge_looptheta(self):
         if self.current_object and self.current_type == 'edge':
             self.current_object['looptheta'] = self.looptheta_spinbox.value()
+            self.graphulator._remember_edge_props(self.current_object)
             self.graphulator._update_plot()
 
     @staticmethod
@@ -1563,11 +1578,13 @@ class PropertiesPanel(QWidget):
             scale_text = self.selfloop_scale_combo.currentText()
             scale_map = {'Small (0.7x)': 0.7, 'Medium (1.0x)': 1.0, 'Large (1.3x)': 1.3, 'X-Large (1.6x)': 1.6}
             self.current_object['selfloopscale'] = scale_map[scale_text]
+            self.graphulator._remember_edge_props(self.current_object)
             self.graphulator._update_plot()
 
     def _update_selfloop_flip(self):
         if self.current_object and self.current_type == 'edge':
             self.current_object['flip'] = self.selfloop_flip_checkbox.isChecked()
+            self.graphulator._remember_edge_props(self.current_object)
             self.graphulator._update_plot()
 
 
@@ -1789,6 +1806,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         # Last placed node properties for duplication
         self.last_node_props = None
+
+        # Edge placement templates: new edges/self-loops inherit the
+        # properties of the last placed or modified one (no placement dialog)
+        self.last_edge_props = None
+        self.last_selfloop_props = None
 
         # Pan and zoom window state
         self.panning = False
@@ -2879,6 +2901,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             edge['arrowstyle'] = arrow_style
             logger.debug(f"Changed edge arrowhead to {arrow_style}")
 
+        self._remember_edge_props(edge)
         self._update_plot()
 
     def _change_edge_type(self, edge, edge_type):
@@ -2895,7 +2918,69 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             edge['style'] = edge_type
             logger.debug(f"Changed edge type to {edge_type}")
 
+        self._remember_edge_props(edge)
         self._update_plot()
+
+    # ---- Edge placement templates (dialog-free placement) ----------------
+    # New edges inherit the properties of the last placed/modified edge;
+    # self-loops keep their own template since their properties differ.
+
+    def _default_edge_props(self):
+        """Properties for the first edge placed in a session."""
+        return {
+            'label1': '', 'label2': '',
+            'linewidth_mult': 1.5,
+            'label_size_mult': 1.4,
+            'label_offset_mult': 0.8,
+            'style': config.DEFAULT_EDGE_STYLE,
+            'direction': 'both',
+            'flip_labels': False,
+            'looptheta': 30,
+            'arrowstyle': config.DEFAULT_EDGE_ARROWSTYLE,
+            'arrowscale': config.DEFAULT_EDGE_ARROWSCALE,
+        }
+
+    def _default_selfloop_props(self):
+        """Properties for the first self-loop placed in a session."""
+        return {
+            'label1': '', 'label2': '',
+            'linewidth_mult': 1.5,
+            'label_size_mult': 1.4,
+            'label_offset_mult': 0.8,
+            'style': 'loopy',
+            'direction': 'both',
+            'flip_labels': False,
+            'selfloopangle': 0,
+            'selfloopscale': 1.0,
+            'arrowlengthsc': 1.0,
+            'flip': False,
+            'arrowstyle': config.DEFAULT_EDGE_ARROWSTYLE,
+            'arrowscale': config.DEFAULT_EDGE_ARROWSCALE,
+        }
+
+    _EDGE_TEMPLATE_KEYS = (
+        'label1', 'label2', 'linewidth_mult', 'label_size_mult',
+        'label_offset_mult', 'style', 'direction', 'flip_labels', 'looptheta',
+        'arrowstyle', 'arrowscale', 'label1_bgcolor', 'label2_bgcolor',
+        'label_bgcolor',
+    )
+    _SELFLOOP_TEMPLATE_KEYS = ('selfloopscale', 'arrowlengthsc', 'flip')
+
+    def _remember_edge_props(self, edge):
+        """Carry this edge's properties forward to subsequently placed edges.
+
+        Called after any per-edge modification (Properties Panel, context
+        menu, edit dialog) so the placement workflow inherits the last-used
+        styling. Self-loop angle is intentionally not carried — new loops
+        auto-orient per the self-loop settings.
+        """
+        props = {k: edge[k] for k in self._EDGE_TEMPLATE_KEYS if k in edge}
+        if edge.get('is_self_loop'):
+            props.update({k: edge[k] for k in self._SELFLOOP_TEMPLATE_KEYS
+                          if k in edge})
+            self.last_selfloop_props = props
+        else:
+            self.last_edge_props = props
 
     def _toggle_flip_labels(self):
         """Toggle flip_labels for selected edges using 'f' key"""
@@ -2917,6 +3002,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             flipped_count = sum(1 for e in self.selected_edges if e.get('flip_labels', False))
             logger.debug(f"Toggled flip for {len(self.selected_edges)} edge(s) ({flipped_count} now flipped)")
 
+        self._remember_edge_props(self.selected_edges[-1])
         self._update_plot()
 
 
@@ -3323,6 +3409,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 else:
                     logger.info(f"✓ Updated edge '{from_label}' → '{to_label}'")
                 logger.debug(f"  linewidth_mult={edge['linewidth_mult']}, label_size_mult={edge['label_size_mult']}, style={edge['style']}")
+                self._remember_edge_props(edge)
                 self._update_plot()
 
     def _draw_nodes(self):
@@ -3361,7 +3448,16 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             node_radius = self.node_radius * node_size_mult
 
             # Apply the conjugated-node convention (config-driven)
-            if conj and config.CONJ_NODE_FILL_MODE == 'transparent':
+            if conj and config.CONJ_NODE_FILL_COLOR_ENABLED:
+                # Explicit conjugated fill color (full opacity; the color
+                # itself IS the conjugated appearance)
+                circle = patches.Circle(
+                    node['pos'], node_radius,
+                    facecolor=config.CONJ_NODE_FILL_COLOR,
+                    edgecolor='none',
+                    zorder=10
+                )
+            elif conj and config.CONJ_NODE_FILL_MODE == 'transparent':
                 # Unfilled node with a colored ring
                 ring_lw = 2.5 * node_size_mult * (points_per_data_unit / 43.0)
                 circle = patches.Circle(
@@ -3384,10 +3480,14 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
             # Draw custom outline if enabled (same convention as Paragraphulator)
             if node.get('outline_enabled', False):
+                if conj and config.CONJ_NODE_OUTLINE_COLOR_ENABLED:
+                    outline_color = config.CONJ_NODE_OUTLINE_COLOR
+                else:
+                    outline_color = node.get('outline_color', config.DEFAULT_NODE_OUTLINE_COLOR)
                 outline_circle = patches.Circle(
                     node['pos'], node_radius,
                     fill=False,
-                    edgecolor=node.get('outline_color', config.DEFAULT_NODE_OUTLINE_COLOR),
+                    edgecolor=outline_color,
                     linewidth=node.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH),
                     alpha=node.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA),
                     zorder=10.5  # on top of the fill, below labels
@@ -3477,8 +3577,12 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             # Draw the label via the cached vector glyph-path renderer so it stays
             # crisp and fast across pan/zoom (no per-frame layout recompilation).
             # Transparent conjugated nodes have no fill, so the default white
-            # label would vanish; use the node color instead
-            if conj and config.CONJ_NODE_FILL_MODE == 'transparent':
+            # label would vanish; use the node color instead. An explicit
+            # conjugated label color takes precedence over both.
+            if conj and config.CONJ_NODE_LABEL_COLOR_ENABLED:
+                default_label_color = config.CONJ_NODE_LABEL_COLOR
+            elif (conj and config.CONJ_NODE_FILL_MODE == 'transparent'
+                    and not config.CONJ_NODE_FILL_COLOR_ENABLED):
                 default_label_color = node['color']
             else:
                 default_label_color = config.DEFAULT_NODE_LABEL_COLOR
@@ -4052,28 +4156,18 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                         logger.debug(f"First node selected: '{clicked_node['label']}'. Click another node to connect.")
                         self._update_plot()
                     else:
-                        # Second node selected - show dialog or use last settings
+                        # Second node selected - place immediately, inheriting
+                        # the last-used edge properties (no dialog; edit via
+                        # the Properties Panel, context menu, or double-click)
                         second_node = clicked_node
                         is_self_loop = (self.edge_mode_first_node == second_node)
 
-                        # In continuous mode, use last edge settings if available
-                        if self.placement_mode == 'edge_continuous' and hasattr(self, 'last_edge_props') and self.last_edge_props:
-                            result = self.last_edge_props
+                        if is_self_loop:
+                            result = (getattr(self, 'last_selfloop_props', None)
+                                      or self._default_selfloop_props())
                         else:
-                            dialog = EdgeInputDialog(
-                                node1_label=self.edge_mode_first_node['label'],
-                                node2_label=second_node['label'],
-                                is_self_loop=is_self_loop,
-                                parent=self
-                            )
-
-                            if dialog.exec() == QDialog.Accepted:
-                                result = dialog.get_result()
-                                if result:
-                                    # Store for continuous mode
-                                    self.last_edge_props = result
-                            else:
-                                result = None
+                            result = (getattr(self, 'last_edge_props', None)
+                                      or self._default_edge_props())
 
                         if result:
                             self._save_state()
@@ -4139,8 +4233,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                                     'flip_labels': result.get('flip_labels', False),
                                     'looptheta': result.get('looptheta', 30),
                                     'is_self_loop': is_self_loop,
-                                    'arrowstyle': config.DEFAULT_EDGE_ARROWSTYLE,
-                                    'arrowscale': config.DEFAULT_EDGE_ARROWSCALE
+                                    'arrowstyle': result.get('arrowstyle', config.DEFAULT_EDGE_ARROWSTYLE),
+                                    'arrowscale': result.get('arrowscale', config.DEFAULT_EDGE_ARROWSCALE)
                                 }
                                 # Self-loop specific parameters
                                 if is_self_loop:
@@ -4153,6 +4247,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                                     if config.AUTO_ADJUST_SELFLOOP_ANGLE:
                                         edge['selfloopangle'] = self._compute_best_selfloop_angle(second_node)
                                 self.edges.append(edge)
+                                self._remember_edge_props(edge)
                                 if is_self_loop:
                                     logger.debug(f"Added self-loop to node '{self.edge_mode_first_node['label']}'")
                                 else:
