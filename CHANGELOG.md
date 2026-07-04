@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+### Fixed
+- Clipboard and PDF export flattened conjugated-node transparency (and any
+  other semi-transparent art, e.g. Paragraphulator's scattering-mode
+  dimming): matplotlib encodes `alpha` as SVG `opacity`, but the PyMuPDF
+  SVG→PDF step silently dropped it, and the PDF is the preferred clipboard
+  flavour. The opacity is now baked into the fill/stroke color over white
+  before conversion, so the paste matches the on-canvas appearance. The SVG
+  and PNG flavours (which already kept true alpha) are unchanged.
+
 ## [0.12.0] - 2026-07-03
 ### Added
 - Graphulator now has a Settings dialog (File → Settings…, `Ctrl+,`) for
