@@ -656,6 +656,14 @@ SHORTCUT_DEFINITIONS: List[ShortcutDefinition] = [
         default_keys={"default": "F1"},
         is_menu_action=True,
     ),
+    ShortcutDefinition(
+        action_id="overlay.toggle",
+        display_name="Toggle Shortcut Hints",
+        category="Help",
+        description="Show/hide the on-canvas context-sensitive shortcut hints",
+        default_keys={"default": "?"},
+        is_single_key=True,
+    ),
 ]
 
 

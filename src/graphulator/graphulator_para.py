@@ -215,6 +215,13 @@ SETTINGS_PARAMS = {
         ('EDGELWSCALE', 'Edge Linewidth Scale', 'float', 0.1, 5.0, 0.1),
         ('EDGELABELOFFSET', 'Edge Label Offset', 'float', 0.1, 3.0, 0.05),
     ],
+    'Interface': [
+        ('SHOW_SHORTCUT_OVERLAY', 'Show Shortcut Hints', 'bool', None, None, None),
+        ('SHORTCUT_OVERLAY_CORNER', 'Hints Corner', 'dropdown',
+         [('Top Left', 'top-left'), ('Top Right', 'top-right'),
+          ('Bottom Left', 'bottom-left'), ('Bottom Right', 'bottom-right')], None, None),
+        ('SHORTCUT_OVERLAY_SHOW_ALL', 'Show All Shortcuts (not just essentials)', 'bool', None, None, None),
+    ],
 }
 
 # Rendering conventions (read at draw time): the Settings dialog live-applies
@@ -230,6 +237,9 @@ LIVE_PARAMS = (
     'CONJ_SAME_EDGE_STYLE',
     'CONJ_DIFF_EDGE_STYLE',
     'DEFAULT_NODE_RADIUS',
+    'SHOW_SHORTCUT_OVERLAY',   # toggling/corner/detail apply to the overlay immediately
+    'SHORTCUT_OVERLAY_CORNER',
+    'SHORTCUT_OVERLAY_SHOW_ALL',
 )
 
 
@@ -5983,6 +5993,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         self.status_label.setStyleSheet("""
             QLabel {
                 background-color: #f0f0f0;
+                color: #000000;
                 padding: 5px 10px;
                 border-bottom: 1px solid #cccccc;
                 font-family: monospace;
@@ -6007,6 +6018,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         # Store reference to original canvas for grid rendering check
         self.original_canvas = self.canvas
+
+        # Optional context-sensitive shortcut-hint overlay, on the main graph
+        # canvas (parented to it so it never appears in figure exports)
+        self._init_shortcut_overlay()
 
         self.graph_subtabs.addTab(original_graph_tab, "Original")
 
@@ -6342,6 +6357,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # ===== EDGE OPERATIONS =====
         sm.bind_shortcut("edge.place_single", self._toggle_edge_mode, self)
         sm.bind_shortcut("edge.place_continuous", self._toggle_edge_continuous_mode, self)
+
+        # ===== SHORTCUT HINT OVERLAY =====
+        sm.bind_shortcut("overlay.toggle", self._toggle_shortcut_overlay, self)
+        # Keep the overlay's displayed keys correct if the user remaps them
+        sm.shortcuts_changed.connect(self._update_shortcut_overlay)
 
         # ===== GRID CONTROLS =====
         sm.bind_shortcut("grid.rotate", self._rotate_grid, self)
@@ -15539,6 +15559,97 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # No selection
         else:
             self.properties_panel.show_no_selection()
+
+        # Refresh the context-sensitive shortcut overlay for the new selection
+        self._update_shortcut_overlay()
+
+    # Curated per-context shortcut hints. Keys are resolved live from the
+    # ShortcutManager (so remaps stay accurate); each row is (action_id, label)
+    # unless the label is None, in which case the definition's display_name is
+    # used. Rows given as a plain (keys, label) tuple are shown verbatim.
+    _SHORTCUT_HINTS = {
+        'none': [
+            ('node.place_single', 'Add node'),
+            ('edge.place_continuous', 'Edge mode'),
+            ('node.toggle_conjugation', 'Conjugation mode'),
+            ('view.zoom_in', 'Zoom in'),
+            ('edit.undo', 'Undo'),
+            ('file.settings', 'Settings'),
+            ('overlay.toggle', 'Hide hints'),
+        ],
+        'node': [
+            ('label.nudge_left', 'Nudge label'),
+            ('node.toggle_conjugation', 'Conjugation mode'),
+            ('clipboard.copy', 'Copy'),
+            ('graph.flip_horizontal', 'Flip horizontal'),
+            ('edit.delete', 'Delete'),
+        ],
+        'edge': [
+            # angle_decrease's display name is "Rotate Self-Loop/Edge CCW" — it
+            # is the coupling-edge curvature control too
+            ('selfloop.angle_decrease', 'Curvature'),
+            (None, 'Right-click', 'Style menu'),
+            ('edit.delete', 'Delete'),
+        ],
+        'selfloop': [
+            ('selfloop.angle_decrease', 'Rotate angle'),
+            ('selfloop.scale_increase', 'Scale'),
+            (None, 'Right-click', 'Style menu'),
+            ('edit.delete', 'Delete'),
+        ],
+    }
+
+    # Shortcut categories that make up the full ('all') list per context.
+    _SHORTCUT_ALL_CATEGORIES = {
+        'none': ['Node Placement', 'Edge Operations', 'View',
+                 'Canvas Navigation', 'Grid Controls', 'Selection & Clipboard',
+                 'Edit', 'Help'],
+        'node': ['Label Adjustments', 'Graph Rotation', 'Node Placement',
+                 'Selection & Clipboard'],
+        'edge': ['Edge Operations', 'Self-Loop Adjustments',
+                 'Selection & Clipboard'],
+        'selfloop': ['Self-Loop Adjustments', 'Selection & Clipboard'],
+    }
+
+    def _display_key(self, action_id):
+        sm = getattr(self, 'shortcut_manager', None)
+        if sm is None:
+            return ''
+        try:
+            return sm.get_key_sequence_display(action_id) or ''
+        except Exception:
+            return ''
+
+    def _shortcut_hint_rows(self, context):
+        if getattr(config, 'SHORTCUT_OVERLAY_SHOW_ALL', False):
+            return self._shortcut_hint_rows_all(context)
+        rows = []
+        for entry in self._SHORTCUT_HINTS.get(context, []):
+            if entry[0] is None:
+                # Verbatim (None, keys, label) — no managed shortcut
+                rows.append((entry[1], entry[2]))
+                continue
+            action_id, label = entry
+            keys = self._display_key(action_id)
+            if keys:
+                rows.append((keys, label))
+        return rows
+
+    def _shortcut_hint_rows_all(self, context):
+        """Every shortcut in the categories relevant to this context, with
+        live (remap-aware) keys and each definition's display name."""
+        from .para_ui.shortcut_definitions import get_definitions_by_category
+        by_cat = get_definitions_by_category()
+        rows, seen = [], set()
+        for category in self._SHORTCUT_ALL_CATEGORIES.get(context, []):
+            for defn in by_cat.get(category, []):
+                if defn.action_id in seen:
+                    continue
+                keys = self._display_key(defn.action_id)
+                if keys:
+                    rows.append((keys, defn.display_name))
+                    seen.add(defn.action_id)
+        return rows
 
     def _auto_fit_view(self):
         """Auto-fit view to original graph nodes - applies same extents to Original, Scattering, and Kron views"""

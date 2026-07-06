@@ -401,6 +401,8 @@ class SettingsDialog(SettingsDialogBase):
         g = self.graphulator
         # Update node_radius from config (in case DEFAULT_NODE_RADIUS changed)
         g.node_radius = config.DEFAULT_NODE_RADIUS
+        # Apply shortcut-overlay enable/corner changes immediately
+        g._apply_shortcut_overlay_settings()
         # Edge styles are derived from the conjugation convention; recompute
         # them so CONJ_SAME/DIFF_EDGE_STYLE changes take effect immediately
         for node in g.nodes:

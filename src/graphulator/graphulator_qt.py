@@ -1672,6 +1672,7 @@ class GraphulatorSettingsDialog(SettingsDialogBase):
     def _refresh_ui(self):
         """Refresh the Graphulator canvas after settings change."""
         self.graphulator.node_radius = config.DEFAULT_NODE_RADIUS
+        self.graphulator._apply_shortcut_overlay_settings()
         self.graphulator._update_plot()
 
     def _wire_dependencies(self):
@@ -1950,6 +1951,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         self.status_label.setStyleSheet("""
             QLabel {
                 background-color: #f0f0f0;
+                color: #000000;
                 padding: 5px 10px;
                 border-bottom: 1px solid #cccccc;
                 font-family: monospace;
@@ -1983,10 +1985,14 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # Set window size (wider and taller)
         self.resize(1400, 900)
 
+        # Optional context-sensitive shortcut-hint overlay (over the canvas)
+        self._init_shortcut_overlay()
+
     def _create_shortcuts(self):
         """Create keyboard shortcuts"""
         # Placement modes
         QShortcut(QKeySequence("g"), self).activated.connect(lambda: self._set_placement_mode('single'))
+        QShortcut(QKeySequence("?"), self).activated.connect(self._toggle_shortcut_overlay)
         QShortcut(QKeySequence("Shift+G"), self).activated.connect(self._toggle_continuous_mode)
         QShortcut(QKeySequence("Ctrl+G"), self).activated.connect(self._toggle_continuous_duplicate_mode)
         QShortcut(QKeySequence("Esc"), self).activated.connect(self._exit_placement_mode)
@@ -5434,6 +5440,70 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # No selection
         else:
             self.properties_panel.show_no_selection()
+
+        # Refresh the context-sensitive shortcut overlay for the new selection
+        self._update_shortcut_overlay()
+
+    # Curated, per-context shortcut hints (Graphulator uses static bindings)
+    _SHORTCUT_HINTS = {
+        'none': [
+            ('G', 'Add node'), ('E', 'Edge mode'), ('Ctrl+E', 'Continuous edge'),
+            ('C', 'Conjugation mode'), ('↑↓←→', 'Pan view'), ('+ / −', 'Zoom'),
+            ('Ctrl+Z', 'Undo'), ('Ctrl+,', 'Settings'), ('?', 'Hide hints'),
+        ],
+        'node': [
+            ('↑ ↓', 'Node size'), ('← →', 'Label size'),
+            ('Shift+↑↓←→', 'Nudge label'), ('C', 'Conjugation mode'),
+            ('Ctrl+C / V', 'Copy / paste'), ('D or Del', 'Delete'),
+        ],
+        'edge': [
+            ('Ctrl+← →', 'Curvature'), ('F', 'Flip labels'),
+            ('Shift+F', 'Rotate labels'), ('Right-click', 'Style / arrowhead'),
+            ('D or Del', 'Delete'),
+        ],
+        'selfloop': [
+            ('Ctrl+← →', 'Rotate angle'), ('Ctrl+↑ ↓', 'Scale'),
+            ('Right-click', 'Style / arrowhead'), ('D or Del', 'Delete'),
+        ],
+    }
+
+    # Full per-context shortcut lists (shown when "Show All Shortcuts" is on)
+    _SHORTCUT_HINTS_ALL = {
+        'none': [
+            ('G', 'Add node'), ('Shift+G', 'Continuous nodes'),
+            ('Ctrl+G', 'Auto-increment mode'), ('E', 'Edge mode'),
+            ('Ctrl+E', 'Continuous edge'), ('C', 'Conjugation mode'),
+            ('Esc', 'Exit / clear'), ('↑↓←→', 'Pan view'), ('+ / −', 'Zoom'),
+            ('A', 'Auto-fit view'), ('R', 'Rotate grid'), ('T', 'Toggle grid type'),
+            ('Ctrl+A', 'Select all'), ('Ctrl+Z', 'Undo'),
+            ('Ctrl+Shift+Z / Ctrl+Y', 'Redo'), ('Ctrl+N/O/S', 'New / open / save'),
+            ('Ctrl+L', 'Toggle LaTeX'), ('Ctrl+Shift+E', 'Export code'),
+            ('Ctrl+,', 'Settings'), ('?', 'Hide hints'),
+        ],
+        'node': [
+            ('↑ ↓', 'Node size'), ('← →', 'Label size'),
+            ('Shift+↑↓←→', 'Nudge label'), ('C', 'Conjugation mode'),
+            ('Ctrl+R', 'Rotate 15° CCW'), ('Ctrl+Shift+R', 'Rotate 15° CW'),
+            ('Ctrl+C', 'Copy'), ('Ctrl+X', 'Cut'), ('Ctrl+V', 'Paste'),
+            ('D or Del', 'Delete'),
+        ],
+        'edge': [
+            ('Ctrl+← →', 'Curvature'), ('↑ ↓', 'Edge width'), ('← →', 'Label size'),
+            ('F', 'Flip labels'), ('Shift+F', 'Label rotation mode'),
+            ('Right-click', 'Style / arrowhead'), ('Ctrl+C', 'Copy'),
+            ('D or Del', 'Delete'),
+        ],
+        'selfloop': [
+            ('Ctrl+← →', 'Rotate angle'), ('Ctrl+↑ ↓', 'Scale'),
+            ('← →', 'Label size'), ('Right-click', 'Style / arrowhead'),
+            ('Ctrl+C', 'Copy'), ('D or Del', 'Delete'),
+        ],
+    }
+
+    def _shortcut_hint_rows(self, context):
+        if getattr(config, 'SHORTCUT_OVERLAY_SHOW_ALL', False):
+            return self._SHORTCUT_HINTS_ALL.get(context, [])
+        return self._SHORTCUT_HINTS.get(context, [])
 
     def _auto_fit_view(self):
         """Auto-fit view to nodes"""

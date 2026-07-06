@@ -5,6 +5,17 @@
 - _TODO: describe changes._
 
 ## [Unreleased]
+### Added
+- Optional context-sensitive keyboard-shortcut hints: a small overlay in a
+  chosen corner of the canvas shows the shortcuts relevant to the current
+  selection (nothing / node / coupling edge / self-loop). Enable it and pick
+  the corner under Settings → Interface, or toggle it any time with `?`. Off
+  by default. A "Show All Shortcuts" option switches each context from a
+  curated essentials list to the full set of shortcuts for that context. In
+  Paragraphulator the hint keys track the ShortcutManager, so they stay
+  correct if you remap. The panel is a Qt overlay, never part of the figure,
+  so it never appears in exports or clipboard copies.
+
 ### Fixed
 - Clipboard and PDF export flattened conjugated-node transparency (and any
   other semi-transparent art, e.g. Paragraphulator's scattering-mode

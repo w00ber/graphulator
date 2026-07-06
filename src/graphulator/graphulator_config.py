@@ -78,6 +78,11 @@ SELFLOOP_ANGLE_KEYBOARD_INCREMENT = 15  # degrees per keypress (must be multiple
 AUTO_ADJUST_SELFLOOP_ANGLE = True  # When True, new self-loops auto-orient away from edges
 DYNAMIC_ADJUST_SELFLOOP_ANGLE = True  # When True, unpinned self-loops reorient on drag-end
 
+# Interface settings
+SHOW_SHORTCUT_OVERLAY = False  # optional on-canvas context-sensitive shortcut hints
+SHORTCUT_OVERLAY_CORNER = 'top-right'  # 'top-left'|'top-right'|'bottom-left'|'bottom-right'
+SHORTCUT_OVERLAY_SHOW_ALL = False  # False: curated essentials; True: every shortcut for the context
+
 # =============================================================================
 # SETTINGS DIALOG PARAMETER DEFINITIONS
 # =============================================================================
@@ -128,6 +133,13 @@ SETTINGS_PARAMS = {
         ('AUTO_ADJUST_SELFLOOP_ANGLE', 'Auto-Orient New Self-Loops', 'bool', None, None, None),
         ('DYNAMIC_ADJUST_SELFLOOP_ANGLE', 'Re-Orient Unpinned on Drag', 'bool', None, None, None),
     ],
+    'Interface': [
+        ('SHOW_SHORTCUT_OVERLAY', 'Show Shortcut Hints', 'bool', None, None, None),
+        ('SHORTCUT_OVERLAY_CORNER', 'Hints Corner', 'dropdown',
+         [('Top Left', 'top-left'), ('Top Right', 'top-right'),
+          ('Bottom Left', 'bottom-left'), ('Bottom Right', 'bottom-right')], None, None),
+        ('SHORTCUT_OVERLAY_SHOW_ALL', 'Show All Shortcuts (not just essentials)', 'bool', None, None, None),
+    ],
 }
 
 # Parameters that are rendering conventions (read at draw time): the Settings
@@ -143,4 +155,7 @@ LIVE_PARAMS = (
     'ARROWHEAD_OPEN_ANGLE',
     'DEFAULT_NODE_RADIUS',
     'DEFAULT_NODE_LABEL_COLOR',  # read at draw time for nodes without an override
+    'SHOW_SHORTCUT_OVERLAY',     # toggling/corner/detail apply to the overlay immediately
+    'SHORTCUT_OVERLAY_CORNER',
+    'SHORTCUT_OVERLAY_SHOW_ALL',
 )
