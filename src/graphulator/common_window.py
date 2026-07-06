@@ -60,6 +60,68 @@ class GraphWindowCommonMixin:
         """Refresh the display after the grid type/rotation changed."""
         self._update_plot()
 
+    # ---- Context-sensitive shortcut-hint overlay (optional) ----
+    # Shared wiring; each app supplies the curated per-context content by
+    # overriding _shortcut_hint_rows(). The overlay is a Qt child of the
+    # canvas, so it never appears in figure exports.
+
+    def _init_shortcut_overlay(self):
+        """Create the overlay over the canvas. Call once, after self.canvas."""
+        from .shortcut_overlay import ShortcutOverlay
+        self._shortcut_overlay = ShortcutOverlay(self.canvas)
+        # Runtime visibility flag, seeded from the persisted default; the '?'
+        # hotkey toggles it for the session.
+        self._shortcut_overlay_on = bool(
+            getattr(self.APP_CONFIG, 'SHOW_SHORTCUT_OVERLAY', False))
+        self._update_shortcut_overlay()
+
+    def _shortcut_context(self):
+        """Selection context: 'none' | 'node' | 'edge' | 'selfloop'."""
+        if len(self.selected_edges) == 1 and not self.selected_nodes:
+            edge = self.selected_edges[0]
+            return 'selfloop' if edge.get('is_self_loop', False) else 'edge'
+        if self.selected_nodes and not self.selected_edges:
+            return 'node'
+        return 'none'
+
+    _SHORTCUT_CONTEXT_TITLES = {
+        'none': 'Shortcuts',
+        'node': 'Node selected',
+        'edge': 'Edge selected',
+        'selfloop': 'Self-loop selected',
+    }
+
+    def _shortcut_hint_rows(self, context):
+        """Curated ``[(keys, label), ...]`` for a context. Apps override."""
+        return []
+
+    def _update_shortcut_overlay(self):
+        """Refresh the overlay for the current selection + settings."""
+        overlay = getattr(self, '_shortcut_overlay', None)
+        if overlay is None:
+            return
+        if not getattr(self, '_shortcut_overlay_on', False):
+            overlay.hide()
+            return
+        corner = getattr(self.APP_CONFIG, 'SHORTCUT_OVERLAY_CORNER', 'top-right')
+        overlay.set_corner(corner)
+        context = self._shortcut_context()
+        title = self._SHORTCUT_CONTEXT_TITLES.get(context, 'Shortcuts')
+        overlay.set_rows(title, self._shortcut_hint_rows(context))
+        if overlay.isHidden() and self._shortcut_hint_rows(context):
+            overlay.show()
+
+    def _toggle_shortcut_overlay(self):
+        """'?' hotkey: flip the overlay on/off for this session."""
+        self._shortcut_overlay_on = not getattr(self, '_shortcut_overlay_on', False)
+        self._update_shortcut_overlay()
+
+    def _apply_shortcut_overlay_settings(self):
+        """Re-sync the overlay to the persisted default (Settings apply/reset)."""
+        self._shortcut_overlay_on = bool(
+            getattr(self.APP_CONFIG, 'SHOW_SHORTCUT_OVERLAY', False))
+        self._update_shortcut_overlay()
+
     def _resolve_conj_label_color(self, node):
         """Default label color for a node under the conjugation convention.
 

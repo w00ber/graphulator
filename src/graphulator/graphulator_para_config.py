@@ -143,6 +143,10 @@ SELFLOOP_LINEWIDTH_MAX = 8.0
 # Self-loop angle adjustment via keyboard (Ctrl+Left/Right when self-loop selected)
 SELFLOOP_ANGLE_KEYBOARD_INCREMENT = 15  # degrees per keypress (must be multiple of 5)
 
+# Interface settings
+SHOW_SHORTCUT_OVERLAY = False  # optional on-canvas context-sensitive shortcut hints
+SHORTCUT_OVERLAY_CORNER = 'top-right'  # 'top-left'|'top-right'|'bottom-left'|'bottom-right'
+
 # Auto-adjust self-loop angle to avoid overlapping with existing edges
 AUTO_ADJUST_SELFLOOP_ANGLE = True  # When True, new self-loops auto-orient away from edges
 

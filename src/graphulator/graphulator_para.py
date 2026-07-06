@@ -215,6 +215,12 @@ SETTINGS_PARAMS = {
         ('EDGELWSCALE', 'Edge Linewidth Scale', 'float', 0.1, 5.0, 0.1),
         ('EDGELABELOFFSET', 'Edge Label Offset', 'float', 0.1, 3.0, 0.05),
     ],
+    'Interface': [
+        ('SHOW_SHORTCUT_OVERLAY', 'Show Shortcut Hints', 'bool', None, None, None),
+        ('SHORTCUT_OVERLAY_CORNER', 'Hints Corner', 'dropdown',
+         [('Top Left', 'top-left'), ('Top Right', 'top-right'),
+          ('Bottom Left', 'bottom-left'), ('Bottom Right', 'bottom-right')], None, None),
+    ],
 }
 
 # Rendering conventions (read at draw time): the Settings dialog live-applies
@@ -230,6 +236,8 @@ LIVE_PARAMS = (
     'CONJ_SAME_EDGE_STYLE',
     'CONJ_DIFF_EDGE_STYLE',
     'DEFAULT_NODE_RADIUS',
+    'SHOW_SHORTCUT_OVERLAY',   # toggling/corner apply to the overlay immediately
+    'SHORTCUT_OVERLAY_CORNER',
 )
 
 
@@ -6008,6 +6016,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # Store reference to original canvas for grid rendering check
         self.original_canvas = self.canvas
 
+        # Optional context-sensitive shortcut-hint overlay, on the main graph
+        # canvas (parented to it so it never appears in figure exports)
+        self._init_shortcut_overlay()
+
         self.graph_subtabs.addTab(original_graph_tab, "Original")
 
         # Kron-reduced graph tab
@@ -6342,6 +6354,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # ===== EDGE OPERATIONS =====
         sm.bind_shortcut("edge.place_single", self._toggle_edge_mode, self)
         sm.bind_shortcut("edge.place_continuous", self._toggle_edge_continuous_mode, self)
+
+        # ===== SHORTCUT HINT OVERLAY =====
+        sm.bind_shortcut("overlay.toggle", self._toggle_shortcut_overlay, self)
+        # Keep the overlay's displayed keys correct if the user remaps them
+        sm.shortcuts_changed.connect(self._update_shortcut_overlay)
 
         # ===== GRID CONTROLS =====
         sm.bind_shortcut("grid.rotate", self._rotate_grid, self)
@@ -15539,6 +15556,64 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # No selection
         else:
             self.properties_panel.show_no_selection()
+
+        # Refresh the context-sensitive shortcut overlay for the new selection
+        self._update_shortcut_overlay()
+
+    # Curated per-context shortcut hints. Keys are resolved live from the
+    # ShortcutManager (so remaps stay accurate); each row is (action_id, label)
+    # unless the label is None, in which case the definition's display_name is
+    # used. Rows given as a plain (keys, label) tuple are shown verbatim.
+    _SHORTCUT_HINTS = {
+        'none': [
+            ('node.place_single', 'Add node'),
+            ('edge.place_continuous', 'Edge mode'),
+            ('node.toggle_conjugation', 'Conjugation mode'),
+            ('view.zoom_in', 'Zoom in'),
+            ('edit.undo', 'Undo'),
+            ('file.settings', 'Settings'),
+            ('overlay.toggle', 'Hide hints'),
+        ],
+        'node': [
+            ('label.nudge_left', 'Nudge label'),
+            ('node.toggle_conjugation', 'Conjugation mode'),
+            ('clipboard.copy', 'Copy'),
+            ('graph.flip_horizontal', 'Flip horizontal'),
+            ('edit.delete', 'Delete'),
+        ],
+        'edge': [
+            # angle_decrease's display name is "Rotate Self-Loop/Edge CCW" — it
+            # is the coupling-edge curvature control too
+            ('selfloop.angle_decrease', 'Curvature'),
+            (None, 'Right-click', 'Style menu'),
+            ('edit.delete', 'Delete'),
+        ],
+        'selfloop': [
+            ('selfloop.angle_decrease', 'Rotate angle'),
+            ('selfloop.scale_increase', 'Scale'),
+            (None, 'Right-click', 'Style menu'),
+            ('edit.delete', 'Delete'),
+        ],
+    }
+
+    def _shortcut_hint_rows(self, context):
+        sm = getattr(self, 'shortcut_manager', None)
+        rows = []
+        for entry in self._SHORTCUT_HINTS.get(context, []):
+            if entry[0] is None:
+                # Verbatim (None, keys, label) — no managed shortcut
+                rows.append((entry[1], entry[2]))
+                continue
+            action_id, label = entry
+            keys = ''
+            if sm is not None:
+                try:
+                    keys = sm.get_key_sequence_display(action_id) or ''
+                except Exception:
+                    keys = ''
+            if keys:
+                rows.append((keys, label))
+        return rows
 
     def _auto_fit_view(self):
         """Auto-fit view to original graph nodes - applies same extents to Original, Scattering, and Kron views"""
