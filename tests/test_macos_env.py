@@ -2,12 +2,18 @@
 
 Pure-logic tests (no Qt/GUI): monkeypatch ``sys.platform`` and
 ``os.path.isdir`` so the darwin behaviour can be exercised on any host.
+PATH strings are built with ``os.pathsep`` so the tests pass on Windows
+(where the separator is ``;``, not ``:``) as well as POSIX.
 """
 
 import os
 
 from graphulator import _macos_env
 from graphulator._macos_env import ensure_external_tools_on_path
+
+
+def _join(*parts):
+    return os.pathsep.join(parts)
 
 
 def _run_with(monkeypatch, platform, existing_dirs, path_value):
@@ -24,7 +30,7 @@ def _run_with(monkeypatch, platform, existing_dirs, path_value):
 
 def test_prepends_existing_dirs(monkeypatch):
     existing = {"/Library/TeX/texbin", "/opt/homebrew/bin"}
-    entries = _run_with(monkeypatch, "darwin", existing, "/usr/bin:/bin")
+    entries = _run_with(monkeypatch, "darwin", existing, _join("/usr/bin", "/bin"))
 
     # Both existing tool dirs are prepended, ahead of the original PATH.
     assert "/Library/TeX/texbin" in entries
@@ -34,7 +40,7 @@ def test_prepends_existing_dirs(monkeypatch):
 
 
 def test_skips_missing_dirs(monkeypatch):
-    entries = _run_with(monkeypatch, "darwin", set(), "/usr/bin:/bin")
+    entries = _run_with(monkeypatch, "darwin", set(), _join("/usr/bin", "/bin"))
     # None of the tool dirs exist -> PATH is untouched.
     assert entries == ["/usr/bin", "/bin"]
 
@@ -42,7 +48,7 @@ def test_skips_missing_dirs(monkeypatch):
 def test_no_duplicates_when_already_present(monkeypatch):
     existing = {"/usr/local/bin"}
     entries = _run_with(
-        monkeypatch, "darwin", existing, "/usr/local/bin:/usr/bin"
+        monkeypatch, "darwin", existing, _join("/usr/local/bin", "/usr/bin")
     )
     # Already on PATH -> not added a second time.
     assert entries.count("/usr/local/bin") == 1
@@ -52,7 +58,7 @@ def test_no_duplicates_when_already_present(monkeypatch):
 def test_noop_off_macos(monkeypatch):
     existing = set(_macos_env._MAC_TOOL_DIRS)  # pretend they all exist
     for platform in ("linux", "win32"):
-        entries = _run_with(monkeypatch, platform, existing, "/usr/bin:/bin")
+        entries = _run_with(monkeypatch, platform, existing, _join("/usr/bin", "/bin"))
         assert entries == ["/usr/bin", "/bin"]
 
 
