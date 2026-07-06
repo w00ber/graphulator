@@ -1,10 +1,6 @@
 # Changelog
 
-## [0.13.0] - 2026-07-06
-### Changed
-- _TODO: describe changes._
-
-## [Unreleased]
+## [0.14.0] - 2026-07-06
 ### Added
 - Optional context-sensitive keyboard-shortcut hints: a small overlay in a
   chosen corner of the canvas shows the shortcuts relevant to the current
@@ -16,6 +12,7 @@
   correct if you remap. The panel is a Qt overlay, never part of the figure,
   so it never appears in exports or clipboard copies.
 
+## [0.13.0] - 2026-07-06
 ### Fixed
 - Clipboard and PDF export flattened conjugated-node transparency (and any
   other semi-transparent art, e.g. Paragraphulator's scattering-mode
