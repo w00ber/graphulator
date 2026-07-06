@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.14.1] - 2026-07-06
 ### Fixed
 - macOS: LaTeX mode (`Ctrl+L`) rendered node/edge labels in a serif fallback
   font when the app was launched by double-clicking its icon. A Finder-launched
