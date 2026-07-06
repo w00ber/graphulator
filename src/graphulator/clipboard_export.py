@@ -33,6 +33,7 @@ installed -- the ctypes path covers the common case on its own.
 
 import io
 import logging
+import re
 import sys
 
 import matplotlib
@@ -166,6 +167,72 @@ def render_figure_formats(fig, png_dpi: int = 300):
     return pdf_bytes, svg_bytes, png_buffer.getvalue()
 
 
+def _blend_over_white(hex_color, alpha):
+    """Composite ``#rrggbb`` at ``alpha`` over a white background -> ``#rrggbb``."""
+    r = int(hex_color[1:3], 16)
+    g = int(hex_color[3:5], 16)
+    b = int(hex_color[5:7], 16)
+    br = round(r * alpha + 255 * (1 - alpha))
+    bg = round(g * alpha + 255 * (1 - alpha))
+    bb = round(b * alpha + 255 * (1 - alpha))
+    return f"#{br:02x}{bg:02x}{bb:02x}"
+
+
+def _bake_svg_opacity(svg_bytes):
+    """Fold element ``opacity`` into solid ``fill``/``stroke`` colors.
+
+    matplotlib encodes a patch's ``alpha`` as ``opacity`` (and occasionally
+    ``fill-opacity`` / ``stroke-opacity``) in the element's ``style="..."``.
+    PyMuPDF's SVG->PDF conversion silently drops those, so semi-transparent
+    art (e.g. a dimmed conjugated node, or Paragraphulator's scattering-mode
+    dimming) renders fully opaque in the PDF clipboard/export flavour. We
+    pre-composite the opacity into the fill/stroke color over white -- matching
+    the white canvas the user sees -- so the color survives any converter.
+
+    Only ``style`` attributes that actually carry an opacity < 1 are touched;
+    everything else (and any color that isn't a plain ``#rrggbb``) is left
+    byte-identical, so there is no regression for opaque graphs.
+    """
+
+    def bake_style(match):
+        style = match.group(1)
+        props = {}
+        for decl in style.split(";"):
+            if ":" in decl:
+                k, v = decl.split(":", 1)
+                props[k.strip()] = v.strip()
+
+        try:
+            opacity = float(props.get("opacity", 1))
+            fill_op = float(props.get("fill-opacity", 1)) * opacity
+            stroke_op = float(props.get("stroke-opacity", 1)) * opacity
+        except ValueError:
+            return match.group(0)
+
+        if fill_op >= 1 and stroke_op >= 1:
+            return match.group(0)  # nothing transparent -> leave untouched
+
+        hex_re = re.compile(r"^#[0-9a-fA-F]{6}$")
+        fill = props.get("fill")
+        stroke = props.get("stroke")
+        if fill_op < 1 and fill and hex_re.match(fill):
+            props["fill"] = _blend_over_white(fill, fill_op)
+        if stroke_op < 1 and stroke and hex_re.match(stroke):
+            props["stroke"] = _blend_over_white(stroke, stroke_op)
+
+        # Opacity is now baked into the colors; neutralize the opacity keys so
+        # the converter can't drop (or double-apply) them.
+        for k in ("opacity", "fill-opacity", "stroke-opacity"):
+            props.pop(k, None)
+
+        new_style = "; ".join(f"{k}: {v}" for k, v in props.items())
+        return f'style="{new_style}"'
+
+    text = svg_bytes.decode("utf-8")
+    baked = re.sub(r'style="([^"]*)"', bake_style, text)
+    return baked.encode("utf-8")
+
+
 def svg_bytes_to_pdf(svg_bytes):
     """Convert outlined-SVG bytes to PDF bytes, preserving vector outlines.
 
@@ -174,7 +241,13 @@ def svg_bytes_to_pdf(svg_bytes):
     then cairosvg, then the ``rsvg-convert`` CLI. Returns the PDF bytes, or
     ``None`` if none are available so the caller can fall back to matplotlib's
     own (font-embedded) PDF output.
+
+    Element opacity is first baked into the fill/stroke colors (over white)
+    because PyMuPDF drops SVG ``opacity`` during conversion; see
+    :func:`_bake_svg_opacity`.
     """
+    svg_bytes = _bake_svg_opacity(svg_bytes)
+
     # 1. PyMuPDF / fitz -- pure Python, no native CLI needed.
     try:
         import fitz  # PyMuPDF
