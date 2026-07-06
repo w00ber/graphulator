@@ -99,7 +99,19 @@ class ShortcutOverlay(QWidget):
         )
         self._label.setText(html)
         self.adjustSize()
+        self._clamp_to_parent()
         self._reposition()
+
+    def _clamp_to_parent(self):
+        """Keep the panel within the canvas so a long ('all') list can't spill
+        off-screen; content taller than the canvas is clipped at the bottom."""
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        max_h = max(60, parent.height() - 2 * _MARGIN)
+        max_w = max(60, parent.width() - 2 * _MARGIN)
+        if self.height() > max_h or self.width() > max_w:
+            self.resize(min(self.width(), max_w), min(self.height(), max_h))
 
     # ---- internals ----------------------------------------------------
 

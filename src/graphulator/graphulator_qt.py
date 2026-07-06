@@ -5466,7 +5466,42 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         ],
     }
 
+    # Full per-context shortcut lists (shown when "Show All Shortcuts" is on)
+    _SHORTCUT_HINTS_ALL = {
+        'none': [
+            ('G', 'Add node'), ('Shift+G', 'Continuous nodes'),
+            ('Ctrl+G', 'Auto-increment mode'), ('E', 'Edge mode'),
+            ('Ctrl+E', 'Continuous edge'), ('C', 'Conjugation mode'),
+            ('Esc', 'Exit / clear'), ('↑↓←→', 'Pan view'), ('+ / −', 'Zoom'),
+            ('A', 'Auto-fit view'), ('R', 'Rotate grid'), ('T', 'Toggle grid type'),
+            ('Ctrl+A', 'Select all'), ('Ctrl+Z', 'Undo'),
+            ('Ctrl+Shift+Z / Ctrl+Y', 'Redo'), ('Ctrl+N/O/S', 'New / open / save'),
+            ('Ctrl+L', 'Toggle LaTeX'), ('Ctrl+Shift+E', 'Export code'),
+            ('Ctrl+,', 'Settings'), ('?', 'Hide hints'),
+        ],
+        'node': [
+            ('↑ ↓', 'Node size'), ('← →', 'Label size'),
+            ('Shift+↑↓←→', 'Nudge label'), ('C', 'Conjugation mode'),
+            ('Ctrl+R', 'Rotate 15° CCW'), ('Ctrl+Shift+R', 'Rotate 15° CW'),
+            ('Ctrl+C', 'Copy'), ('Ctrl+X', 'Cut'), ('Ctrl+V', 'Paste'),
+            ('D or Del', 'Delete'),
+        ],
+        'edge': [
+            ('Ctrl+← →', 'Curvature'), ('↑ ↓', 'Edge width'), ('← →', 'Label size'),
+            ('F', 'Flip labels'), ('Shift+F', 'Label rotation mode'),
+            ('Right-click', 'Style / arrowhead'), ('Ctrl+C', 'Copy'),
+            ('D or Del', 'Delete'),
+        ],
+        'selfloop': [
+            ('Ctrl+← →', 'Rotate angle'), ('Ctrl+↑ ↓', 'Scale'),
+            ('← →', 'Label size'), ('Right-click', 'Style / arrowhead'),
+            ('Ctrl+C', 'Copy'), ('D or Del', 'Delete'),
+        ],
+    }
+
     def _shortcut_hint_rows(self, context):
+        if getattr(config, 'SHORTCUT_OVERLAY_SHOW_ALL', False):
+            return self._SHORTCUT_HINTS_ALL.get(context, [])
         return self._SHORTCUT_HINTS.get(context, [])
 
     def _auto_fit_view(self):

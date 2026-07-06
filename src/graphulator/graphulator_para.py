@@ -220,6 +220,7 @@ SETTINGS_PARAMS = {
         ('SHORTCUT_OVERLAY_CORNER', 'Hints Corner', 'dropdown',
          [('Top Left', 'top-left'), ('Top Right', 'top-right'),
           ('Bottom Left', 'bottom-left'), ('Bottom Right', 'bottom-right')], None, None),
+        ('SHORTCUT_OVERLAY_SHOW_ALL', 'Show All Shortcuts (not just essentials)', 'bool', None, None, None),
     ],
 }
 
@@ -236,8 +237,9 @@ LIVE_PARAMS = (
     'CONJ_SAME_EDGE_STYLE',
     'CONJ_DIFF_EDGE_STYLE',
     'DEFAULT_NODE_RADIUS',
-    'SHOW_SHORTCUT_OVERLAY',   # toggling/corner apply to the overlay immediately
+    'SHOW_SHORTCUT_OVERLAY',   # toggling/corner/detail apply to the overlay immediately
     'SHORTCUT_OVERLAY_CORNER',
+    'SHORTCUT_OVERLAY_SHOW_ALL',
 )
 
 
@@ -15596,8 +15598,30 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         ],
     }
 
-    def _shortcut_hint_rows(self, context):
+    # Shortcut categories that make up the full ('all') list per context.
+    _SHORTCUT_ALL_CATEGORIES = {
+        'none': ['Node Placement', 'Edge Operations', 'View',
+                 'Canvas Navigation', 'Grid Controls', 'Selection & Clipboard',
+                 'Edit', 'Help'],
+        'node': ['Label Adjustments', 'Graph Rotation', 'Node Placement',
+                 'Selection & Clipboard'],
+        'edge': ['Edge Operations', 'Self-Loop Adjustments',
+                 'Selection & Clipboard'],
+        'selfloop': ['Self-Loop Adjustments', 'Selection & Clipboard'],
+    }
+
+    def _display_key(self, action_id):
         sm = getattr(self, 'shortcut_manager', None)
+        if sm is None:
+            return ''
+        try:
+            return sm.get_key_sequence_display(action_id) or ''
+        except Exception:
+            return ''
+
+    def _shortcut_hint_rows(self, context):
+        if getattr(config, 'SHORTCUT_OVERLAY_SHOW_ALL', False):
+            return self._shortcut_hint_rows_all(context)
         rows = []
         for entry in self._SHORTCUT_HINTS.get(context, []):
             if entry[0] is None:
@@ -15605,14 +15629,25 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 rows.append((entry[1], entry[2]))
                 continue
             action_id, label = entry
-            keys = ''
-            if sm is not None:
-                try:
-                    keys = sm.get_key_sequence_display(action_id) or ''
-                except Exception:
-                    keys = ''
+            keys = self._display_key(action_id)
             if keys:
                 rows.append((keys, label))
+        return rows
+
+    def _shortcut_hint_rows_all(self, context):
+        """Every shortcut in the categories relevant to this context, with
+        live (remap-aware) keys and each definition's display name."""
+        from .para_ui.shortcut_definitions import get_definitions_by_category
+        by_cat = get_definitions_by_category()
+        rows, seen = [], set()
+        for category in self._SHORTCUT_ALL_CATEGORIES.get(context, []):
+            for defn in by_cat.get(category, []):
+                if defn.action_id in seen:
+                    continue
+                keys = self._display_key(defn.action_id)
+                if keys:
+                    rows.append((keys, defn.display_name))
+                    seen.add(defn.action_id)
         return rows
 
     def _auto_fit_view(self):

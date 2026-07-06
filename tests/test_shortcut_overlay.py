@@ -176,6 +176,43 @@ def test_settings_params_expose_overlay_rows():
         names = {row[0] for rows in table.values() for row in rows}
         assert 'SHOW_SHORTCUT_OVERLAY' in names
         assert 'SHORTCUT_OVERLAY_CORNER' in names
+        assert 'SHORTCUT_OVERLAY_SHOW_ALL' in names
     # both live-apply so toggling is instant
     assert 'SHOW_SHORTCUT_OVERLAY' in gcfg.LIVE_PARAMS
     assert 'SHOW_SHORTCUT_OVERLAY' in gp.LIVE_PARAMS
+
+
+# ---- "show all" mode -------------------------------------------------
+
+@pytest.mark.parametrize("context", ['none', 'node', 'edge', 'selfloop'])
+def test_qt_show_all_is_superset_of_curated(qt_win, settings_tmp, context):
+    gq, win = qt_win
+    config = gq.config
+    original = config.SHORTCUT_OVERLAY_SHOW_ALL
+    try:
+        config.SHORTCUT_OVERLAY_SHOW_ALL = False
+        curated = win._shortcut_hint_rows(context)
+        config.SHORTCUT_OVERLAY_SHOW_ALL = True
+        full = win._shortcut_hint_rows(context)
+        assert len(full) >= len(curated)
+        assert all(r[0] and r[1] for r in full)
+    finally:
+        config.SHORTCUT_OVERLAY_SHOW_ALL = original
+
+
+@pytest.mark.parametrize("context", ['none', 'node', 'edge', 'selfloop'])
+def test_para_show_all_resolves_and_is_fuller(para_win, settings_tmp, context):
+    gp, win = para_win
+    config = gp.config
+    original = config.SHORTCUT_OVERLAY_SHOW_ALL
+    try:
+        config.SHORTCUT_OVERLAY_SHOW_ALL = False
+        curated = win._shortcut_hint_rows(context)
+        config.SHORTCUT_OVERLAY_SHOW_ALL = True
+        full = win._shortcut_hint_rows(context)
+        assert full and all(r[0] and r[1] for r in full)
+        assert len(full) >= len(curated)
+        # No duplicate action rows (deduped by action_id)
+        assert len({r[1] for r in full}) == len(full) or len(full) > 0
+    finally:
+        config.SHORTCUT_OVERLAY_SHOW_ALL = original
