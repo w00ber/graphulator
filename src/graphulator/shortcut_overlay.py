@@ -54,6 +54,10 @@ class ShortcutOverlay(QWidget):
         self._label = QLabel(self)
         self._label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._label.setTextFormat(Qt.TextFormat.RichText)
+        # Pin the text dark: the panel background is always light, so without
+        # this the text follows the system palette and turns white (unreadable)
+        # under macOS dark/night mode.
+        self._label.setStyleSheet("color: #111111;")
         layout.addWidget(self._label)
 
         # objectName-scoped stylesheet so it doesn't bleed onto child labels of

@@ -1951,6 +1951,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         self.status_label.setStyleSheet("""
             QLabel {
                 background-color: #f0f0f0;
+                color: #000000;
                 padding: 5px 10px;
                 border-bottom: 1px solid #cccccc;
                 font-family: monospace;
