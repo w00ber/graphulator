@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+### Fixed
+- macOS: LaTeX mode (`Ctrl+L`) rendered node/edge labels in a serif fallback
+  font when the app was launched by double-clicking its icon. A Finder-launched
+  app inherits a minimal `PATH` that omits `/Library/TeX/texbin`, so matplotlib
+  couldn't find `latex` and silently fell back to the mathtext renderer (it
+  worked when launched via `open` from a terminal, which inherits the shell's
+  `PATH`). The app now prepends the standard macOS TeX/Ghostscript locations to
+  `PATH` at startup, so LaTeX mode behaves the same however the app is launched.
+  Toggling LaTeX on when no `latex` binary can be found now shows a one-time
+  warning instead of silently degrading to serif.
+
 ## [0.14.0] - 2026-07-06
 ### Added
 - Optional context-sensitive keyboard-shortcut hints: a small overlay in a

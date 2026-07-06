@@ -14,6 +14,7 @@ rather than by editing method bodies, so a fix made here lands in both apps.
 
 import json
 import logging
+import shutil
 import sys
 from pathlib import Path
 
@@ -1303,6 +1304,7 @@ class GraphWindowCommonMixin:
         if self.use_latex:
             # Set up LaTeX preamble with sfmath for bold sans-serif fonts
             matplotlib.rcParams['text.latex.preamble'] = r'\usepackage{amsmath}\usepackage{sfmath}\renewcommand{\familydefault}{\sfdefault}'
+            self._warn_if_latex_unavailable()
         else:
             # Reset to MathText mode
             matplotlib.rcParams['text.latex.preamble'] = ''
@@ -1315,6 +1317,33 @@ class GraphWindowCommonMixin:
         render_mode = "LaTeX" if self.use_latex else "MathText"
         logger.info(f"Rendering mode: {render_mode}")
         self._update_plot()
+
+    def _warn_if_latex_unavailable(self):
+        """Warn (once per session) if LaTeX mode was enabled but no ``latex``
+        executable is on PATH.
+
+        Without this, matplotlib silently falls back per label to the built-in
+        mathtext (serif) renderer, which looks like LaTeX mode is "not working"
+        with no explanation. ``ensure_external_tools_on_path()`` runs at startup
+        and adds the standard macOS TeX locations, so this fires only when LaTeX
+        genuinely isn't installed.
+        """
+        if shutil.which("latex") is not None:
+            return
+        logger.warning("LaTeX mode enabled but no 'latex' executable found on "
+                       "PATH; labels will fall back to the mathtext renderer.")
+        if getattr(self, "_latex_missing_warned", False):
+            return
+        self._latex_missing_warned = True
+        QMessageBox.warning(
+            self,
+            "LaTeX not found",
+            "LaTeX rendering is on, but no LaTeX installation was found on your "
+            "system PATH.\n\nLabels will fall back to the built-in mathtext "
+            "renderer (a serif font), which needs no LaTeX.\n\nTo get true LaTeX "
+            "labels, install a TeX distribution (e.g. MacTeX or BasicTeX on "
+            "macOS, MiKTeX or TeX Live on Windows/Linux) and restart the app.",
+        )
 
     def _handle_resize_complete(self):
         """Called when resize debounce timer completes - redraw the plot"""

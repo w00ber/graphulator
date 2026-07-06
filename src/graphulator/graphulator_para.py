@@ -15926,7 +15926,12 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
 
 def main():
+    from graphulator._macos_env import ensure_external_tools_on_path
     from graphulator._resources import resource_path
+
+    # Make LaTeX/Ghostscript findable when the .app is launched from Finder
+    # (which hands the process a minimal PATH). No-op off macOS.
+    ensure_external_tools_on_path()
 
     app = QApplication(sys.argv)
     app.setApplicationName("Paragraphulator")
