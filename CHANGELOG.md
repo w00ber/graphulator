@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.13.0] - 2026-07-06
+### Changed
+- _TODO: describe changes._
+
 ## [Unreleased]
 ### Fixed
 - Clipboard and PDF export flattened conjugated-node transparency (and any
