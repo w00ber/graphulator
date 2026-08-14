@@ -1661,6 +1661,13 @@ class GraphScatteringMatrix:
 
         self.num_ports = len(self.port_dict)
 
+        # Port node_ids in S-matrix row/column order. port_dict is filled by
+        # walking graph_data['nodes'], so this follows the basis order, which
+        # is not the same as ascending node_id once a basis reordering has
+        # moved nodes around. Anything mapping a port index back to a node
+        # must use this list, never sorted(port_dict).
+        self.port_ids = list(self.port_dict.keys())
+
         if self.verbose:
             logger.debug("[_build_K_matrix] Total ports: %d", self.num_ports)
         self.K = np.zeros(shape=(self.num_modes, len(self.port_dict)), dtype=float)
@@ -1669,7 +1676,7 @@ class GraphScatteringMatrix:
             logger.debug("[_build_K_matrix] K matrix entries:")
         for node_id, B_ext in self.port_dict.items():
             mode_idx = self.extractor.graph_data['basis_order'].index(node_id)
-            port_idx = list(self.port_dict.keys()).index(node_id)
+            port_idx = self.port_ids.index(node_id)
             self.K[mode_idx, port_idx] = np.sqrt(B_ext)
             if self.verbose:
                 logger.debug("  K[%d,%d] = sqrt(%s) = %s", mode_idx, port_idx, B_ext, np.sqrt(B_ext))
@@ -1816,7 +1823,7 @@ class GraphScatteringMatrix:
         from collections import defaultdict
         import matplotlib.pyplot as plt
 
-        port_ids = sorted(self.port_dict.keys())
+        port_ids = self.port_ids
 
         # Read font sizes from rcParams (respects seaborn settings)
         label_fontsize = plt.rcParams.get('axes.labelsize', 12)
@@ -2094,7 +2101,7 @@ class GraphScatteringMatrix:
 
         # Plot traces
         resolved_traces = self._resolve_trace_colors()
-        port_ids = sorted(self.port_dict.keys())
+        port_ids = self.port_ids
 
         for trace in resolved_traces:
             j, k = trace['j'], trace['k']
@@ -2158,7 +2165,7 @@ class GraphScatteringMatrix:
 
         # Plot traces
         resolved_traces = self._resolve_trace_colors()
-        port_ids = sorted(self.port_dict.keys())
+        port_ids = self.port_ids
 
         for trace in resolved_traces:
             j, k = trace['j'], trace['k']
@@ -2224,7 +2231,7 @@ class GraphScatteringMatrix:
 
         # Plot traces
         resolved_traces = self._resolve_trace_colors()
-        port_ids = sorted(self.port_dict.keys())
+        port_ids = self.port_ids
 
         for trace in resolved_traces:
             j, k = trace['j'], trace['k']
@@ -2311,7 +2318,7 @@ class GraphScatteringMatrix:
 
         # Plot traces
         resolved_traces = self._resolve_trace_colors()
-        port_ids = sorted(self.port_dict.keys())
+        port_ids = self.port_ids
 
         for trace in resolved_traces:
             j, k = trace['j'], trace['k']

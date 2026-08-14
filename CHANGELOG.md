@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+### Fixed
+- Scattering: S-matrix port labels were wrong for graphs whose ports are not in
+  ascending node-id order. The K columns are built by walking the nodes in
+  basis order, but every label path (S-parameter checkboxes, plot legends,
+  frequency-row labels, exported scripts) mapped a port index back to a node
+  via `sorted(port_dict)`. Committing a basis reordering that permutes the
+  ports desynchronizes the two, so each trace was drawn under another port's
+  name — e.g. on a two-port graph the whole matrix was transposed relative to
+  its labels. `GraphScatteringMatrix` now exposes `port_ids` as the single
+  source of truth for port index → node, and all label paths use it. The
+  computed S values were always correct; only the names attached to them were
+  wrong.
+
 ## [0.14.1] - 2026-07-06
 ### Fixed
 - macOS: LaTeX mode (`Ctrl+L`) rendered node/edge labels in a serif fallback
