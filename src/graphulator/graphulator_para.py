@@ -98,6 +98,21 @@ def _node_key(node):
     return node['node_id']
 
 
+def _component_port_ids(comp_data):
+    """Port node_ids of a component in S-matrix row/column order.
+
+    Mirrors GraphScatteringMatrix.port_ids, i.e. the order the ports appear in
+    the basis, which is what the K columns were built from. Sorting the node
+    ids instead would mislabel S after a basis reordering has permuted the
+    ports relative to their creation order. Falls back to port_dict insertion
+    order (same ordering) for results computed before 'port_ids' was stored.
+    """
+    port_ids = comp_data.get('port_ids')
+    if port_ids:
+        return list(port_ids)
+    return list(comp_data.get('port_dict', {}).keys())
+
+
 def _edge_key(edge):
     """Stable scattering-assignment key for an edge.
 
@@ -5034,9 +5049,8 @@ class PropertiesPanel(QWidget):
             for comp_data in components_data:
                 comp_idx = comp_data.get('component_index', 0)
                 port_dict = comp_data.get('port_dict', {})
-                sorted_port_ids = sorted(port_dict.keys())
                 port_labels = []
-                for pid in sorted_port_ids:
+                for pid in _component_port_ids(comp_data):
                     info = port_dict.get(pid, {})
                     label = info.get('label', str(pid))
                     if info.get('conj', False):
@@ -5572,7 +5586,7 @@ def _compute_sparams_job(job):
         'SdB': scattering_calc.SdB,
         'port_dict': enriched_port_dict,
         'drive_signals': scattering_calc.drive_signals,
-        'port_ids': sorted(scattering_calc.port_dict.keys()),
+        'port_ids': list(scattering_calc.port_ids),
         'component_index': job['component_index'],
         'component_label': job['component_label'],
     }
@@ -9942,7 +9956,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # Build a signature of all ports across all components for change detection
         all_ports_sig = []
         for comp in components:
-            port_ids = sorted(comp.get('port_dict', {}).keys())
+            port_ids = _component_port_ids(comp)
             all_ports_sig.append((comp.get('component_index', 0), tuple(port_ids)))
         all_ports_sig = tuple(all_ports_sig)
 
@@ -9978,7 +9992,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         for comp_idx, comp_data in enumerate(components):
             port_dict = comp_data.get('port_dict', {})
-            port_ids = sorted(port_dict.keys())
+            port_ids = _component_port_ids(comp_data)
             comp_label = comp_data.get('component_label', '')
 
             if not port_ids:
@@ -10221,7 +10235,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                         S_complex = comp_data.get('S')
                         SdB = comp_data.get('SdB')
                         port_dict = comp_data.get('port_dict', {})
-                        port_ids = sorted(port_dict.keys())
+                        port_ids = _component_port_ids(comp_data)
                         comp_label = comp_data.get('component_label', '')
 
                         if S_complex is None or SdB is None:
