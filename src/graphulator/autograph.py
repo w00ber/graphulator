@@ -11,11 +11,149 @@ Author: Graphulator Development Team
 import json
 import logging
 import numpy as np
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Tuple, Set, Optional, Any, Union
 from more_itertools import collapse
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Dissipation hubs
+# ---------------------------------------------------------------------------
+#
+# A DissipationHub is the single dissipation species of the assembly:
+#   monitored=True  -> a PORT: contributes (i/2) kappa kappa^dagger to M and a
+#                      column of K_ports (a scattering channel of S).
+#   monitored=False -> a LOSS HUB: contributes (i/2) lambda lambda^dagger to M
+#                      only; energy exits unobserved (a column of K_loss).
+# Legacy per-node B_ext auto-wraps into single-attachment monitored hubs at
+# matrix-build time (see GraphExtractor.get_effective_hubs), which reproduces
+# the pre-hub behavior exactly.
+#
+# Phase-1 restrictions (no-ansatz boundary — see the Phase-2 list below):
+#   * Attachment weights are REAL SIGNED: the schema stores (magnitude,
+#     phase_deg) for forward compatibility, but phase is restricted to
+#     {0, 180} degrees. Complex weights await the M_pumped derivation.
+#   * A hub may attach to nodes of ONE sector only (all conj=False or all
+#     conj=True). Mixed-sector hubs raise ValueError: the conjugation
+#     placement for hub attachments on conj-sector nodes is exactly the
+#     deferred M_pumped two-sector derivation.
+#
+# Phase-2 blocked-on-derivation list (do NOT implement without the derivations):
+#   * Complex hub weights on conj-sector nodes; mixed-sector hubs;
+#     Sigma_z-weighted / Manley-Rowe scattering through hubs
+#     -> blocked on the M_pumped two-sector derivation + harmonic-balance
+#        cross-check.
+#   * Band-limited comb expansion (low-side closure underived; the digamma
+#     tail covers the high side only).
+#   * Two-port line acceptance (requires a written-and-verified ABCD
+#     two-port reference).
+#   * Frequency-dependent weights lambda(omega) / connector embedding (when
+#     it lands: free-Y_L-pole convention; the clamped convention is known
+#     wrong by ~55 MHz).
+#   * Parallel pump edges between one node pair (separate pre-existing
+#     limitation).
+
+#: Tolerance for accepting an attachment phase as exactly 0 or 180 degrees.
+_HUB_PHASE_TOL_DEG = 1e-9
+
+_MIXED_SECTOR_MSG = (
+    "Hub '{hub_id}' attaches to both normal and conjugate (conj) sector "
+    "nodes: {details}. Mixed-sector hubs are a Phase-2 feature blocked on "
+    "the M_pumped two-sector derivation + harmonic-balance cross-check."
+)
+
+_COMPLEX_WEIGHT_MSG = (
+    "Hub '{hub_id}' attachment to node {node_id} has phase {phase} deg. "
+    "Phase-1 hub weights are real signed: phase must be 0 or 180 degrees. "
+    "Complex weights are a Phase-2 feature blocked on the M_pumped "
+    "derivation."
+)
+
+
+@dataclass
+class DissipationHub:
+    """A dissipation hub: one physical absorber attached to one or more modes.
+
+    Attributes
+    ----------
+    hub_id : Any
+        Stable identifier (unique among hubs; hashable).
+    label : str
+        Display label; used as the port label when monitored.
+    attachments : list of (node_id, weight_mag, weight_phase_deg)
+        Attachment vector entries, one per attached mode. `weight_mag` is the
+        coupling amplitude kappa_n in sqrt(rate) units (a single-attachment
+        port reduces to kappa = sqrt(B_ext)); `weight_phase_deg` is restricted
+        to {0, 180} in Phase 1 (real signed weights).
+    monitored : bool
+        True -> port (S channel); False -> loss hub (no channel).
+    """
+
+    hub_id: Any
+    label: str = ''
+    attachments: List[Tuple[Any, float, float]] = field(default_factory=list)
+    monitored: bool = True
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'hub_id': self.hub_id,
+            'label': self.label,
+            'attachments': [tuple(a) for a in self.attachments],
+            'monitored': self.monitored,
+        }
+
+
+def _normalize_attachment(entry) -> Tuple[Any, float, float]:
+    """Normalize one attachment to (node_id, weight_mag, weight_phase_deg).
+
+    Accepts (node_id, weight) with a signed real weight, or the full
+    (node_id, weight_mag, weight_phase_deg) triple.
+    """
+    if len(entry) == 2:
+        node_id, weight = entry
+        if weight < 0:
+            return (node_id, -float(weight), 180.0)
+        return (node_id, float(weight), 0.0)
+    if len(entry) == 3:
+        node_id, mag, phase_deg = entry
+        return (node_id, float(mag), float(phase_deg))
+    raise ValueError(
+        f"Hub attachment {entry!r} must be (node_id, weight) or "
+        f"(node_id, weight_mag, weight_phase_deg)"
+    )
+
+
+def _normalize_hub(hub) -> Dict[str, Any]:
+    """Normalize a DissipationHub or dict to the stored dict schema."""
+    if isinstance(hub, DissipationHub):
+        hub = hub.to_dict()
+    if 'hub_id' not in hub:
+        raise ValueError(f"Hub {hub!r} is missing 'hub_id'")
+    return {
+        'hub_id': hub['hub_id'],
+        'label': hub.get('label', str(hub['hub_id'])),
+        'attachments': [
+            _normalize_attachment(a) for a in hub.get('attachments', [])
+        ],
+        'monitored': bool(hub.get('monitored', True)),
+    }
+
+
+def _hub_signed_weight(hub_id, node_id, weight_mag, weight_phase_deg) -> float:
+    """Collapse (magnitude, phase) to the Phase-1 real signed weight.
+
+    Phase must be 0 or 180 degrees (mod 360); anything else raises, because
+    complex weights are blocked on the M_pumped derivation (Phase 2).
+    """
+    phase = float(weight_phase_deg) % 360.0
+    if abs(phase) <= _HUB_PHASE_TOL_DEG or abs(phase - 360.0) <= _HUB_PHASE_TOL_DEG:
+        return float(weight_mag)
+    if abs(phase - 180.0) <= _HUB_PHASE_TOL_DEG:
+        return -float(weight_mag)
+    raise ValueError(_COMPLEX_WEIGHT_MSG.format(
+        hub_id=hub_id, node_id=node_id, phase=weight_phase_deg))
 
 def load_pgraph(filepath: Optional[Union[str, Path]] = None, use_dialog: bool = False) -> Dict[str, Any]:
     """
@@ -345,7 +483,8 @@ class GraphExtractor:
         basis_order: Optional[List[Dict[str, Any]]] = None,
         root_node_id: Optional[int] = None,
         precomputed_tree_edges: Optional[List[List[int]]] = None,
-        precomputed_chord_edges: Optional[List[List[int]]] = None
+        precomputed_chord_edges: Optional[List[List[int]]] = None,
+        hubs: Optional[List[Any]] = None
     ) -> Dict[str, Any]:
         """
         Extract all graph structure and numerical parameters into a single dictionary.
@@ -371,6 +510,12 @@ class GraphExtractor:
         precomputed_chord_edges : Optional[List[List[int]]], default=None
             Pre-computed chord edges as [[from_id, to_id], ...]. If provided, these will be used
             instead of computing chords.
+        hubs : Optional[List], default=None
+            Explicit dissipation hubs (DissipationHub instances or dicts with
+            keys hub_id/label/attachments/monitored). Monitored hubs are ports
+            (S channels, in list order); unmonitored hubs are loss channels.
+            Legacy per-node B_ext still auto-wraps into single-attachment
+            ports appended after the explicit ones (see get_effective_hubs).
 
         Returns
         -------
@@ -464,18 +609,35 @@ class GraphExtractor:
             logger.warning("Duplicate node labels detected: %s", dup_labels_str)
             logger.warning("  label_to_node_id mapping will not be available.")
 
-        # Determine root node - default to first port node (B_ext > 0) in basis order
+        # Normalize and validate explicit hubs (Phase-1 gates raise here early)
+        node_id_set = {node['node_id'] for node in extracted_nodes}
+        normalized_hubs = []
+        for hub in (hubs or []):
+            normalized = _normalize_hub(hub)
+            self._validate_hub(normalized, extracted_nodes, node_id_set)
+            normalized_hubs.append(normalized)
+
+        # Determine root node - default to the first attachment node of the
+        # first explicit port hub; else first legacy port node (B_ext > 0) in
+        # basis order; else first node in basis order. For legacy graphs the
+        # hub rule is vacuous, so this coincides with the previous behavior.
         if root_node_id is None:
             if not basis_order:
                 raise ValueError("Cannot determine root node: no nodes in graph")
 
-            # Try to find first port node in basis order
-            for node in basis_order:
-                # Find corresponding extracted node data
-                extracted = next((n for n in extracted_nodes if n['node_id'] == node['node_id']), None)
-                if extracted and extracted['B_ext'] is not None and extracted['B_ext'] > 0:
-                    root_node_id = node['node_id']
+            for hub in normalized_hubs:
+                if hub['monitored'] and hub['attachments']:
+                    root_node_id = hub['attachments'][0][0]
                     break
+
+            # Try to find first port node in basis order
+            if root_node_id is None:
+                for node in basis_order:
+                    # Find corresponding extracted node data
+                    extracted = next((n for n in extracted_nodes if n['node_id'] == node['node_id']), None)
+                    if extracted and extracted['B_ext'] is not None and extracted['B_ext'] > 0:
+                        root_node_id = node['node_id']
+                        break
 
             # If no port node found, fall back to first node in basis order
             if root_node_id is None:
@@ -561,6 +723,7 @@ class GraphExtractor:
         self.graph_data = {
             'nodes': extracted_nodes,
             'edges': extracted_edges,
+            'hubs': normalized_hubs,
             'tree_edges': tree_edges_with_fp,
             'chord_edges': chord_edges,
             'frequency': frequency_settings.copy(),
@@ -886,7 +1049,8 @@ class GraphExtractor:
 
         missing = {
             'missing_nodes': [],
-            'missing_edges': []
+            'missing_edges': [],
+            'missing_hubs': []
         }
 
         # Check nodes
@@ -937,6 +1101,23 @@ class GraphExtractor:
             if missing_params:
                 missing['missing_edges'].append(
                     f"Edge {from_id}→{to_id}: missing {missing_params}"
+                )
+
+        # Check explicit hubs: each needs at least one attachment with a
+        # concrete weight (B_ext is tied to self-loops above only for the
+        # legacy per-node affordance; hub-attached nodes need no B_ext).
+        for hub in self.graph_data.get('hubs', []):
+            if not hub.get('attachments'):
+                missing['missing_hubs'].append(
+                    f"Hub {hub.get('label', hub['hub_id'])} "
+                    f"(id={hub['hub_id']}): no attachments"
+                )
+                continue
+            bad = [a for a in hub['attachments'] if a[1] is None]
+            if bad:
+                missing['missing_hubs'].append(
+                    f"Hub {hub.get('label', hub['hub_id'])} "
+                    f"(id={hub['hub_id']}): missing weights for {bad}"
                 )
 
         return missing
@@ -1405,6 +1586,160 @@ class GraphExtractor:
         # Mark that derived quantities need recomputation
         self._needs_recompute = True
 
+    def _validate_hub(
+        self,
+        hub: Dict[str, Any],
+        nodes: List[Dict[str, Any]],
+        node_id_set: Set[Any]
+    ) -> None:
+        """Enforce the Phase-1 hub gates on one normalized hub.
+
+        Raises ValueError for: attachment to an unknown node, an attachment
+        phase outside {0, 180} degrees (complex weights are Phase 2), or
+        attachments spanning both conj sectors (mixed-sector hubs are blocked
+        on the M_pumped derivation).
+        """
+        conj_by_id = {n['node_id']: n['conj'] for n in nodes}
+        sectors = set()
+        for node_id, mag, phase_deg in hub['attachments']:
+            if node_id not in node_id_set:
+                raise ValueError(
+                    f"Hub '{hub['hub_id']}' attaches to unknown node "
+                    f"{node_id!r}"
+                )
+            # Raises on phases other than 0/180 (Phase-2 complex weights)
+            _hub_signed_weight(hub['hub_id'], node_id, mag, phase_deg)
+            sectors.add(bool(conj_by_id[node_id]))
+        if len(sectors) > 1:
+            details = ', '.join(
+                f"node {node_id!r} (conj={conj_by_id[node_id]})"
+                for node_id, _, _ in hub['attachments']
+            )
+            raise ValueError(_MIXED_SECTOR_MSG.format(
+                hub_id=hub['hub_id'], details=details))
+
+    def assign_hub(
+        self,
+        hub_id: Any,
+        label: Optional[str] = None,
+        attachments: Optional[List[Any]] = None,
+        monitored: Optional[bool] = None
+    ) -> None:
+        """
+        Create or update an explicit dissipation hub.
+
+        A monitored hub is a port: it contributes (i/2) kappa kappa^dagger to
+        M and a scattering channel (column of K appearing in S). An
+        unmonitored hub is a loss hub: same M contribution, no channel.
+
+        Parameters
+        ----------
+        hub_id : Any
+            Stable hub identifier. If a hub with this id already exists it is
+            updated in place (its channel-order position is preserved);
+            otherwise a new hub is appended after the existing explicit hubs.
+        label : Optional[str], default=None
+            Display label (used as the port label). If None on creation, the
+            string form of hub_id is used; if None on update, unchanged.
+        attachments : Optional[List], default=None
+            List of (node_id, weight) with signed real weight, or
+            (node_id, weight_mag, weight_phase_deg) triples. Weights are
+            coupling amplitudes in sqrt(rate) units. Phase-1 gates: phase in
+            {0, 180} degrees only; all attached nodes in one conj sector.
+            If None on update, attachments are unchanged.
+        monitored : Optional[bool], default=None
+            True -> port, False -> loss hub. Defaults to True on creation;
+            unchanged if None on update.
+
+        Raises
+        ------
+        RuntimeError
+            If extract_graph_data() has not been called yet
+        ValueError
+            On unknown nodes, Phase-2 phases, or mixed-sector attachments
+            (message names the deferred M_pumped derivation).
+        """
+        if self.graph_data is None:
+            raise RuntimeError("Must call extract_graph_data() or extract_from_pgraph() first")
+
+        hubs = self.graph_data.setdefault('hubs', [])
+        existing = next((h for h in hubs if h['hub_id'] == hub_id), None)
+
+        candidate = {
+            'hub_id': hub_id,
+            'label': label if label is not None else (
+                existing['label'] if existing else str(hub_id)),
+            'attachments': attachments if attachments is not None else (
+                existing['attachments'] if existing else []),
+            'monitored': monitored if monitored is not None else (
+                existing['monitored'] if existing else True),
+        }
+        normalized = _normalize_hub(candidate)
+        node_id_set = {n['node_id'] for n in self.graph_data['nodes']}
+        self._validate_hub(normalized, self.graph_data['nodes'], node_id_set)
+
+        if existing is not None:
+            existing.update(normalized)
+        else:
+            hubs.append(normalized)
+
+        self._needs_recompute = True
+
+    def get_effective_hubs(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Return (port_hubs, loss_hubs) — the effective dissipation channels.
+
+        Port channels come first in K/S channel order: explicit monitored
+        hubs in their list order, then legacy per-node B_ext auto-wrapped
+        into single-attachment monitored hubs in the order the nodes appear
+        in graph_data['nodes'] (the basis-walk order used by the pre-hub
+        _build_K_matrix — this exactly reproduces the legacy channel order).
+        Loss channels are the explicit unmonitored hubs in list order.
+
+        Auto-wrapped hubs carry kappa = sqrt(B_ext), label = node label, and
+        a 'legacy_node_id' key so callers can preserve the historical
+        port_ids/port_dict contracts.
+
+        Raises
+        ------
+        ValueError
+            If any explicit hub violates a Phase-1 gate (checked again here
+            because weights/attachments may have been edited since assign).
+        """
+        if self.graph_data is None:
+            raise RuntimeError("Must call extract_graph_data() or extract_from_pgraph() first")
+
+        nodes = self.graph_data['nodes']
+        node_id_set = {n['node_id'] for n in nodes}
+
+        port_hubs = []
+        loss_hubs = []
+        for hub in self.graph_data.get('hubs', []):
+            normalized = _normalize_hub(hub)
+            self._validate_hub(normalized, nodes, node_id_set)
+            if normalized['monitored']:
+                port_hubs.append(normalized)
+            else:
+                loss_hubs.append(normalized)
+
+        # Legacy auto-wrap: one single-attachment port per node with B_ext > 0,
+        # appended in graph_data['nodes'] walk order (reproduces the legacy
+        # K-column order pinned by test_port_index_ordering.py).
+        for node in nodes:
+            if node['B_ext'] is not None and node['B_ext'] > 0:
+                port_hubs.append({
+                    'hub_id': ('legacy_B_ext', node['node_id']),
+                    'label': node.get('label', str(node['node_id'])),
+                    'attachments': [
+                        (node['node_id'], float(np.sqrt(node['B_ext'])), 0.0)
+                    ],
+                    'monitored': True,
+                    'legacy_node_id': node['node_id'],
+                    'legacy_B_ext': node['B_ext'],
+                })
+
+        return port_hubs, loss_hubs
+
     def assign_all_nodes(
         self,
         freq: Optional[float] = None,
@@ -1571,9 +1906,12 @@ class GraphScatteringMatrix:
         self.num_modes = len(extractor.graph_data['nodes'])
         self.M = np.zeros((len(self.f_root_s), self.num_modes, self.num_modes), dtype=complex)
 
+        # K is built before M: the external anti-Hermitian part of M is
+        # computed FROM K_full ((i/2) K_full K_full^dagger), so M and S share
+        # a single source of truth for external dissipation.
         self._build_f_drivesignals()
-        self._build_M_matrix()
         self._build_K_matrix()
+        self._build_M_matrix()
         self._build_S_matrix()
         self._build_det_M()
 
@@ -1594,13 +1932,13 @@ class GraphScatteringMatrix:
         for idx, node in enumerate(self.extractor.graph_data['nodes']):
             node_id = node['node_id']
             f0 = node['freq']
-            if node['B_ext'] is None:
-                Btot = node['B_int']
-            else:
-                Btot = node['B_int'] + node['B_ext']
+            # External damping no longer enters here: it is added below as
+            # (i/2) K_full K_full^dagger, computed from the SAME K used in S
+            # (single source of truth). Only internal loss stays diagonal.
+            Btot = node['B_int']
             conj_state = node['conj']
             if self.verbose:
-                logger.debug("  Node %s: f0=%s, B_int=%s, B_ext=%s, Btot=%s", node_id, f0, node['B_int'], node['B_ext'], Btot)
+                logger.debug("  Node %s: f0=%s, B_int=%s", node_id, f0, node['B_int'])
 
             # drive_signals holds the (N,) array f_root_s + f_offset per node;
             # single-node case: node absent from drive_signals uses f_root_s directly
@@ -1645,51 +1983,128 @@ class GraphScatteringMatrix:
                         self.M[:, k, j] = -np.conj(beta)
                     else:
                         self.M[:, k, j] = beta
-                        self.M[:, j, k] = -np.conj(beta)   
+                        self.M[:, j, k] = -np.conj(beta)
+
+        # External anti-Hermitian part, computed FROM K_full so that the
+        # S-matrix identity S^dagger S = 1 - (M^-1 K)^dagger Gamma_int (M^-1 K)
+        # holds by construction. The Gram is frequency-independent (Phase 1),
+        # so precompute once and broadcast over the frequency axis. A hub with
+        # >= 2 attachments places dissipation OFF-diagonal (cross-damping);
+        # a legacy single-attachment port reduces to the historical
+        # (i/2) B_ext diagonal entry (up to the sqrt(B_ext)**2 round-trip,
+        # ~1 ulp).
+        if self.K_full.size:
+            gram = self.K_full @ self.K_full.conj().T
+            self.M += 0.5j * gram[None, :, :]
 
     def _build_K_matrix(self):
+        """Build the coupling matrices from the effective dissipation hubs.
+
+        Columns are dissipation channels, ports first then loss hubs; rows
+        are indexed by the graph node basis (same basis/ordering as M).
+        Column p of K_ports is port p's attachment vector kappa^(p) (entries
+        in sqrt(rate) units); a single-attachment legacy port reduces to the
+        historical one-nonzero column sqrt(B_ext).
+
+        Arrays are built complex for schema forward-compatibility (Phase-2
+        complex weights); Phase-1 weights are real, and `.K` is exposed with
+        the legacy float dtype whenever all port weights are real so existing
+        downstream code and tests are unaffected.
+        """
+        basis = self.extractor.graph_data['basis_order']
+        port_hubs, loss_hubs = self.extractor.get_effective_hubs()
+        self.port_hubs = port_hubs
+        self.loss_hubs = loss_hubs
+        self.num_ports = len(port_hubs)
+        self.num_loss_hubs = len(loss_hubs)
+
+        # Legacy contracts: port_dict maps port NODE id -> B_ext for the
+        # auto-wrapped legacy ports (exactly the pre-hub content); port_ids
+        # lists, per channel, the legacy node_id for auto-wrapped ports and
+        # the hub_id for explicit hubs. For legacy graphs both are identical
+        # to the pre-hub attributes (order pinned by
+        # test_port_index_ordering.py: basis walk order, not sorted ids).
         self.port_dict = {}
-
-        if self.verbose:
-            logger.debug("[_build_K_matrix] Building port dictionary:")
-        for node in self.extractor.graph_data['nodes']:
-            node_id = node['node_id']
-            if node['B_ext'] is not None and node['B_ext'] > 0:
-                self.port_dict[node_id] = node['B_ext']
-                if self.verbose:
-                    logger.debug("  Added port: node_id=%s, B_ext=%s", node_id, node['B_ext'])
-
-        self.num_ports = len(self.port_dict)
-
-        # Port node_ids in S-matrix row/column order. port_dict is filled by
-        # walking graph_data['nodes'], so this follows the basis order, which
-        # is not the same as ascending node_id once a basis reordering has
-        # moved nodes around. Anything mapping a port index back to a node
-        # must use this list, never sorted(port_dict).
-        self.port_ids = list(self.port_dict.keys())
-
-        if self.verbose:
-            logger.debug("[_build_K_matrix] Total ports: %d", self.num_ports)
-        self.K = np.zeros(shape=(self.num_modes, len(self.port_dict)), dtype=float)
-
-        if self.verbose:
-            logger.debug("[_build_K_matrix] K matrix entries:")
-        for node_id, B_ext in self.port_dict.items():
-            mode_idx = self.extractor.graph_data['basis_order'].index(node_id)
-            port_idx = self.port_ids.index(node_id)
-            self.K[mode_idx, port_idx] = np.sqrt(B_ext)
+        self.port_ids = []
+        self.port_labels = []
+        for hub in port_hubs:
+            if 'legacy_node_id' in hub:
+                self.port_dict[hub['legacy_node_id']] = hub['legacy_B_ext']
+                self.port_ids.append(hub['legacy_node_id'])
+            else:
+                self.port_ids.append(hub['hub_id'])
+            self.port_labels.append(hub['label'])
             if self.verbose:
-                logger.debug("  K[%d,%d] = sqrt(%s) = %s", mode_idx, port_idx, B_ext, np.sqrt(B_ext))
+                logger.debug("  Port channel %d: %s", len(self.port_ids) - 1, hub)
+
+        if self.verbose:
+            logger.debug("[_build_K_matrix] Total ports: %d, loss hubs: %d",
+                         self.num_ports, self.num_loss_hubs)
+
+        def build_columns(hubs):
+            cols = np.zeros(shape=(self.num_modes, len(hubs)), dtype=complex)
+            for col, hub in enumerate(hubs):
+                for node_id, mag, phase_deg in hub['attachments']:
+                    weight = _hub_signed_weight(hub['hub_id'], node_id, mag, phase_deg)
+                    cols[basis.index(node_id), col] += weight
+                    if self.verbose:
+                        logger.debug("  K[%d,%d] += %s", basis.index(node_id), col, weight)
+            return cols
+
+        K_ports = build_columns(port_hubs)
+        K_loss = build_columns(loss_hubs)
+        self.K_full = np.column_stack([K_ports, K_loss])
+
+        # Phase-1 weights are real; keep the legacy float dtype on .K (and
+        # .K_loss) so downstream consumers see the historical arrays.
+        if np.all(K_ports.imag == 0):
+            self.K = K_ports.real.copy()
+        else:
+            self.K = K_ports
+        if np.all(K_loss.imag == 0):
+            self.K_loss = K_loss.real.copy()
+        else:
+            self.K_loss = K_loss
 
     def _build_S_matrix(self):
         # Batched inverse over the (N, m, m) stack; matmul broadcasts K across
-        # the frequency axis, so the whole sweep is one vectorized expression
+        # the frequency axis, so the whole sweep is one vectorized expression.
+        # Contraction uses the conjugate transpose (identical to .T for the
+        # real Phase-1 K) and PORT columns only: loss-hub damping is inside M
+        # but exposes no channel.
         Minv = np.linalg.inv(self.M)
-        self.S = 1j * (self.K.T @ Minv @ self.K) - np.eye(self.num_ports)
+        self._Minv = Minv
+        self.S = 1j * (self.K.conj().T @ Minv @ self.K) - np.eye(self.num_ports)
         self.SdB = 20 * np.log10(np.abs(self.S))
 
         # Initialize empty trace list for plotting
         self._plot_traces = []
+
+    @property
+    def S_full(self):
+        """Dilated scattering matrix over ALL dissipation channels.
+
+        S_full = -1 + i K_full^dagger M^-1 K_full, shape
+        (num_freqs, n_chan, n_chan) with n_chan = num_ports + num_loss_hubs,
+        ports first then loss hubs. Exactly unitary when every B_int is zero
+        (all dissipation is then carried by channels) — a built-in self-test
+        even for lossy models. The leading num_ports x num_ports block equals
+        .S identically (same solve).
+        """
+        n_chan = self.K_full.shape[1]
+        return (1j * (self.K_full.conj().T @ self._Minv @ self.K_full)
+                - np.eye(n_chan))
+
+    @property
+    def absorption(self):
+        """Per-port-channel missing power, shape (num_freqs, num_ports).
+
+        Column k is 1 - sum_j |S_jk|^2: the power driven into port k that
+        does not return through any port. With B_int = 0 this equals the flux
+        into the loss-hub channels, sum_loss |S_full[loss, k]|^2 (the energy
+        audit); with B_int > 0 it additionally counts uniform internal loss.
+        """
+        return 1.0 - np.sum(np.abs(self.S) ** 2, axis=1)
 
     def _build_det_M(self):
         """Compute the determinant of M at each frequency point.
@@ -1776,7 +2191,15 @@ class GraphScatteringMatrix:
         return resolved
 
     def _get_port_label(self, port_id):
-        """Get node label for a port ID."""
+        """Get the display label for a port channel reference.
+
+        `port_id` is an entry of self.port_ids: the node_id for a legacy
+        auto-wrapped port (label = node label, as before hubs) or the hub_id
+        for an explicit hub (label = hub label).
+        """
+        for hub, ref in zip(self.port_hubs, self.port_ids):
+            if ref == port_id:
+                return hub['label']
         for node in self.extractor.graph_data['nodes']:
             if node['node_id'] == port_id:
                 return node.get('label', str(port_id))
