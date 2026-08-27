@@ -312,6 +312,7 @@ class ExplicitPortsMixin:
         self.line_id_counter = 0
         self.selected_ports = []
         self.selected_lines = []
+        self.selected_attachments = []     # [(port, attachment), ...]
         self._attach_pending_port = None   # port awaiting a node click (edge mode)
         self._place_loss_hub_next = False  # next port placement is a loss hub
         self._explicit_ports_notice = None  # keeps the non-modal notice alive
@@ -696,12 +697,10 @@ class ExplicitPortsMixin:
 
         line = self._find_line_at_position(event.xdata, event.ydata)
         if line is not None:
-            # Phase-1: the line's comb modes are internal to the macro
+            # Phase-1: the line's comb modes are internal to the macro —
+            # offer to explode it right here so the workflow continues
             self._attach_pending_port = None
-            self._status_message(
-                f"'{line['label']}' is a macro: its comb modes take edges "
-                "only after Insert \N{RIGHTWARDS ARROW} Explode Line to "
-                "Nodes (its port is set by 'port end').", 8000)
+            self._offer_explode_line(line)
             return True
 
         if self._attach_pending_port is not None:
@@ -774,16 +773,101 @@ class ExplicitPortsMixin:
             self._update_plot()
             return True
 
-        if is_double:
-            hit = self._find_attachment_at_position(event.xdata, event.ydata)
-            if hit is not None:
+        hit = self._find_attachment_at_position(event.xdata, event.ydata)
+        if hit is not None:
+            if is_double:
                 self._edit_attachment(*hit)
-                return True
+            elif shift_pressed:
+                if hit in self.selected_attachments:
+                    self.selected_attachments.remove(hit)
+                else:
+                    self.selected_attachments.append(hit)
+                self._update_plot()
+            else:
+                port, att = hit
+                self.selected_attachments = [hit]
+                self.selected_ports = []
+                self.selected_lines = []
+                self.selected_nodes.clear()
+                self.selected_edges.clear()
+                node = next((n for n in self.nodes
+                             if n['node_id'] == att['node_id']), None)
+                node_label = node['label'] if node else str(att['node_id'])
+                self._status_message(
+                    f"Selected attachment '{port['label']}' "
+                    f"\N{RIGHTWARDS ARROW} '{node_label}' — double-click to "
+                    "edit rate/sign, D to delete", 6000)
+                self._update_plot()
+            return True
 
-        if not shift_pressed and (self.selected_ports or self.selected_lines):
-            # clicking empty space clears port/line selection alongside nodes
+        if not shift_pressed and (self.selected_ports or self.selected_lines
+                                  or self.selected_attachments):
+            # clicking empty space clears glyph selection alongside nodes
             self.selected_ports = []
             self.selected_lines = []
+            self.selected_attachments = []
+        return False
+
+    def _maybe_show_glyph_context_menu(self, event):
+        """Right-click on a port/line/attachment: context menu (Edit /
+        Delete / line: Explode). Returns True when consumed."""
+        if not (self.ports or self.line_resonators):
+            return False
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtGui import QCursor
+
+        port = self._find_port_at_position(event.xdata, event.ydata)
+        if port is not None:
+            menu = QMenu(self)
+            menu.addAction("Edit\N{HORIZONTAL ELLIPSIS}",
+                           lambda: self._edit_port(port))
+            if port.get('angle_pinned') and port['attachments']:
+                def unpin():
+                    self._save_state()
+                    port['angle_pinned'] = False
+                    self._update_plot()
+                menu.addAction("Resume auto-orient", unpin)
+            def delete_port():
+                self._save_state()
+                self.remove_port(port)
+                self._update_plot()
+            menu.addAction("Delete", delete_port)
+            menu.exec(QCursor.pos())
+            return True
+
+        line = self._find_line_at_position(event.xdata, event.ydata)
+        if line is not None:
+            menu = QMenu(self)
+            menu.addAction("Edit\N{HORIZONTAL ELLIPSIS}",
+                           lambda: self._edit_line(line))
+            def explode():
+                self._save_state()
+                self.explode_line_resonator(line)
+                self._update_plot()
+            menu.addAction("Explode to Nodes (one-way)", explode)
+            def delete_line():
+                self._save_state()
+                self.remove_line_resonator(line)
+                self._update_plot()
+            menu.addAction("Delete", delete_line)
+            menu.exec(QCursor.pos())
+            return True
+
+        hit = self._find_attachment_at_position(event.xdata, event.ydata)
+        if hit is not None:
+            hit_port, att = hit
+            menu = QMenu(self)
+            menu.addAction("Edit rate/sign\N{HORIZONTAL ELLIPSIS}",
+                           lambda: self._edit_attachment(hit_port, att))
+            def delete_att():
+                self._save_state()
+                self.remove_port_attachment(hit_port, att['node_id'])
+                if hasattr(self, 'properties_panel'):
+                    self.properties_panel._update_scattering_ports_table()
+                self._update_plot()
+            menu.addAction("Delete attachment", delete_att)
+            menu.exec(QCursor.pos())
+            return True
         return False
 
     def _edit_port(self, port):
@@ -835,6 +919,38 @@ class ExplicitPortsMixin:
             self._invalidate_scattering_data()
             if hasattr(self, 'properties_panel'):
                 self.properties_panel._update_scattering_ports_table()
+            self._update_plot()
+
+    def _confirm_explode_line(self, line):
+        """Ask whether to explode a line macro (isolated for testability)."""
+        n_modes = 2 * LineResonator(**line_payload(line)).N + 1
+        reply = QMessageBox.question(
+            self, "Explode transmission line?",
+            f"'{line['label']}' is a macro: its {n_modes} comb modes are "
+            "internal, so edges cannot target them directly (its port "
+            "coupling is set by the 'port end' parameter).\n\n"
+            f"Explode '{line['label']}' into {n_modes} real nodes plus a "
+            "port glyph now, so you can wire edges to individual modes?\n"
+            "(One-way: the macro glyph is replaced by its modes.)",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        return reply == QMessageBox.Yes
+
+    def _offer_explode_line(self, line):
+        """Edge-tool click on a line: explain the Phase-1 rule and offer to
+        explode the macro so the user can keep working."""
+        self._status_message(
+            f"'{line['label']}' is a macro — its comb modes take edges only "
+            "after exploding it to nodes.", 8000)
+        if self._confirm_explode_line(line):
+            self._save_state()
+            self.explode_line_resonator(line)
+            if hasattr(self, 'properties_panel'):
+                self.properties_panel._update_scattering_ports_table()
+                if self.scattering_mode:
+                    self.properties_panel._update_scattering_node_table()
+            self._status_message(
+                f"Exploded '{line['label']}' — its modes are now real nodes; "
+                "connect edges to them with E.", 8000)
             self._update_plot()
 
     def _explode_selected_line(self):
@@ -931,12 +1047,25 @@ class ExplicitPortsMixin:
     def _rotate_selected_nodes(self, angle_degrees):
         """Rotate selection. With only port/line glyphs selected, rotate the
         glyphs' own orientation in place; otherwise defer to the node
-        behavior (rotation of node positions about the selection centroid)."""
+        behavior (rotation of node positions about the selection centroid).
+
+        Manually rotating an attached port pins its angle (turns off the
+        auto-orient toward its attachments), starting from the current
+        auto-orientation so the first step is a small visible nudge.
+        """
         if (self.selected_ports or self.selected_lines) \
                 and not self.selected_nodes:
             self._save_state()
-            for obj in self.selected_ports + self.selected_lines:
-                obj['angle'] = (obj.get('angle', 0.0) - angle_degrees) % 360.0
+            for port in self.selected_ports:
+                base = self._port_effective_angle(port)
+                if port['attachments'] and not port.get('angle_pinned'):
+                    self._status_message(
+                        f"'{port['label']}' rotation pinned (auto-orient "
+                        "toward attachments is off for it)", 5000)
+                port['angle_pinned'] = True
+                port['angle'] = (base - angle_degrees) % 360.0
+            for line in self.selected_lines:
+                line['angle'] = (line.get('angle', 0.0) - angle_degrees) % 360.0
             names = ', '.join(o['label'] for o in
                               self.selected_ports + self.selected_lines)
             print(f"Rotated {names} by {-angle_degrees:+g}\N{DEGREE SIGN}")
@@ -945,8 +1074,15 @@ class ExplicitPortsMixin:
         super()._rotate_selected_nodes(angle_degrees)
 
     def _delete_selected_ports_lines(self):
-        """Remove selected port/line glyphs. Returns how many were removed."""
+        """Remove selected port/line glyphs and attachment links.
+
+        Returns how many objects were removed."""
         count = 0
+        for port, att in list(self.selected_attachments):
+            if att in port['attachments']:
+                self.remove_port_attachment(port, att['node_id'])
+                count += 1
+        self.selected_attachments = []
         for port in list(self.selected_ports):
             self.remove_port(port)
             count += 1
@@ -971,10 +1107,37 @@ class ExplicitPortsMixin:
         lead_tip_x = apex_x + PORT_LEAD_LEN * r
         return x, y, w, h, apex_x, lead_tip_x
 
+    def _port_effective_angle(self, port):
+        """Drawing/hit-test angle of a port glyph.
+
+        A port with attachments auto-orients its apex toward the mean
+        direction of its attached nodes, so the lead always points at what
+        it terminates. Manual rotation (Ctrl+U/Ctrl+I) pins the angle
+        ('angle_pinned'); unattached or pinned ports use the stored angle.
+        """
+        if port.get('angle_pinned') or not port['attachments']:
+            return port.get('angle', 0.0)
+        px, py = port['pos']
+        node_pos = {n['node_id']: n['pos'] for n in self.nodes}
+        vx = vy = 0.0
+        for att in port['attachments']:
+            pos = node_pos.get(att['node_id'])
+            if pos is None:
+                continue
+            dx, dy = pos[0] - px, pos[1] - py
+            norm = np.hypot(dx, dy)
+            if norm > 1e-12:
+                vx += dx / norm
+                vy += dy / norm
+        if abs(vx) < 1e-12 and abs(vy) < 1e-12:
+            return port.get('angle', 0.0)
+        return float(np.degrees(np.arctan2(vy, vx)))
+
     def _port_lead_tip(self, port):
         """Rotated position of the lead tip (attachment links start here)."""
         x, y, _, _, _, lead_tip_x = self._port_geometry(port)
-        return _rotate_point(lead_tip_x, y, x, y, port.get('angle', 0.0))
+        return _rotate_point(lead_tip_x, y, x, y,
+                             self._port_effective_angle(port))
 
     def _find_port_at_position(self, x, y):
         if x is None or y is None:
@@ -982,7 +1145,8 @@ class ExplicitPortsMixin:
         for port in reversed(self.ports):
             px, py, w, h, apex_x, _ = self._port_geometry(port)
             # undo the glyph rotation, then test the axis-aligned shape
-            ux, uy = _rotate_point(x, y, px, py, -port.get('angle', 0.0))
+            ux, uy = _rotate_point(x, y, px, py,
+                                   -self._port_effective_angle(port))
             if (px - w / 2 <= ux <= apex_x) and (py - h / 2 <= uy <= py + h / 2):
                 return port
         return None
@@ -1026,6 +1190,54 @@ class ExplicitPortsMixin:
 
     # ---- drawing ----
 
+    def _glyph_points_per_data_unit(self, ax):
+        """Same zoom-scaling factor _draw_nodes uses for label sizes."""
+        fig = ax.figure
+        xlim, ylim = ax.get_xlim(), ax.get_ylim()
+        ppdu_x = fig.get_figwidth() * 72 / (xlim[1] - xlim[0])
+        ppdu_y = fig.get_figheight() * 72 / (ylim[1] - ylim[0])
+        return min(ppdu_x, ppdu_y)
+
+    def _draw_glyph_label(self, ax, text, x, y, font_size_points,
+                          points_per_data_unit, color='black'):
+        """Draw a glyph label in the SAME style as node labels: bold
+        sans-serif mathtext (or sfmath in LaTeX mode) with _/^ handling,
+        via the cached vector renderer so it scales with zoom."""
+        if not text or not text.strip():
+            return
+        import re as _re
+        if self.use_latex:
+            def apply_font(t):
+                return r'\mathbf{' + t + '}'
+        else:
+            def apply_font(t):
+                return r'\mathbf{\mathsf{' + t + '}}'
+        parts = _re.split(r'([_^])', text)
+        formatted = []
+        i = 0
+        while i < len(parts):
+            if parts[i] in ('_', '^'):
+                formatted.append(parts[i])
+                i += 1
+                if i < len(parts):
+                    content = parts[i]
+                    if content.startswith('{') and content.endswith('}'):
+                        formatted.append('{' + apply_font(content[1:-1]) + '}')
+                    else:
+                        formatted.append(apply_font(content))
+                    i += 1
+            elif parts[i]:
+                formatted.append(apply_font(parts[i]))
+                i += 1
+            else:
+                i += 1
+        self._label_cache.draw(
+            ax, rf"${''.join(formatted)}$", x, y,
+            fontsize_points=font_size_points,
+            points_per_data_unit=points_per_data_unit,
+            color=color, ha='center', va='center',
+            usetex=self.use_latex, zorder=12)
+
     def _draw_ports_and_lines(self, ax=None):
         """Draw port/loss-hub/line glyphs and attachment links."""
         if not (self.ports or self.line_resonators):
@@ -1033,14 +1245,16 @@ class ExplicitPortsMixin:
         ax = ax or self.canvas.ax
         r = self.node_radius
         node_pos = {n['node_id']: n['pos'] for n in self.nodes}
+        ppdu = self._glyph_points_per_data_unit(ax)
+        config = self.APP_CONFIG
+        label_font_scale = getattr(config, 'PLOT_NODE_LABEL_FONT_SCALE', 0.35)
 
         for port in self.ports:
             x, y, w, h, apex_x, lead_tip_x = self._port_geometry(port)
-            angle = port.get('angle', 0.0)
+            angle = self._port_effective_angle(port)
             selected = port in self.selected_ports
             pending = port is self._attach_pending_port
-            edge_color = ('darkorange' if selected
-                          else 'dodgerblue' if pending else 'black')
+            edge_color = 'dodgerblue' if pending else 'black'
 
             def rot(px, py):
                 return _rotate_point(px, py, x, y, angle)
@@ -1053,6 +1267,13 @@ class ExplicitPortsMixin:
                 rot(x + w / 2, y + h / 2),
                 rot(x - w / 2, y + h / 2),
             ]
+            # selection indicator: salmon halo behind the glyph, matching
+            # the node/edge selection language
+            if selected:
+                halo = mpatches.Polygon(
+                    verts, closed=True, fill=False, edgecolor='salmon',
+                    linewidth=6.0, zorder=10.5)
+                ax.add_patch(halo)
             body = mpatches.Polygon(
                 verts, closed=True,
                 facecolor='white' if port['monitored'] else '#e8e8e8',
@@ -1067,27 +1288,39 @@ class ExplicitPortsMixin:
                 [ax0, ax1], [ay0, ay1], color=edge_color,
                 linewidth=4.0, solid_capstyle='butt', zorder=11))
 
-            # attachment links: thin dashed, visually distinct from edges
+            # attachment links: thin dashed, visually distinct from edges;
+            # a selected link draws with a salmon underlay + midpoint dot
+            # (the same indicator edges use)
             tip_x, tip_y = ax1, ay1
             for att in port['attachments']:
                 pos = node_pos.get(att['node_id'])
                 if pos is None:
                     continue
+                att_selected = (port, att) in self.selected_attachments
                 link_color = 'gray' if att['sign'] >= 0 else 'firebrick'
+                if att_selected:
+                    ax.add_line(mlines.Line2D(
+                        [tip_x, pos[0]], [tip_y, pos[1]], color='salmon',
+                        linewidth=4.0, zorder=3.5, alpha=0.9))
                 ax.add_line(mlines.Line2D(
                     [tip_x, pos[0]], [tip_y, pos[1]], color=link_color,
                     linewidth=1.2, linestyle=(0, (4, 3)), zorder=4,
                     alpha=0.9))
+                mx, my = (tip_x + pos[0]) / 2, (tip_y + pos[1]) / 2
+                if att_selected:
+                    ax.add_patch(mpatches.Circle(
+                        (mx, my), 0.3, facecolor='lightcoral',
+                        edgecolor='red', linewidth=2, zorder=20))
                 if att['sign'] < 0:
                     # mark inverted-sign links near the midpoint
-                    mx, my = (tip_x + pos[0]) / 2, (tip_y + pos[1]) / 2
                     ax.text(mx, my, '\N{MINUS SIGN}', color='firebrick',
                             fontsize=9, ha='center', va='center', zorder=5)
 
-            lx0, ly0 = rot(x - w / 2 - 0.2 * r, y)
-            ax.text(lx0, ly0, port['label'],
-                    ha='right', va='center', fontsize=10,
-                    fontweight='bold', color=edge_color, zorder=12)
+            # label INSIDE the glyph body, node-style bold sans-serif,
+            # shifted slightly away from the apex
+            cx, cy = rot(x - 0.15 * w, y)
+            font_pts = h * ppdu * label_font_scale * 1.6
+            self._draw_glyph_label(ax, port['label'], cx, cy, font_pts, ppdu)
 
         for line in self.line_resonators:
             lx, ly = line['pos']
@@ -1095,12 +1328,22 @@ class ExplicitPortsMixin:
             h = LINE_BODY_H * r
             angle = line.get('angle', 0.0)
             selected = line in self.selected_lines
-            edge_color = 'darkorange' if selected else 'black'
+            edge_color = 'black'
 
             # glyph rotation: draw axis-aligned, then rotate every artist
             # about the glyph center
             glyph_tf = (mtransforms.Affine2D().rotate_deg_around(lx, ly, angle)
                         + ax.transData)
+
+            # selection indicator: salmon halo around the cylinder, matching
+            # the node/edge selection language
+            if selected:
+                halo = mpatches.Rectangle(
+                    (lx - w - LINE_LEAD_LEN * r, ly - 1.4 * h),
+                    2 * (w + LINE_LEAD_LEN * r), 2.8 * h, fill=False,
+                    edgecolor='salmon', linewidth=5.0, zorder=9.5,
+                    transform=glyph_tf)
+                ax.add_patch(halo)
 
             # cylinder: body rectangle + right elliptical end-cap + left arc
             body = mpatches.Rectangle(
@@ -1130,14 +1373,14 @@ class ExplicitPortsMixin:
                                           color=edge_color, linewidth=1.5,
                                           zorder=11, transform=glyph_tf))
 
+            # label INSIDE the cylinder body, node-style bold sans-serif
+            font_pts = h * ppdu * label_font_scale * 2.2
+            self._draw_glyph_label(ax, line['label'], lx, ly, font_pts, ppdu)
+
             n_pairs = LineResonator(**line_payload(line)).N
             sub = f"FSR={line['FSR']:g}, N={n_pairs}"
             if line.get('port_end'):
                 sub += f", port@{line['port_end']}"
-            tx, ty = _rotate_point(lx, ly + h + 0.35 * r, lx, ly, angle)
-            ax.text(tx, ty, line['label'], ha='center',
-                    va='bottom', fontsize=10, fontweight='bold',
-                    color=edge_color, zorder=12)
             sx, sy = _rotate_point(lx, ly - h - 0.35 * r, lx, ly, angle)
             ax.text(sx, sy, sub, ha='center', va='top',
                     fontsize=7, color='dimgray', zorder=12)
@@ -1153,6 +1396,7 @@ class ExplicitPortsMixin:
                     'label': p['label'],
                     'pos': list(p['pos']),
                     'angle': p.get('angle', 0.0),
+                    'angle_pinned': bool(p.get('angle_pinned', False)),
                     'monitored': p['monitored'],
                     'attachments': [
                         {'node_id': a['node_id'], 'rate': a['rate'],
@@ -1190,6 +1434,7 @@ class ExplicitPortsMixin:
         self.line_resonators = []
         self.selected_ports = []
         self.selected_lines = []
+        self.selected_attachments = []
         self._attach_pending_port = None
 
         known_node_ids = {n['node_id'] for n in self.nodes}
@@ -1210,6 +1455,7 @@ class ExplicitPortsMixin:
                 'label': pdata.get('label', f"P{pdata['port_id']}"),
                 'pos': tuple(pdata.get('pos', (0.0, 0.0))),
                 'angle': float(pdata.get('angle', 0.0)),
+                'angle_pinned': bool(pdata.get('angle_pinned', False)),
                 'monitored': bool(pdata.get('monitored', True)),
                 'attachments': attachments,
             }

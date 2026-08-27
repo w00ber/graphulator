@@ -341,14 +341,33 @@ def test_edge_tool_attachment_node_first(para):
     assert [a['node_id'] for a in port['attachments']] == [0]
 
 
-def test_edge_tool_on_line_is_explained_not_silent(para):
+def test_edge_tool_on_line_offers_explode_declined(para):
     gp, win, config = para
     port, line = build_unattached_scene(win, config)
+    win._confirm_explode_line = lambda l: False            # user says No
     win._toggle_edge_mode()
     consumed = win._maybe_handle_attachment_click(
         canvas_event(win, 0.0, -4.0))                      # click the line
     assert consumed is True
     assert port['attachments'] == []                       # nothing created
+    assert line in win.line_resonators                     # macro kept
+
+
+def test_edge_tool_on_line_offers_explode_accepted(para):
+    """Saying Yes explodes the macro into nodes + a port, ready for edges."""
+    gp, win, config = para
+    _, line = build_unattached_scene(win, config)
+    win._confirm_explode_line = lambda l: True             # user says Yes
+    win._toggle_edge_mode()
+    n_before = len(win.nodes)
+    win._maybe_handle_attachment_click(canvas_event(win, 0.0, -4.0))
+    assert line not in win.line_resonators
+    n_modes = 2 * 4 + 1                                    # N = ceil(6/1.5)
+    assert len(win.nodes) == n_before + n_modes
+    # the comb's port glyph exists and is attached to every mode
+    comb_port = win.ports[-1]
+    assert comb_port['label'] == 'TL1'
+    assert len(comb_port['attachments']) == n_modes
 
 
 def test_drag_moves_port_with_snap(para):
@@ -411,3 +430,99 @@ def test_glyph_angle_round_trips(para):
     tip_x, tip_y = win._port_lead_tip(win.ports[0])
     assert tip_x < win.ports[0]['pos'][0]
     assert tip_y == pytest.approx(win.ports[0]['pos'][1])
+
+
+# ---------------------------------------------------------------------------
+# Auto-orientation, attachment selection/deletion, rubber-band parity
+# ---------------------------------------------------------------------------
+
+
+def build_vertical_pair_scene(win, config):
+    """Nodes above and below the port's left side (auto-orient exercises)."""
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    node_a = add_node(win, 0, 'A', 0.0, freq=5.0)
+    node_a['pos'] = (0.0, 2.0)
+    node_b = add_node(win, 1, 'B', 0.0, freq=6.0)
+    node_b['pos'] = (0.0, -2.0)
+    port = win.add_port(label='P1', pos=(4.0, 0.0))
+    return port
+
+
+def test_port_auto_orients_toward_attachments(para):
+    gp, win, config = para
+    port = build_vertical_pair_scene(win, config)
+
+    # unattached: keeps the stored angle
+    assert win._port_effective_angle(port) == 0.0
+
+    # one attachment: apex points straight at the node
+    win.add_port_attachment(port, 0, rate=0.2)
+    expected = np.degrees(np.arctan2(2.0, -4.0))           # toward (0, 2)
+    assert win._port_effective_angle(port) == pytest.approx(expected)
+
+    # two symmetric attachments: mean direction (straight left)
+    win.add_port_attachment(port, 1, rate=0.2)
+    assert win._port_effective_angle(port) == pytest.approx(180.0)
+
+    # hit-testing follows the auto-orientation: glyph now extends LEFT
+    assert win._find_port_at_position(3.2, 0.0) is port
+    # ... and the attachment links leave from the rotated lead tip
+    tip_x, tip_y = win._port_lead_tip(port)
+    assert tip_x < 4.0 and tip_y == pytest.approx(0.0)
+
+
+def test_manual_rotation_pins_and_survives_save(para):
+    gp, win, config = para
+    port = build_vertical_pair_scene(win, config)
+    win.add_port_attachment(port, 0, rate=0.2)
+    auto = win._port_effective_angle(port)
+
+    win.selected_ports = [port]
+    win._rotate_selected_nodes(-15)                        # Ctrl+I step
+    assert port['angle_pinned'] is True
+    assert win._port_effective_angle(port) == pytest.approx((auto + 15) % 360)
+
+    data = json.loads(json.dumps(win._serialize_graph()))
+    win._deserialize_graph(data)
+    assert win.ports[0]['angle_pinned'] is True
+
+    # unpinning resumes auto-orient
+    win.ports[0]['angle_pinned'] = False
+    assert win._port_effective_angle(win.ports[0]) == pytest.approx(auto)
+
+
+def test_attachment_link_select_delete_undo(para):
+    gp, win, config = para
+    port = build_vertical_pair_scene(win, config)
+    win.add_port_attachment(port, 0, rate=0.2)
+    win.add_port_attachment(port, 1, rate=0.2)
+
+    tip = win._port_lead_tip(port)
+    mid = ((tip[0] + 0.0) / 2, (tip[1] + 2.0) / 2)        # link to node A
+    consumed = win._maybe_handle_ports_normal_click(
+        canvas_event(win, *mid), False, False)
+    assert consumed is True
+    assert len(win.selected_attachments) == 1
+
+    win._delete_selected_nodes()                           # D key handler
+    assert [a['node_id'] for a in port['attachments']] == [1]
+    assert win.selected_attachments == []
+
+    win._undo()
+    assert len(win.ports[0]['attachments']) == 2
+
+
+def test_rubber_band_selects_glyphs(para):
+    gp, win, config = para
+    port = build_vertical_pair_scene(win, config)
+    line = win.add_line_resonator(label='TL1', pos=(6.0, -6.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0)
+    win.selection_window = True
+    win.selection_window_start = (2.0, -8.0)
+    win._on_release_selection_window(canvas_event(win, 8.0, 2.0))
+    assert port in win.selected_ports
+    assert line in win.selected_lines
+
+    win._delete_selected_nodes()
+    assert win.ports == [] and win.line_resonators == []

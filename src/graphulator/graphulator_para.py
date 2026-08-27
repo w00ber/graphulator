@@ -9161,12 +9161,14 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             self._place_loss_hub_next = False
             self._update_plot()
         elif (self.selected_nodes or self.selected_edges
-              or self.selected_ports or self.selected_lines):
+              or self.selected_ports or self.selected_lines
+              or self.selected_attachments):
             print(f"Cleared selection of {len(self.selected_nodes)} node(s) and {len(self.selected_edges)} edge(s)")
             self.selected_nodes.clear()
             self.selected_edges.clear()
             self.selected_ports.clear()
             self.selected_lines.clear()
+            self.selected_attachments.clear()
             self._update_plot()
 
     def _get_selected_injection_node_id(self):
@@ -13779,10 +13781,14 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             self._on_left_click(event)
 
     def _on_right_click(self, event):
-        """Handle right-click: context menu on node/edge, or start zoom window."""
+        """Handle right-click: context menu on node/edge/glyph, or start zoom window."""
         clicked_node = self._find_node_at_position(event.xdata, event.ydata)
         if clicked_node:
             self._show_color_context_menu(event, clicked_node)
+            return
+
+        # Port/line glyphs and attachment links get their own context menu
+        if self._maybe_show_glyph_context_menu(event):
             return
 
         clicked_edge = self._find_edge_at_position(event.xdata, event.ydata)
@@ -14474,11 +14480,25 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     if edge not in self.selected_edges:
                         self.selected_edges.append(edge)
 
+            # Port/line glyphs participate in rubber-band selection like nodes
+            for port in self.ports:
+                px, py = port['pos']
+                if x0 <= px <= x1 and y0 <= py <= y1:
+                    if port not in self.selected_ports:
+                        self.selected_ports.append(port)
+            for line in self.line_resonators:
+                lx, ly = line['pos']
+                if x0 <= lx <= x1 and y0 <= ly <= y1:
+                    if line not in self.selected_lines:
+                        self.selected_lines.append(line)
+
             msg = []
             if self.selected_nodes:
                 msg.append(f"{len(self.selected_nodes)} node(s)")
             if self.selected_edges:
                 msg.append(f"{len(self.selected_edges)} edge(s)")
+            if self.selected_ports or self.selected_lines:
+                msg.append(f"{len(self.selected_ports) + len(self.selected_lines)} port/line glyph(s)")
             if msg:
                 print(f"Selected {' and '.join(msg)}")
 
@@ -14991,6 +15011,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         self.selected_edges.clear()
         self.selected_ports.clear()
         self.selected_lines.clear()
+        self.selected_attachments.clear()
 
         # Invalidate Kron reduction and scattering data since graph was restored
         self._invalidate_kron_reduction()
@@ -15613,9 +15634,10 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         self._update_plot()
 
     def _delete_selected_nodes(self):
-        """Delete selected nodes, edges, and port/line glyphs"""
+        """Delete selected nodes, edges, and port/line glyphs/attachments"""
         if (not self.selected_nodes and not self.selected_edges
-                and not self.selected_ports and not self.selected_lines):
+                and not self.selected_ports and not self.selected_lines
+                and not self.selected_attachments):
             print("No nodes or edges selected to delete")
             return
 
