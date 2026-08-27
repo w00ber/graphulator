@@ -33,6 +33,11 @@ class PlacementMode(Enum):
     CONJUGATION = auto()
     EDGE = auto()
     EDGE_CONTINUOUS = auto()
+    # Explicit-ports feature (paragraphulator): port/loss-hub and
+    # transmission-line glyph placement
+    PORT = auto()
+    PORT_CONTINUOUS = auto()
+    LINE = auto()
 
     @classmethod
     def from_string(cls, s):
@@ -49,6 +54,9 @@ class PlacementMode(Enum):
             'conjugation': cls.CONJUGATION,
             'edge': cls.EDGE,
             'edge_continuous': cls.EDGE_CONTINUOUS,
+            'port': cls.PORT,
+            'port_continuous': cls.PORT_CONTINUOUS,
+            'line': cls.LINE,
         }
         return mapping.get(s, cls.NONE)
 

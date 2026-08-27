@@ -425,6 +425,9 @@ class SettingsDialog(SettingsDialogBase):
         self._sync_dialog_defaults_from_config()
         # Reset last_node_props so continuous duplicate mode uses new defaults
         self.graphulator._reset_last_node_props_to_defaults()
+        # Reconfigure the GUI surface for the Explicit Ports toggle
+        if hasattr(self.graphulator, '_apply_explicit_ports_mode'):
+            self.graphulator._apply_explicit_ports_mode()
 
     def _extra_cancel_restore(self, original_values):
         if 'MYCOLORS' in original_values:

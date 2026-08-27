@@ -445,3 +445,12 @@ PGRAPH_FORMAT_NAME = "pgraph"
 
 # Precision for saving numeric values
 SAVE_NUMERIC_PRECISION = 9  # decimal places for rounding
+
+# =============================================================================
+# EXPLICIT PORTS & TRANSMISSION LINES (hub-based dissipation GUI surface)
+# =============================================================================
+# When False the app looks and behaves exactly as before (legacy per-node
+# B_ext self-loops). The switch gates the GUI surface only — the underlying
+# numerics are hub-based either way. Opening a .pgraph containing ports or
+# lines auto-enables this for the session.
+EXPLICIT_PORTS_MODE = False
