@@ -9,3 +9,17 @@
 
 ## FEATURES: GRAPHULATOR (not PARAGRAPHULATOR)
 - [ ] Add a zoom box interaction, triggered by the Z key, with Esc to get out of zoom box mode. See Diagrammer for an example of this
+
+## OPEN DECISIONS: EXPLICIT PORTS (PARAGRAPHULATOR)
+- [ ] Loss-hub glyph: currently a hatched variant of the port pentagon
+  (placeholder). The final dissipative-hub glyph is an open schema decision —
+  "H" is reserved for the reactive hub in the proposed vocabulary — decide
+  whether the dissipative hub gets its own glyph or a decorated H/P.
+- [ ] Phase 2 (blocked on derivations, see autograph.py module comments):
+  complex/mixed-sector hub weights (M_pumped + harmonic balance),
+  band-limited comb expansion (low-side closure), two-port line macro
+  (verified ABCD two-port reference), frequency-dependent hub weights /
+  connector embedding (free-Y_L-pole convention).
+- [ ] GUI conveniences deferred from Phase 1: dragging port/line glyphs
+  (reposition currently = delete & re-place), ghost placement previews for
+  ports/lines, port glyphs in clipboard copy/paste.

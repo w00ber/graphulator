@@ -87,6 +87,51 @@ It's important to note that, despite the author's affiliation with NIST, this pr
   - Real-time updates as parameters change
 - **Fine control on all spinboxes**: `Shift` for 1/10 step, `Alt` for 10x step
 
+### Explicit Ports, Loss Hubs & Transmission Lines (hub-based dissipation)
+
+Enable **Explicit Ports & Lines** in Settings → Interface to work with shared
+ports and transmission-line mode combs. With the switch off, everything looks
+and behaves exactly as before (per-node `B_ext` self-loops); opening a file
+that contains ports or lines switches it on automatically for the session.
+
+The underlying model is a single dissipation species, the **dissipation hub**:
+one physical absorber attached to one or many modes with signed coupling
+amplitudes. A *monitored* hub is a **port** — its damping `(i/2)κκ†` enters
+the equation-of-motion matrix M *and* it contributes a scattering channel — 
+while an *unmonitored* **loss hub** damps without a channel (energy exits
+unobserved). Because M's external anti-Hermitian part is computed from the
+same K that builds S, the input–output identity
+`S†S = 𝟙 − (M⁻¹K)† Γ_int (M⁻¹K)` holds by construction: lossless graphs are
+unitary and passive graphs never show spurious gain, even when a shared port
+makes the external damping non-diagonal (cross-damping). Legacy per-node
+`B_ext` auto-wraps into single-attachment ports, reproducing the historical
+results to machine precision (pinned by a golden-file regression suite).
+
+- **Port tool** (`P` single, `Shift+P` continuous): the pentagon glyph with a
+  lead; attach it to nodes with the edge tool (`E`) — click the port, then a
+  node. Attachment links draw as thin dashed lines; per-link coupling rate
+  and sign live in the **Ports & Lines** panel (below the Nodes panel) or the
+  per-link editor (double-click a link).
+- **Loss hub** (Insert menu): hatched port variant, same attachments, no
+  scattering channel. Enables a per-channel energy audit
+  (`GraphScatteringMatrix.absorption`, `.S_full`).
+- **Transmission line** (`L`): the cylinder glyph represents an open–open
+  standing-wave mode comb, parameterized by just `FSR`, `Ztx`, `f_max`, the
+  port end (`x0`/`xL`), `Z0`, and a uniform loss `α`. At extraction it
+  expands into `N = ceil(f_max/FSR)` mode pairs plus DC with signed port
+  couplings `κ_n = (±1)ⁿ √γ`, `γ/FSR = (2/π)(Ztx/Z0)` — validated against an
+  exact ABCD microwave reference (see `examples/demo_line_jpa_port.py`).
+  Cross-damping between comb modes matters whenever γ is comparable to the
+  FSR. *Explode to Nodes* (Insert menu, one-way) materializes the comb for
+  manual pump wiring.
+
+**Phase-2 boundary** (deliberately not implemented, blocked on derivations):
+complex/mixed-sector hub weights (Manley–Rowe pumped scattering through
+hubs — awaits the `M_pumped` two-sector derivation; attachment phases are
+restricted to 0°/180°), band-limited comb expansion (low-side closure
+underived), two-port lines (no verified ABCD two-port reference yet), and
+frequency-dependent hub weights / connector embedding.
+
 ### Markdown Notes
 
 - **Built-in notes editor** with live preview, saved with the graph file

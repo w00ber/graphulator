@@ -1,6 +1,41 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- **Explicit Ports & Lines (hub-based dissipation)**, gated by a new
+  Settings → Interface switch (off = the app behaves exactly as before;
+  files containing ports/lines auto-enable it for the session).
+  - `DissipationHub` model in `autograph`: monitored hubs are ports (shared
+    between modes; a rank-one damper `(i/2)κκ†` in M *and* a channel of S),
+    unmonitored hubs are loss channels. M's external anti-Hermitian part is
+    now computed from the same K used in S (single source of truth), so
+    lossless unitarity/passivity hold by construction; legacy per-node
+    `B_ext` auto-wraps to single-attachment ports, reproducing the previous
+    numerics to machine precision (golden-file regression suite pins this).
+    New API: `assign_hub`, `extract_graph_data(..., hubs=, line_resonators=)`,
+    `.K_loss`, `.K_full`, `.S_full` (dilated, unitary at `B_int=0`),
+    `.absorption` (per-channel energy audit), `.port_labels`.
+  - `LineResonator` macro: an open–open transmission-line standing-wave comb
+    parameterized by `{FSR, Ztx, f_max, port_end, Z0_port, alpha_uniform}`,
+    expanded at extraction into the full comb from DC with signed couplings
+    `κ_n = (±1)ⁿ√γ`, `γ/FSR = (2/π)(Ztx/Z0)`; expansion pinned bitwise to
+    the `cmtline_core` reference and validated against exact ABCD microwave
+    calculations (monotone ~1/N convergence, residual attributed to the
+    truncated comb tail). Uniform loss maps to per-mode
+    `B_int = (2/π)·α·FSR`, verified against a lossy-ABCD reference.
+  - Paragraphulator GUI: port glyph (`P`/`Shift+P`; pentagon + lead), loss
+    hub (hatched placeholder glyph, Insert menu), transmission-line cylinder
+    glyph (`L`), dashed attachment links created with the edge tool, a third
+    **Ports & Lines** parameter panel (per-attachment rates + signs; legacy
+    `B_ext` shown there as auto-ports while its Nodes-table column hides),
+    `.pgraph` format 3.0 with loader migration, hub/macro-aware exported
+    scripts, and a one-way *Explode Line to Nodes* action.
+  - Phase-2 items are explicitly blocked pending derivations (complex /
+    mixed-sector hub weights, band-limited combs, two-port lines,
+    frequency-dependent weights); attachments enforce real signed weights
+    and single-sector spans with errors naming the missing `M_pumped`
+    derivation.
+
 ### Fixed
 - Scattering: S-matrix port labels were wrong for graphs whose ports are not in
   ascending node-id order. The K columns are built by walking the nodes in
