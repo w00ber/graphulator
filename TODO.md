@@ -20,18 +20,20 @@
   band-limited comb expansion (low-side closure), two-port line macro
   (verified ABCD two-port reference), frequency-dependent hub weights /
   connector embedding (free-Y_L-pole convention).
-- [ ] **Reactive hub** (conservative fan-out): coupling an ordinary mode
-  directly to a transmission-line END, so one drawn edge stands for the
-  conservative couplings to all 2N+1 comb modes (the counterpart of the
-  dissipative hub the port already provides). Measured against
-  `cmtline_core.build_capacitive` (fixed Cc, N=12, n=1..8): the per-mode
-  coupling is NOT flat — it follows g_n ~ u_n(x)*sqrt(w_n/C_n), i.e. ~ n for
-  the comb's constant C_n, constant to 4 digits across the range, with the
-  DC mode decoupled (w_0 = 0). Because the profile depends on HOW the device
-  couples (capacitive vs inductive/galvanic give opposite n-trends — cf.
-  `build_capacitive` vs `build_galvanic`), the connection needs an explicit
-  coupling-type input, and the normalization convention (what the user's
-  single `rate` means across the comb) must be pinned before it ships.
+- [x] **Node taps** (the conservative "reactive hub" fan-out) SHIPPED:
+  one drawn line-end→node connection stands for the conservative couplings
+  to every comb mode. Profile pinned exactly against the reference's
+  a-basis transform (`cmtline_core.a_basis_A` over the tapped Cm/Km
+  circuits, constant ratios to machine precision, n = 1..10): capacitive
+  g_n ∝ u_n(end)·√(ω_n/C_n) (∝ √n for the comb), inductive
+  g_n ∝ u_n(end)/√(ω_n·C_n) (∝ 1/√n); DC decoupled/excluded. The
+  coupling type is a per-END property (set in the line dialog); the
+  normalization is harmonic-referenced — the user's rate is the coupling
+  AT a chosen reference harmonic n_ref (nearest harmonic highlighted when
+  tapping; editable in the Ports & Lines panel). See
+  `LineResonator.tap_couplings` and tests/test_line_taps.py.
+  - Remaining niceties: a *galvanic* tap type (cf. `build_galvanic`) is
+    not offered yet; only capacitive/inductive are derived and exposed.
 - [x] Dragging + rotation of port/line glyphs (drag to move with grid
   snap; Ctrl+U/Ctrl+I rotate the selected glyph's orientation in 15-degree
   steps; angle persists in .pgraph).

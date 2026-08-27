@@ -27,12 +27,29 @@
     hub (hatched placeholder glyph, Insert menu), transmission-line cylinder
     glyph (`L`) connected by its **end leads** to explicit port glyphs (the
     comb never leaves the macro and a line is never implicitly terminated;
-    terminating both ends is refused pending a verified ABCD two-port
+    loading both ends is refused pending a verified ABCD two-port
     reference), dashed attachment links created with the edge tool, a third
     **Ports & Lines** parameter panel (per-attachment rates + signs; legacy
     `B_ext` shown there as auto-ports while its Nodes-table column hides),
     `.pgraph` format 3.0 with loader migration, hub/macro-aware exported
     scripts, and a one-way *Explode Line to Nodes* action.
+  - **Node taps onto line ends**: one drawn connection (edge tool, line end
+    → node) couples a graph mode conservatively to every comb mode at once.
+    The per-mode profile is pinned against the reference circuit model
+    (a-basis extraction): capacitive taps couple as `g_n ∝ u_n(end)·√n`,
+    inductive as `g_n ∝ u_n(end)/√n`; the coupling type is a property of
+    the line *end* (set in the line dialog), shared by everything tapped
+    there. The entered rate is defined at a user-chosen **reference
+    harmonic** `n_ref` (the tap dialog highlights the harmonic nearest the
+    mode's frequency; rate/sign/`n_ref` stay editable in the Ports & Lines
+    panel, and the canvas tap link carries an `n=…` chip). Several loads
+    may share one physical line end (e.g. a stub read out by two ports —
+    verified against the ABCD reference), and a standalone terminated line
+    is a complete scattering problem by itself. Exported scripts reproduce
+    the live model in both templates: taps emit as pre-expanded static
+    edges, and multi-component graphs now export one literal block per
+    component (mirroring the live per-component jobs, including comb-mode
+    hub attachments), replacing the runtime component filter.
   - Phase-2 items are explicitly blocked pending derivations (complex /
     mixed-sector hub weights, band-limited combs, two-port lines,
     frequency-dependent weights); attachments enforce real signed weights

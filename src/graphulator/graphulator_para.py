@@ -4115,9 +4115,94 @@ class PropertiesPanel(QWidget):
             self.ports_param_layout.addWidget(edit_btn, row, 3)
             row += 1
 
+            # end connections: terminating ports and node taps
+            resonator = g.line_resonator_for(line)
+            couplings = (line.get('end_coupling')
+                         or {'x0': 'capacitive', 'xL': 'capacitive'})
+            for end in ('x0', 'xL'):
+                for conn in g._end_conns(line, end):
+                    if conn.get('kind') == 'port':
+                        conn_port = next(
+                            (p for p in g.ports
+                             if p['port_id'] == conn['port_id']), None)
+                        plabel = conn_port['label'] if conn_port else '?'
+                        lab = QLabel(f"{end} \N{RIGHTWARDS ARROW} port "
+                                     f"'{plabel}'")
+                        lab.setStyleSheet("color: dimgray;")
+                        lab.setToolTip("This end is terminated on that "
+                                       "port: the whole comb couples "
+                                       "through its channel.")
+                        self.ports_param_layout.addWidget(lab, row, 0, 1, 4)
+                        row += 1
+                    elif conn.get('kind') == 'node':
+                        node = next((n for n in g.nodes
+                                     if n['node_id'] == conn['node_id']),
+                                    None)
+                        nlabel = node['label'] if node else str(
+                            conn['node_id'])
+                        lab = QLabel(f"{end} tap \N{RIGHTWARDS ARROW} "
+                                     f"{nlabel} ({couplings.get(end, 'capacitive')[:3]})")
+                        lab.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                        self.ports_param_layout.addWidget(lab, row, 0)
+
+                        rate_spin = FineControlSpinBox()
+                        rate_spin.setRange(config.B_EXT_SPINBOX_MIN,
+                                           config.B_EXT_SPINBOX_MAX)
+                        rate_spin.setDecimals(config.B_EXT_SPINBOX_DECIMALS)
+                        rate_spin.setSingleStep(config.B_EXT_SPINBOX_STEP)
+                        rate_spin.setMaximumWidth(config.B_EXT_SPINBOX_WIDTH)
+                        rate_spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+                        rate_spin.setValue(conn.get('rate', 0.1) * 1000)
+                        rate_spin.setToolTip(
+                            "Coupling rate AT the reference harmonic "
+                            "[milliarb. units]; other modes follow the "
+                            "verified profile g_n \u221d "
+                            "u_n(end)\u00b7(n/n_ref)^(\u00b1\u00bd)")
+                        rate_spin.valueChanged.connect(
+                            lambda val, c=conn:
+                            self._on_tap_param_changed(c, 'rate', val / 1000.0))
+                        self.ports_param_layout.addWidget(rate_spin, row, 1)
+
+                        sign_btn = QPushButton(
+                            "+" if conn.get('sign', 1) >= 0
+                            else "\N{MINUS SIGN}")
+                        sign_btn.setMaximumWidth(28)
+                        sign_btn.clicked.connect(
+                            lambda _=False, c=conn, b=sign_btn:
+                            self._on_tap_sign_toggled(c, b))
+                        self.ports_param_layout.addWidget(sign_btn, row, 2)
+
+                        nref_spin = FineControlSpinBox()
+                        nref_spin.setDecimals(0)
+                        nref_spin.setRange(1, resonator.N)
+                        nref_spin.setSingleStep(1)
+                        nref_spin.setMaximumWidth(50)
+                        nref_spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+                        nref_spin.setValue(conn.get('n_ref', 1))
+                        nref_spin.setPrefix("n=")
+                        nref_spin.setToolTip(
+                            "Reference harmonic the rate is defined at "
+                            f"(1..{resonator.N}); nearest to the mode's "
+                            "frequency is highlighted when tapping.")
+                        nref_spin.valueChanged.connect(
+                            lambda val, c=conn:
+                            self._on_tap_param_changed(c, 'n_ref', int(val)))
+                        self.ports_param_layout.addWidget(nref_spin, row, 3)
+                        row += 1
+
         self.ports_param_layout.setColumnStretch(0, 0)
         self.ports_param_layout.setColumnStretch(1, 1)
         self.ports_param_layout.setRowStretch(row + 1, 1)
+
+    def _on_tap_param_changed(self, conn, key, value):
+        conn[key] = value
+        self._schedule_scattering_update()
+        self.graphulator._update_plot()   # n_ref chip on the canvas
+
+    def _on_tap_sign_toggled(self, conn, button):
+        conn['sign'] = -conn.get('sign', 1)
+        button.setText("+" if conn['sign'] >= 0 else "\N{MINUS SIGN}")
+        self._schedule_scattering_update()
 
     def _on_port_attachment_changed(self, att, key, value_mau):
         # A rate change keeps the channel structure, so no invalidation —
@@ -5137,29 +5222,9 @@ class PropertiesPanel(QWidget):
                 port_node_labels.append(label)
         port_labels_str = ', '.join(port_node_labels)
 
-        # Explicit hubs / line macros for the generated script
-        gui_hubs = self.graphulator._gui_hubs_payload()
+        # Lines payload (used below to decide whether the exported script may
+        # reuse the GUI's precomputed spanning tree)
         gui_lines = self.graphulator._gui_lines_payload()
-
-        hubs_entries = []
-        for hub in gui_hubs:
-            atts = ', '.join(
-                f"({node_id!r}, {mag!r}, {phase!r})"
-                for node_id, mag, phase in hub['attachments'])
-            hubs_entries.append(
-                f"    {{'hub_id': {hub['hub_id']!r}, 'label': {hub['label']!r}, "
-                f"'monitored': {hub['monitored']}, 'attachments': [{atts}]}}")
-        hubs_code = "[\n" + ",\n".join(hubs_entries) + "\n]" if hubs_entries else "[]"
-
-        lines_entries = []
-        for line in gui_lines:
-            lines_entries.append(
-                f"    LineResonator(line_id={line['line_id']!r}, "
-                f"label={line['label']!r}, FSR={line['FSR']!r}, "
-                f"Ztx={line['Ztx']!r}, f_max={line['f_max']!r}, "
-                f"port_end={line['port_end']!r}, Z0_port={line['Z0_port']!r}, "
-                f"alpha_uniform={line['alpha_uniform']!r})")
-        lines_code = "[\n" + ",\n".join(lines_entries) + "\n]" if lines_entries else "[]"
 
         # Build constraint group variable mappings
         # Maps (obj_type, obj_label, param_name) -> variable_name
@@ -5207,83 +5272,140 @@ class PropertiesPanel(QWidget):
                 for member_label in members:
                     constraint_var_map[(obj_type, member_label, param_name)] = var_name
 
-        # Build node and edge data structures
-        nodes_code = []
-        node_assignments_code = []
-
-        # Create node_id to label mapping for faster lookups
+        # ---- literal-emission helpers, shared by the single- and
+        # multi-component templates (a multi-component export emits each
+        # component's data literally, mirroring _build_sparams_job) ----
         node_id_to_label_map = {node['node_id']: node['label'] for node in self.graphulator.nodes}
 
-        for idx, node in enumerate(self.graphulator.nodes):
-            node_id = _node_key(node)
-            params = self.graphulator.scattering_assignments.get(node_id, {})
+        def _join_list(entries):
+            return "[\n" + ",\n".join(entries) + "\n]" if entries else "[]"
 
-            freq = params.get('freq', None)
-            B_int = params.get('B_int', None)
-            B_ext = params.get('B_ext', None)
-            conj = node.get('conj', False)
+        def _join_dict(entries):
+            return "{\n" + "\n".join(entries) + "\n}" if entries else "{}"
 
-            # Round numeric values to 9 decimal places
-            pos_str = f"[{round(node['pos'][0], 9)}, {round(node['pos'][1], 9)}]"
+        def _emit_nodes(node_list, var='nodes'):
+            n_code, a_code = [], []
+            for idx, node in enumerate(node_list):
+                node_id = _node_key(node)
+                params = self.graphulator.scattering_assignments.get(node_id, {})
 
-            nodes_code.append(f"    {{'node_id': {node['node_id']}, 'label': '{node['label']}', " +
-                            f"'pos': {pos_str}, 'conj': {conj}}}")
+                freq = params.get('freq', None)
+                B_int = params.get('B_int', None)
+                B_ext = params.get('B_ext', None)
+                conj = node.get('conj', False)
 
-            # Build scattering assignment for this node
-            # Check if parameters are in constraint groups
-            freq_var = constraint_var_map.get(('node', node['label'], 'freq'))
-            B_int_var = constraint_var_map.get(('node', node['label'], 'B_int'))
-            B_ext_var = constraint_var_map.get(('node', node['label'], 'B_ext'))
+                # Round numeric values to 9 decimal places
+                pos_str = f"[{round(node['pos'][0], 9)}, {round(node['pos'][1], 9)}]"
 
-            freq_str = freq_var if freq_var else (f"{round(freq, 9)}" if freq is not None else "None")
-            B_int_str = B_int_var if B_int_var else (f"{round(B_int, 9)}" if B_int is not None else "None")
-            B_ext_str = B_ext_var if B_ext_var else (f"{round(B_ext, 9)}" if B_ext is not None else "None")
+                n_code.append(f"    {{'node_id': {node['node_id']}, 'label': '{node['label']}', " +
+                              f"'pos': {pos_str}, 'conj': {conj}}}")
 
-            node_assignments_code.append(
-                f"    id(nodes[{idx}]): {{'freq': {freq_str}, 'B_int': {B_int_str}, 'B_ext': {B_ext_str}}},  # node {node['label']}"
-            )
+                # Build scattering assignment for this node
+                # Check if parameters are in constraint groups
+                freq_var = constraint_var_map.get(('node', node['label'], 'freq'))
+                B_int_var = constraint_var_map.get(('node', node['label'], 'B_int'))
+                B_ext_var = constraint_var_map.get(('node', node['label'], 'B_ext'))
 
-        edges_code = []
-        edge_assignments_code = []
+                freq_str = freq_var if freq_var else (f"{round(freq, 9)}" if freq is not None else "None")
+                B_int_str = B_int_var if B_int_var else (f"{round(B_int, 9)}" if B_int is not None else "None")
+                B_ext_str = B_ext_var if B_ext_var else (f"{round(B_ext, 9)}" if B_ext is not None else "None")
 
-        for idx, edge in enumerate(self.graphulator.edges):
-            edge_id = _edge_key(edge)
-            params = self.graphulator.scattering_assignments.get(edge_id, {})
+                a_code.append(
+                    f"    id({var}[{idx}]): {{'freq': {freq_str}, 'B_int': {B_int_str}, 'B_ext': {B_ext_str}}},  # node {node['label']}"
+                )
+            return n_code, a_code
 
-            f_p = params.get('f_p', None)
-            rate = params.get('rate', None)
-            phase = params.get('phase', 0.0)
-            is_self_loop = edge.get('is_self_loop', False)
+        def _emit_edges(edge_list, var='edges'):
+            e_code, a_code = [], []
+            for idx, edge in enumerate(edge_list):
+                edge_id = _edge_key(edge)
+                params = self.graphulator.scattering_assignments.get(edge_id, {})
 
-            edges_code.append(f"    {{'from_node_id': {edge['from_node_id']}, 'to_node_id': {edge['to_node_id']}, " +
-                            f"'is_self_loop': {is_self_loop}}}")
+                f_p = params.get('f_p', None)
+                rate = params.get('rate', None)
+                phase = params.get('phase', 0.0)
+                is_self_loop = edge.get('is_self_loop', False)
 
-            # Get node labels for comment and constraint lookup
-            from_label = node_id_to_label_map[edge['from_node_id']]
-            to_label = node_id_to_label_map[edge['to_node_id']]
+                e_code.append(f"    {{'from_node_id': {edge['from_node_id']}, 'to_node_id': {edge['to_node_id']}, " +
+                              f"'is_self_loop': {is_self_loop}}}")
 
-            # Add asterisks for conjugated nodes (must match how spinbox obj_label is set)
-            from_node = next((n for n in self.graphulator.nodes if n['node_id'] == edge['from_node_id']), None)
-            to_node = next((n for n in self.graphulator.nodes if n['node_id'] == edge['to_node_id']), None)
-            if from_node and from_node.get('conj', False):
-                from_label += '*'
-            if to_node and to_node.get('conj', False):
-                to_label += '*'
-            edge_label = f"{from_label}→{to_label}"
+                # Get node labels for comment and constraint lookup
+                from_label = node_id_to_label_map[edge['from_node_id']]
+                to_label = node_id_to_label_map[edge['to_node_id']]
 
-            # Build scattering assignment for this edge
-            # Check if parameters are in constraint groups
-            f_p_var = constraint_var_map.get(('edge', edge_label, 'f_p'))
-            rate_var = constraint_var_map.get(('edge', edge_label, 'rate'))
-            phase_var = constraint_var_map.get(('edge', edge_label, 'phase'))
+                # Add asterisks for conjugated nodes (must match how spinbox obj_label is set)
+                from_node = next((n for n in self.graphulator.nodes if n['node_id'] == edge['from_node_id']), None)
+                to_node = next((n for n in self.graphulator.nodes if n['node_id'] == edge['to_node_id']), None)
+                if from_node and from_node.get('conj', False):
+                    from_label += '*'
+                if to_node and to_node.get('conj', False):
+                    to_label += '*'
+                edge_label = f"{from_label}\u2192{to_label}"
 
-            f_p_str = f_p_var if f_p_var else (f"{round(f_p, 9)}" if f_p is not None else "None")
-            rate_str = rate_var if rate_var else (f"{round(rate, 9)}" if rate is not None else "None")
-            phase_str = phase_var if phase_var else f"{round(phase, 9)}"
+                # Build scattering assignment for this edge
+                # Check if parameters are in constraint groups
+                f_p_var = constraint_var_map.get(('edge', edge_label, 'f_p'))
+                rate_var = constraint_var_map.get(('edge', edge_label, 'rate'))
+                phase_var = constraint_var_map.get(('edge', edge_label, 'phase'))
 
-            edge_assignments_code.append(
-                f"    id(edges[{idx}]): {{'f_p': {f_p_str}, 'rate': {rate_str}, 'phase': {phase_str}}},  # {from_label}→{to_label}"
-            )
+                f_p_str = f_p_var if f_p_var else (f"{round(f_p, 9)}" if f_p is not None else "None")
+                rate_str = rate_var if rate_var else (f"{round(rate, 9)}" if rate is not None else "None")
+                phase_str = phase_var if phase_var else f"{round(phase, 9)}"
+
+                a_code.append(
+                    f"    id({var}[{idx}]): {{'f_p': {f_p_str}, 'rate': {rate_str}, 'phase': {phase_str}}},  # {from_label}\u2192{to_label}"
+                )
+            return e_code, a_code
+
+        def _emit_taps(edge_var, n_existing, line_ids=None, node_ids=None):
+            # One drawn node-tap fans out into per-comb-mode conservative
+            # couplings; emit them as ordinary static edges so the exported
+            # script reproduces the live model
+            e_code, a_code = [], []
+            for k, (tap_edge, tap_params) in enumerate(
+                    self.graphulator._gui_tap_edges(line_ids=line_ids,
+                                                    node_ids=node_ids)):
+                idx = n_existing + k
+                e_code.append(
+                    f"    {{'from_node_id': {tap_edge['from_node_id']!r}, "
+                    f"'to_node_id': {tap_edge['to_node_id']!r}, "
+                    f"'is_self_loop': False}}")
+                a_code.append(
+                    f"    id({edge_var}[{idx}]): {{'f_p': 0.0, "
+                    f"'rate': {tap_params['rate']!r}, "
+                    f"'phase': {tap_params['phase']!r}}},  # line tap")
+            return e_code, a_code
+
+        def _emit_hubs(node_ids=None, line_ids=None):
+            entries = []
+            for hub in self.graphulator._gui_hubs_payload(node_ids=node_ids,
+                                                          line_ids=line_ids):
+                atts = ', '.join(
+                    f"({node_id!r}, {mag!r}, {phase!r})"
+                    for node_id, mag, phase in hub['attachments'])
+                entries.append(
+                    f"    {{'hub_id': {hub['hub_id']!r}, 'label': {hub['label']!r}, "
+                    f"'monitored': {hub['monitored']}, 'attachments': [{atts}]}}")
+            return _join_list(entries)
+
+        def _emit_lines(line_ids=None):
+            entries = []
+            for line in self.graphulator._gui_lines_payload(line_ids=line_ids):
+                entries.append(
+                    f"    LineResonator(line_id={line['line_id']!r}, "
+                    f"label={line['label']!r}, FSR={line['FSR']!r}, "
+                    f"Ztx={line['Ztx']!r}, f_max={line['f_max']!r}, "
+                    f"port_end={line['port_end']!r}, Z0_port={line['Z0_port']!r}, "
+                    f"alpha_uniform={line['alpha_uniform']!r})")
+            return _join_list(entries)
+
+        # Full-graph literals for the single-component template
+        nodes_code, node_assignments_code = _emit_nodes(self.graphulator.nodes)
+        edges_code, edge_assignments_code = _emit_edges(self.graphulator.edges)
+        tap_edges_code, tap_assignments_code = _emit_taps(
+            'edges', len(self.graphulator.edges))
+        hubs_code = _emit_hubs()
+        lines_code = _emit_lines()
 
         # Add source file information if available
         if self.graphulator.current_filepath:
@@ -5389,33 +5511,92 @@ class PropertiesPanel(QWidget):
         else:
             constraint_vars_section = ""
 
-        # Build per-component node/edge info for multi-component graphs
-        if num_components > 1 and hasattr(self.graphulator, 'scattering_components'):
-            # Generate per-component data (line-macro components have no GUI
-            # nodes; they are emitted as standalone per-line GSM blocks below)
-            component_node_ids = {}  # comp_idx -> list of node_ids
+        # Per-component literal blocks for multi-component graphs. Each
+        # block mirrors _build_sparams_job for that component: its own
+        # nodes/edges/assignments, pre-expanded tap edges, hub payloads
+        # (whose attachments may reference comb-mode ids like 'line:0:n2'),
+        # its line macros, and a GUI-node root — so the exported script
+        # computes exactly what the live sweep computes.
+        component_blocks_code = ""
+        if num_components > 1 and getattr(self.graphulator, 'scattering_components', None):
+            nl = chr(10)
+            blocks = []
             for comp in self.graphulator.scattering_components:
-                if comp.get('line_ids'):
-                    continue
-                comp_idx = comp['index']
-                component_node_ids[comp_idx] = list(comp['node_ids'])
+                ci = comp['index']
+                var_n = f"comp{ci}_nodes"
+                var_e = f"comp{ci}_edges"
+                comp_line_ids = comp.get('line_ids', [])
+                n_code, na_code = _emit_nodes(comp['nodes'], var=var_n)
+                e_code, ea_code = _emit_edges(comp['edges'], var=var_e)
+                t_code, ta_code = _emit_taps(var_e, len(comp['edges']),
+                                             line_ids=comp_line_ids,
+                                             node_ids=comp['node_ids'])
+                hubs_c = _emit_hubs(node_ids=comp['node_ids'],
+                                    line_ids=comp_line_ids)
+                lines_c = _emit_lines(line_ids=comp_line_ids)
 
-            # Generate component membership code
-            component_membership_code = "# Component membership (node_id -> component_index)\n"
-            component_membership_code += "component_node_ids = {\n"
-            for comp_idx in sorted(component_node_ids.keys()):
-                node_ids = component_node_ids[comp_idx]
-                component_membership_code += f"    {comp_idx}: {node_ids},\n"
-            component_membership_code += "}\n"
-        else:
-            component_membership_code = ""
+                # Root mirrors the live job: first monitored-hub attachment
+                # that is a GUI node, then a legacy port node, then the
+                # first node. A line-only component has no GUI node — the
+                # extractor roots itself inside the comb.
+                gui_node_ids = {n['node_id'] for n in comp['nodes']}
+                root_id = next(
+                    (a[0] for h in self.graphulator._gui_hubs_payload(
+                        node_ids=comp['node_ids'], line_ids=comp_line_ids)
+                     if h['monitored']
+                     for a in h['attachments'] if a[0] in gui_node_ids),
+                    None)
+                if root_id is None and comp['port_node_ids']:
+                    root_id = next(iter(comp['port_node_ids']))
+                if root_id is None and comp['nodes']:
+                    root_id = comp['nodes'][0]['node_id']
 
-        # Line-macro-only exports have no GUI nodes: let the extractor's
-        # expansion pre-pass supply the modes, the tree, and the root
-        if self.graphulator.nodes:
+                labels = [n['label'] for n in comp['nodes']]
+                labels += [l['label']
+                           for l in self.graphulator.line_resonators
+                           if l['line_id'] in comp_line_ids]
+
+                block = f"""# ----------------------------------------------------------------------
+# Component {ci}: {', '.join(labels)}
+# ----------------------------------------------------------------------
+{var_n} = {_join_list(n_code)}
+
+{var_e} = {_join_list(e_code + t_code)}
+
+comp{ci}_assignments = {_join_dict(na_code + ea_code + ta_code)}
+
+comp{ci}_hubs = {hubs_c}
+
+comp{ci}_line_resonators = {lines_c}
+
+extractor = GraphExtractor()
+extractor.extract_graph_data(
+    nodes={var_n},
+    edges={var_e},
+    scattering_assignments=comp{ci}_assignments,
+    frequency_settings=frequency_settings,
+    root_node_id={root_id!r},
+    hubs=comp{ci}_hubs,
+    line_resonators=comp{ci}_line_resonators
+)
+gsm_components[{ci}] = GraphScatteringMatrix(extractor, frequencies)
+print(f"Component {ci}: {{gsm_components[{ci}].num_ports}} port(s)")
+"""
+                blocks.append(block)
+            component_blocks_code = nl.join(blocks)
+
+        # With line macros in the graph the comb-mode ids (and any tap
+        # edges onto them) exist only after the extractor's expansion
+        # pre-pass, so the exported script lets the extractor compute the
+        # spanning tree itself; the root may still be a GUI node.
+        if self.graphulator.nodes and not gui_lines:
             root_id_repr = injection_node_id
             tree_repr = tree_edges_list
             chord_repr = chord_edges_list
+        elif self.graphulator.nodes:
+            root_id_repr = injection_node_id
+            tree_repr = None
+            chord_repr = None
         else:
             root_id_repr = None
             tree_repr = None
@@ -5442,12 +5623,12 @@ nodes = [
 ]
 
 edges = [
-{(',' + chr(10)).join(edges_code)}
+{(',' + chr(10)).join(edges_code + tap_edges_code)}
 ]
 
 # Scattering assignments keyed by object id
 scattering_assignments = {{
-{(',' + chr(10)).join(node_assignments_code + edge_assignments_code)}
+{(',' + chr(10)).join(node_assignments_code + edge_assignments_code + tap_assignments_code)}
 }}
 
 # Explicit dissipation hubs (ports / loss hubs): attachments are
@@ -5506,7 +5687,8 @@ fig, ax = gsm.plot_SdB()
 plt.show()
 '''
         else:
-            # Multi-component code
+            # Multi-component code: per-component literal blocks (mirrors
+            # the live per-component jobs, including line macros and taps)
             code = f'''"""
 Scattering calculation code exported from Graphulator{source_comment}{multi_component_warning}
 """
@@ -5519,111 +5701,22 @@ from graphulator.autograph import GraphExtractor, GraphScatteringMatrix, LineRes
 # Set plot style (uncomment/modify to customize appearance)
 # sns.set_theme(style='whitegrid', context='talk', font_scale=1.0)
 {constraint_vars_section}
-# Full graph structure
-nodes = [
-{(',' + chr(10)).join(nodes_code)}
-]
-
-edges = [
-{(',' + chr(10)).join(edges_code)}
-]
-
-# Scattering assignments keyed by object id
-scattering_assignments = {{
-{(',' + chr(10)).join(node_assignments_code + edge_assignments_code)}
-}}
-
-# Explicit dissipation hubs (ports / loss hubs)
-hubs = {hubs_code}
-
-# Transmission-line macros (each is its own component below)
-line_resonators = {lines_code}
-
-{component_membership_code}
 # Frequency settings
 f_center = {round(center, 9)}
 f_span = {round(span, 9)}
 frequencies = np.linspace(f_center - f_span/2, f_center + f_span/2, {int(points)})
+frequency_settings = {{
+    'start': {round(center - span/2, 9)},
+    'stop': {round(center + span/2, 9)},
+    'points': {int(points)}
+}}
 
 # ============================================================================
-# Create GSM for each connected component
+# One GSM per connected component
 # ============================================================================
 gsm_components = {{}}
 
-for comp_idx, comp_node_ids in component_node_ids.items():
-    comp_node_ids_set = set(comp_node_ids)
-
-    # Filter nodes for this component
-    comp_nodes = [n for n in nodes if n['node_id'] in comp_node_ids_set]
-
-    # Filter edges for this component (both endpoints in component, or self-loop on component node)
-    comp_edges = []
-    for e in edges:
-        if e.get('is_self_loop', False):
-            if e['from_node_id'] in comp_node_ids_set:
-                comp_edges.append(e)
-        else:
-            if e['from_node_id'] in comp_node_ids_set and e['to_node_id'] in comp_node_ids_set:
-                comp_edges.append(e)
-
-    # Filter scattering assignments
-    comp_assignments = {{}}
-    for i, n in enumerate(comp_nodes):
-        orig_idx = next(j for j, orig_n in enumerate(nodes) if orig_n['node_id'] == n['node_id'])
-        comp_assignments[id(comp_nodes[i])] = scattering_assignments[id(nodes[orig_idx])]
-    for i, e in enumerate(comp_edges):
-        orig_idx = next(j for j, orig_e in enumerate(edges)
-                       if orig_e['from_node_id'] == e['from_node_id'] and orig_e['to_node_id'] == e['to_node_id'])
-        comp_assignments[id(comp_edges[i])] = scattering_assignments[id(edges[orig_idx])]
-
-    # Hubs whose attachments all live in this component
-    comp_hubs = [h for h in hubs if h['attachments'] and all(
-        a[0] in comp_node_ids_set for a in h['attachments']
-    )]
-
-    # Find a root node (first hub attachment, else first legacy port node,
-    # else first node)
-    monitored = [h for h in comp_hubs if h['monitored']]
-    port_nodes = [n for n in comp_nodes if any(
-        e['from_node_id'] == n['node_id'] and e.get('is_self_loop', False) for e in comp_edges
-    )]
-    if monitored:
-        root_id = monitored[0]['attachments'][0][0]
-    elif port_nodes:
-        root_id = port_nodes[0]['node_id']
-    else:
-        root_id = comp_nodes[0]['node_id']
-
-    # Create extractor and GSM for this component
-    extractor = GraphExtractor()
-    extractor.extract_graph_data(
-        nodes=comp_nodes,
-        edges=comp_edges,
-        scattering_assignments=comp_assignments,
-        frequency_settings={{'start': f_center - f_span/2, 'stop': f_center + f_span/2, 'points': {int(points)}}},
-        root_node_id=root_id,
-        hubs=comp_hubs
-    )
-
-    gsm = GraphScatteringMatrix(extractor, frequencies)
-    gsm_components[comp_idx] = gsm
-    print(f"Component {{comp_idx+1}}: {{gsm.num_ports}} ports")
-
-# ============================================================================
-# One GSM per transmission-line macro (each line is its own component)
-# ============================================================================
-line_comp_start = (max(gsm_components.keys()) + 1) if gsm_components else 0
-for line_offset, line in enumerate(line_resonators):
-    extractor = GraphExtractor()
-    extractor.extract_graph_data(
-        nodes=[], edges=[], scattering_assignments={{}},
-        frequency_settings={{'start': f_center - f_span/2, 'stop': f_center + f_span/2, 'points': {int(points)}}},
-        line_resonators=[line],
-    )
-    gsm = GraphScatteringMatrix(extractor, frequencies)
-    gsm_components[line_comp_start + line_offset] = gsm
-    print(f"Line {{line.label}}: {{gsm.num_ports}} port(s), {{gsm.num_modes}} comb modes")
-
+{component_blocks_code}
 # ============================================================================
 # Add traces to each component's GSM
 # ============================================================================
@@ -5831,8 +5924,11 @@ def _compute_sparams_job(job):
 
     extractor = GraphExtractor()
 
-    if nodes:
-        # Compute spanning tree for this component
+    if nodes and not line_resonators:
+        # Compute spanning tree for this component. (With line macros in
+        # the job the comb-mode ids exist only after the extractor's
+        # expansion pre-pass — tap edges reference them — so the extractor
+        # computes the tree itself over the expanded graph.)
         gui_nodes = [{'node_id': node['node_id']} for node in nodes]
         gui_edges = [
             {
@@ -9505,7 +9601,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         # line's comb and those nodes share one hub column, so they are one
         # component. A line whose port serves nothing else stands alone.
         for line in self.line_resonators:
-            partner_node_ids = set()
+            partner_node_ids = set(self._line_tap_node_ids(line))
             for end in ('x0', 'xL'):
                 for port in self._line_end_ports(line, end):
                     partner_node_ids.update(a['node_id']
@@ -10070,6 +10166,9 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 hubs=self._gui_hubs_payload(),
                 line_resonators=self._gui_lines_payload()
             )
+            for tap_edge, tap_params in self._gui_tap_edges():
+                edges.append(tap_edge)
+                scattering_assignments[id(tap_edge)] = tap_params
 
             # Validate
             validation = extractor.validate_scattering_assignments()
@@ -10269,12 +10368,11 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         if component is not None:
             comp_node_ids = component['node_ids']
             comp_line_ids = component.get('line_ids', [])
-            hubs = self._gui_hubs_payload(node_ids=comp_node_ids,
-                                          line_ids=comp_line_ids)
-            lines = self._gui_lines_payload(line_ids=comp_line_ids)
         else:
-            hubs = self._gui_hubs_payload()
-            lines = self._gui_lines_payload()
+            comp_node_ids = comp_line_ids = None
+        hubs = self._gui_hubs_payload(node_ids=comp_node_ids,
+                                      line_ids=comp_line_ids)
+        lines = self._gui_lines_payload(line_ids=comp_line_ids)
 
         if not nodes_to_use and not lines:
             logger.info(f"  No nodes in {comp_name}")
@@ -10286,11 +10384,16 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         # then a legacy port node, then the first node — matching the
         # exported-code and tree-overlay root rules.
         root_node_id = None
+        gui_node_ids = {n['node_id'] for n in nodes_to_use}
         if component is None:
             root_node_id = self._get_selected_injection_node_id()
         if root_node_id is None and hubs:
+            # only a GUI node can root the GUI-side spanning tree; a hub
+            # that terminates a line lists comb-mode ids, which exist only
+            # after the extractor's expansion pre-pass
             root_node_id = next(
-                (h['attachments'][0][0] for h in hubs if h['monitored']),
+                (a[0] for h in hubs if h['monitored']
+                 for a in h['attachments'] if a[0] in gui_node_ids),
                 None)
         if root_node_id is None and component is not None \
                 and component['port_node_ids']:
@@ -10353,6 +10456,13 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             edge_id_key = (edge_data['from_node_id'], edge_data['to_node_id'])
             if edge_id_key in self.scattering_assignments:
                 scattering_assignments[id(edge_data)] = dict(self.scattering_assignments[edge_id_key])
+
+        # One drawn node-tap fans out here into its conservative couplings to
+        # each comb mode; the extractor sees ordinary static (f_p = 0) edges
+        for tap_edge, tap_params in self._gui_tap_edges(
+                line_ids=comp_line_ids, node_ids=comp_node_ids):
+            edges.append(tap_edge)
+            scattering_assignments[id(tap_edge)] = tap_params
 
         return {
             'comp_name': comp_name,

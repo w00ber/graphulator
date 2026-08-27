@@ -450,6 +450,70 @@ class LineResonator:
             for i, node_id in enumerate(self.comb_mode_ids())
         ]
 
+    #: Conservative ("reactive") tap coupling profiles, VERIFIED against the
+    #: reference by extracting the exact a-basis couplings of a device tapped
+    #: onto the comb (cmtline_core.a_basis_A over the build_capacitive /
+    #: mutual-inductance circuits, N=10, fixed coupling element):
+    #:
+    #:    capacitive tap : g_n ~ u_n(end) * sqrt(w_n / C_n)
+    #:    inductive tap  : g_n ~ u_n(end) / sqrt(w_n * C_n)
+    #:
+    #: Both ratios came out constant to every printed digit over n = 1..10.
+    #: For the open-open comb C_n is n-independent (n >= 1), so relative to a
+    #: chosen reference harmonic the capacitance cancels entirely and the
+    #: profile is just sqrt(n/n_ref) or sqrt(n_ref/n).
+    TAP_COUPLINGS = ('capacitive', 'inductive')
+
+    def tap_couplings(self, end, n_ref, coupling='capacitive'):
+        """Relative conservative-coupling weights of a node tapped at `end`.
+
+        Returns [(comb_node_id, relative_weight, phase_deg), ...]. The
+        weights are normalized so the mode with harmonic number `n_ref` has
+        weight 1: the rate the user enters on the connection IS the coupling
+        rate at that harmonic, which removes the ambiguity when the attached
+        mode's frequency does not sit on a harmonic.
+
+        Phase-1 note: the DC (n = 0) comb mode is EXCLUDED. It is a free
+        mode (1/L = 0), and the reference's own a-basis transform drops it,
+        so the verification above covers n >= 1 only. For a capacitive tap
+        this coincides with the profile's own limit (w_0 = 0 -> no
+        coupling); for an inductive tap it is an explicit exclusion, not a
+        derived result.
+        """
+        if coupling not in self.TAP_COUPLINGS:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': coupling must be one of "
+                f"{self.TAP_COUPLINGS!r}, got {coupling!r}")
+        if end not in ('x0', 'xL'):
+            raise ValueError(
+                f"LineResonator '{self.line_id}': end must be 'x0' or 'xL'")
+        n_ref = int(n_ref)
+        if not 1 <= n_ref <= self.N:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': reference harmonic must be "
+                f"between 1 and N = {self.N}, got {n_ref}")
+
+        exponent = 0.5 if coupling == 'capacitive' else -0.5
+        alternating = (end == 'xL')
+        out = []
+        ks = [0]
+        for n in range(1, self.N + 1):
+            ks += [n, -n]
+        for k in ks:
+            n = abs(k)
+            if n == 0:
+                continue                      # free mode, see docstring
+            weight = (n / n_ref) ** exponent
+            sign = (-1) ** n if alternating else 1
+            out.append((self.mode_node_id(k), float(weight),
+                        0.0 if sign > 0 else 180.0))
+        return out
+
+    def nearest_harmonic(self, freq):
+        """Harmonic number whose comb frequency is closest to `freq`."""
+        n = int(round(abs(float(freq)) / self.FSR))
+        return int(min(max(n, 1), self.N))
+
     def expand(self):
         """Expand to (nodes, hubs) in pgraph-style dicts.
 

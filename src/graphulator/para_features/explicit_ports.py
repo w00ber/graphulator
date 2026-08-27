@@ -245,11 +245,29 @@ class LineInputDialog(QDialog):
             status = QLabel(", ".join(terminated) if terminated
                             else "both ends open")
             status.setToolTip("Rewire with the edge tool (E): click a line "
-                              "end lead, then a port glyph.")
-            form.addRow("Terminated ends:", status)
+                              "end lead, then a port glyph or a mode.")
+            form.addRow("Connected ends:", status)
             self.port_end_combo = None
         else:
             form.addRow("Terminate end with port:", self.port_end_combo)
+
+        # How a NODE tap at each end couples to the line — a property of the
+        # physical tap point, shared by everything attached there
+        self.end_coupling_combos = {}
+        end_coupling = line.get('end_coupling') or {}
+        for end in ('x0', 'xL'):
+            combo = QComboBox()
+            combo.addItem("capacitive  (g_n \u221d \u221an)", 'capacitive')
+            combo.addItem("inductive  (g_n \u221d 1/\u221an)", 'inductive')
+            current = end_coupling.get(end, 'capacitive')
+            combo.setCurrentIndex(0 if current == 'capacitive' else 1)
+            combo.setToolTip(
+                "Coupling type of a mode tapped at this end. Sets the "
+                "verified per-mode profile relative to the reference "
+                "harmonic: capacitive g_n \u221d \u221a(\u03c9_n), "
+                "inductive g_n \u221d 1/\u221a(\u03c9_n).")
+            self.end_coupling_combos[end] = combo
+            form.addRow(f"Tap coupling @ {end}:", combo)
 
         self.z0_spin = spin(line.get('Z0_port', 50.0), 1e-6, 1e6, 2, 1.0,
                             "Port termination impedance")
@@ -275,9 +293,71 @@ class LineInputDialog(QDialog):
             'f_max': self.fmax_spin.value(),
             'port_end': (self.port_end_combo.currentData()
                          if self.port_end_combo is not None else None),
+            'end_coupling': {e: c.currentData()
+                             for e, c in self.end_coupling_combos.items()},
             'Z0_port': self.z0_spin.value(),
             'alpha_uniform': self.alpha_spin.value(),
         }
+
+
+class TapInputDialog(QDialog):
+    """Node-tap parameters: reference harmonic (nearest highlighted),
+    coupling rate at that harmonic, and sign."""
+
+    def __init__(self, line_label, node_label, end, coupling, N, n_nearest,
+                 rate_mau=100.0, sign=1, n_ref=None, parent=None,
+                 editing=False):
+        super().__init__(parent)
+        self.setWindowTitle(
+            ("Edit tap " if editing else "Tap ")
+            + f"{node_label} \N{RIGHTWARDS ARROW} {line_label} ({end})")
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        note = QLabel(
+            f"One connection couples '{node_label}' to ALL of "
+            f"'{line_label}'s comb modes with the {coupling} profile\n"
+            "g_n \u221d u_n(end)\u00b7(n/n_ref)^(\u00b1\u00bd). The rate "
+            "below is the coupling AT the reference harmonic.")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        self.n_ref_spin = QDoubleSpinBox()
+        self.n_ref_spin.setDecimals(0)
+        self.n_ref_spin.setRange(1, N)
+        self.n_ref_spin.setValue(n_ref if n_ref is not None else n_nearest)
+        self.n_ref_spin.setToolTip(
+            f"Harmonic the coupling rate is referenced to (1..{N}).\n"
+            f"Closest harmonic to the mode's frequency: n = {n_nearest}.")
+        n_label = QLabel(f"Reference harmonic n_ref (nearest: "
+                         f"<b>{n_nearest}</b>):")
+        form.addRow(n_label, self.n_ref_spin)
+
+        self.rate_spin = QDoubleSpinBox()
+        self.rate_spin.setRange(0.0, 1e6)
+        self.rate_spin.setDecimals(2)
+        self.rate_spin.setSingleStep(1.0)
+        self.rate_spin.setValue(rate_mau)
+        self.rate_spin.setToolTip(
+            "Coupling rate at the reference harmonic [milliarb. units]")
+        form.addRow("rate @ n_ref [mau]:", self.rate_spin)
+
+        self.sign_combo = QComboBox()
+        self.sign_combo.addItem("+ (0\N{DEGREE SIGN})", 1)
+        self.sign_combo.addItem("\N{MINUS SIGN} (180\N{DEGREE SIGN})", -1)
+        self.sign_combo.setCurrentIndex(0 if sign >= 0 else 1)
+        form.addRow("Sign:", self.sign_combo)
+
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def get_result(self):
+        return {'n_ref': int(self.n_ref_spin.value()),
+                'rate': self.rate_spin.value() / 1000.0,
+                'sign': self.sign_combo.currentData()}
 
 
 class AttachmentEditDialog(QDialog):
@@ -344,6 +424,7 @@ class ExplicitPortsMixin:
         self.selected_ports = []
         self.selected_lines = []
         self.selected_attachments = []     # [(port, attachment), ...]
+        self.selected_taps = []            # [(line, end, conn), ...]
         self._attach_pending_port = None   # port awaiting a node click (edge mode)
         self._attach_pending_line_end = None  # (line, end) awaiting a port
         self._place_loss_hub_next = False  # next port placement is a loss hub
@@ -383,7 +464,8 @@ class ExplicitPortsMixin:
 
     def add_line_resonator(self, label=None, pos=(0.0, 0.0), FSR=1.0,
                            Ztx=65.0, f_max=10.0, port_end='xL',
-                           Z0_port=50.0, alpha_uniform=0.0, angle=0.0):
+                           Z0_port=50.0, alpha_uniform=0.0, angle=0.0,
+                           end_coupling=None):
         """Create a transmission-line macro glyph."""
         if label is None:
             label = f"TL{self.line_id_counter + 1}"
@@ -400,7 +482,8 @@ class ExplicitPortsMixin:
             # How a node tap at each end couples to the line. This is a
             # property of the physical tap, shared by everything attached
             # there, not of the individual graph mode.
-            'end_coupling': {'x0': 'capacitive', 'xL': 'capacitive'},
+            'end_coupling': dict(end_coupling
+                                 or {'x0': 'capacitive', 'xL': 'capacitive'}),
             'FSR': float(FSR),
             'Ztx': float(Ztx),
             'f_max': float(f_max),
@@ -726,6 +809,49 @@ class ExplicitPortsMixin:
 
     # ---- attachment creation through edge mode ----
 
+    def _prompt_tap_params(self, line, end, node, editing=False, conn=None):
+        """Dialog for tap parameters; None on cancel (test seam)."""
+        resonator = self.line_resonator_for(line)
+        params = self.scattering_assignments.get(node['node_id'], {})
+        freq = params.get('freq')
+        n_nearest = (resonator.nearest_harmonic(freq)
+                     if freq is not None else 1)
+        coupling = (line.get('end_coupling') or {}).get(end, 'capacitive')
+        conn = conn or {}
+        dialog = TapInputDialog(
+            line['label'], node['label'], end, coupling, resonator.N,
+            n_nearest, rate_mau=conn.get('rate', 0.1) * 1000.0,
+            sign=conn.get('sign', 1), n_ref=conn.get('n_ref'),
+            parent=self, editing=editing)
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        return dialog.get_result()
+
+    def _create_tap_interactively(self, line, end, node):
+        result = self._prompt_tap_params(line, end, node)
+        if result is None:
+            self._status_message("Tap cancelled", 3000)
+            return
+        self._save_state()
+        try:
+            conn = self.connect_line_end_to_node(
+                line, end, node, rate=result['rate'], sign=result['sign'],
+                n_ref=result['n_ref'])
+        except ValueError as exc:
+            if self.undo_stack:
+                self.undo_stack.pop()
+            QMessageBox.warning(self, "Cannot tap line", str(exc))
+            return
+        coupling = (line.get('end_coupling') or {}).get(end, 'capacitive')
+        msg = (f"Tapped '{node['label']}' onto '{line['label']}' ({end}, "
+               f"{coupling}) \u2014 rate referenced to harmonic "
+               f"n = {conn['n_ref']}; change it in the Ports & Lines panel")
+        print(f"\u2713 {msg}")
+        self._status_message(msg, 8000)
+        if hasattr(self, 'properties_panel'):
+            self.properties_panel._update_scattering_ports_table()
+        self._update_plot()
+
     def _create_attachment_interactively(self, port, node):
         self._save_state()
         self.add_port_attachment(port, node)
@@ -764,14 +890,9 @@ class ExplicitPortsMixin:
                 self._connect_line_end_interactively(line, end, port)
                 return True
             if self.edge_mode_first_node is not None:
-                # node -> line end: the reactive (conservative) fan-out is
-                # Phase 2; see the module note on the reactive hub.
+                node = self.edge_mode_first_node
                 self.edge_mode_first_node = None
-                self._status_message(
-                    "Coupling a mode directly to a line end needs the "
-                    "reactive-hub derivation (Phase 2). Terminate the end "
-                    "on a port glyph instead.", 9000)
-                self._update_plot()
+                self._create_tap_interactively(line, end, node)
                 return True
             if self._attach_pending_line_end == hit_end:
                 self._attach_pending_line_end = None
@@ -820,13 +941,18 @@ class ExplicitPortsMixin:
                 "lead at either end, then a port glyph.", 8000)
             return True
 
-        # --- a node completing a pending port ---
-        if self._attach_pending_port is not None:
-            node = self._find_node_at_position(event.xdata, event.ydata)
-            if node is not None:
+        # --- a node completing a pending port or line end ---
+        node = self._find_node_at_position(event.xdata, event.ydata)
+        if node is not None:
+            if self._attach_pending_port is not None:
                 port = self._attach_pending_port
                 self._attach_pending_port = None
                 self._create_attachment_interactively(port, node)
+                return True
+            if self._attach_pending_line_end is not None:
+                line, end = self._attach_pending_line_end
+                self._attach_pending_line_end = None
+                self._create_tap_interactively(line, end, node)
                 return True
         return False
 
@@ -891,6 +1017,42 @@ class ExplicitPortsMixin:
             self._update_plot()
             return True
 
+        tap_hit = self._find_tap_at_position(event.xdata, event.ydata)
+        if tap_hit is not None:
+            line, end, conn = tap_hit
+            if is_double:
+                node = next((n for n in self.nodes
+                             if n['node_id'] == conn['node_id']), None)
+                if node is not None:
+                    result = self._prompt_tap_params(line, end, node,
+                                                     editing=True, conn=conn)
+                    if result is not None:
+                        self._save_state()
+                        conn.update(result)
+                        self._invalidate_scattering_data()
+                        if hasattr(self, 'properties_panel'):
+                            self.properties_panel._update_scattering_ports_table()
+                        self._update_plot()
+            elif shift_pressed:
+                if tap_hit in self.selected_taps:
+                    self.selected_taps.remove(tap_hit)
+                else:
+                    self.selected_taps.append(tap_hit)
+                self._update_plot()
+            else:
+                self.selected_taps = [tap_hit]
+                self.selected_attachments = []
+                self.selected_ports = []
+                self.selected_lines = []
+                self.selected_nodes.clear()
+                self.selected_edges.clear()
+                self._status_message(
+                    f"Selected tap onto '{line['label']}' ({end}, "
+                    f"n_ref={conn.get('n_ref', 1)}) \u2014 double-click to "
+                    "edit, D to delete", 6000)
+                self._update_plot()
+            return True
+
         hit = self._find_attachment_at_position(event.xdata, event.ydata)
         if hit is not None:
             if is_double:
@@ -919,11 +1081,13 @@ class ExplicitPortsMixin:
             return True
 
         if not shift_pressed and (self.selected_ports or self.selected_lines
-                                  or self.selected_attachments):
+                                  or self.selected_attachments
+                                  or self.selected_taps):
             # clicking empty space clears glyph selection alongside nodes
             self.selected_ports = []
             self.selected_lines = []
             self.selected_attachments = []
+            self.selected_taps = []
         return False
 
     def _maybe_show_glyph_context_menu(self, event):
@@ -1016,6 +1180,7 @@ class ExplicitPortsMixin:
                 QMessageBox.warning(self, "Invalid line parameters", str(exc))
                 return
             self._save_state()
+            result.pop('port_end', None)   # topology is rewired on canvas
             line.update(result)
             self._invalidate_scattering_data()
             if hasattr(self, 'properties_panel'):
@@ -1164,6 +1329,14 @@ class ExplicitPortsMixin:
 
         Returns how many objects were removed."""
         count = 0
+        for line, end, conn in list(self.selected_taps):
+            conns = self._end_conns(line, end)
+            if conn in conns:
+                conns.remove(conn)
+                line['ends'][end] = conns
+                self._invalidate_scattering_data()
+                count += 1
+        self.selected_taps = []
         for port, att in list(self.selected_attachments):
             if att in port['attachments']:
                 self.remove_port_attachment(port, att['node_id'])
@@ -1310,6 +1483,121 @@ class ExplicitPortsMixin:
         line['ends'][end].append(conn)
         self._invalidate_scattering_data()
         return conn
+
+    def line_resonator_for(self, line):
+        """The numerics-side LineResonator for a GUI line dict."""
+        return LineResonator(**line_payload(line))
+
+    def connect_line_end_to_node(self, line, end, node, rate=None,
+                                 sign=1, n_ref=None):
+        """Tap a graph mode onto one end of a line.
+
+        ONE connection stands for the conservative couplings to every comb
+        mode: g_n = rate * u_n(end) * (n/n_ref)^(+-1/2), the exponent set by
+        the END's coupling type (capacitive/inductive — a property of the
+        physical tap, shared by everything attached there). `rate` is the
+        coupling AT harmonic `n_ref`, which removes the ambiguity when the
+        attached mode's frequency is not on a harmonic; it defaults to the
+        harmonic nearest that mode's assigned frequency.
+        """
+        node_id = node['node_id'] if isinstance(node, dict) else node
+        line.setdefault('ends', {'x0': [], 'xL': []})
+        for e in ('x0', 'xL'):
+            line['ends'][e] = self._end_conns(line, e)
+        resonator = self.line_resonator_for(line)
+        if n_ref is None:
+            params = self.scattering_assignments.get(node_id, {})
+            freq = params.get('freq')
+            n_ref = (resonator.nearest_harmonic(freq) if freq is not None
+                     else 1)
+        if rate is None:
+            rate = self.APP_CONFIG.DEFAULT_EDGE_RATE / 1000.0 \
+                if hasattr(self.APP_CONFIG, 'DEFAULT_EDGE_RATE') else 0.1
+        for conn in line['ends'][end]:
+            if conn.get('kind') == 'node' and conn['node_id'] == node_id:
+                conn.update({'rate': float(rate), 'sign': 1 if sign >= 0 else -1,
+                             'n_ref': int(n_ref)})
+                self._invalidate_scattering_data()
+                return conn
+        conn = {'kind': 'node', 'node_id': node_id, 'rate': float(rate),
+                'sign': 1 if sign >= 0 else -1, 'n_ref': int(n_ref)}
+        line['ends'][end].append(conn)
+        self._invalidate_scattering_data()
+        return conn
+
+    def _gui_tap_edges(self, line_ids=None, node_ids=None):
+        """Synthesized (edge_dict, params) pairs for every node tap.
+
+        The user draws one connection; this fans it out into the individual
+        conservative couplings to each comb mode, which the extractor then
+        sees as ordinary static (f_p = 0) edges. The comb never surfaces in
+        the GUI.
+        """
+        out = []
+        for line in self.line_resonators:
+            if line_ids is not None and line['line_id'] not in line_ids:
+                continue
+            resonator = self.line_resonator_for(line)
+            couplings = (line.get('end_coupling')
+                         or {'x0': 'capacitive', 'xL': 'capacitive'})
+            for end in ('x0', 'xL'):
+                coupling = couplings.get(end, 'capacitive')
+                for conn in self._end_conns(line, end):
+                    if conn.get('kind') != 'node':
+                        continue
+                    node_id = conn['node_id']
+                    if node_ids is not None and node_id not in node_ids:
+                        continue
+                    rate = float(conn.get('rate', 0.0))
+                    flip = conn.get('sign', 1) < 0
+                    n_ref = int(conn.get('n_ref', 1))
+                    for comb_id, weight, phase in resonator.tap_couplings(
+                            end, n_ref, coupling):
+                        if flip:
+                            phase = (phase + 180.0) % 360.0
+                        edge = {'from_node_id': node_id,
+                                'to_node_id': comb_id,
+                                'is_self_loop': False}
+                        out.append((edge, {'f_p': 0.0,
+                                           'rate': rate * weight,
+                                           'phase': phase}))
+        return out
+
+    def _line_tap_node_ids(self, line):
+        """Node ids tapped onto either end of `line`."""
+        ids = set()
+        for end in ('x0', 'xL'):
+            ids.update(c['node_id'] for c in self._end_conns(line, end)
+                       if c.get('kind') == 'node')
+        return ids
+
+    def _find_tap_at_position(self, x, y, tol=None):
+        """Return (line, end, conn) whose tap link passes near (x, y)."""
+        if x is None or y is None:
+            return None
+        tol = tol if tol is not None else 0.35 * self.node_radius
+        node_pos = {n['node_id']: n['pos'] for n in self.nodes}
+        for line in self.line_resonators:
+            pts = self._line_end_points(line)
+            for end in ('x0', 'xL'):
+                p0 = np.array(pts[end])
+                for conn in self._end_conns(line, end):
+                    if conn.get('kind') != 'node':
+                        continue
+                    pos = node_pos.get(conn['node_id'])
+                    if pos is None:
+                        continue
+                    p1 = np.array(pos, dtype=float)
+                    seg = p1 - p0
+                    seg_len2 = float(seg @ seg)
+                    if seg_len2 == 0.0:
+                        continue
+                    t = float(np.clip((np.array([x, y]) - p0) @ seg
+                                      / seg_len2, 0.0, 1.0))
+                    d = float(np.hypot(*(np.array([x, y]) - (p0 + t * seg))))
+                    if d <= tol:
+                        return line, end, conn
+        return None
 
     def disconnect_line_end(self, line, end, port=None):
         """Drop one connection at `end` (or all of them when port is None)."""
@@ -1592,11 +1880,35 @@ class ExplicitPortsMixin:
                     ax.add_line(mlines.Line2D(
                         [ex, tx], [ey, ty], color='dimgray', linewidth=1.4,
                         linestyle=(0, (4, 3)), zorder=4, alpha=0.9))
+                # node taps at this end: thin solid links with an n_ref tag
+                tap_conns = [cn for cn in self._end_conns(line, end_name)
+                             if cn.get('kind') == 'node']
+                for conn in tap_conns:
+                    pos = node_pos.get(conn['node_id'])
+                    if pos is None:
+                        continue
+                    tap_selected = ((line, end_name, conn)
+                                    in self.selected_taps)
+                    if tap_selected:
+                        ax.add_line(mlines.Line2D(
+                            [ex, pos[0]], [ey, pos[1]], color='salmon',
+                            linewidth=4.0, zorder=3.5, alpha=0.9))
+                    ax.add_line(mlines.Line2D(
+                        [ex, pos[0]], [ey, pos[1]], color='teal',
+                        linewidth=1.3, zorder=4, alpha=0.9))
+                    mx, my = (ex + pos[0]) / 2, (ey + pos[1]) / 2
+                    ax.text(mx, my, f"n={conn.get('n_ref', 1)}",
+                            fontsize=7, color='teal', ha='center',
+                            va='center', zorder=5,
+                            bbox=dict(boxstyle='round,pad=0.15',
+                                      fc='white', ec='teal', lw=0.6))
+
+                connected = bool(conn_ports or tap_conns)
                 mark = ('dodgerblue' if is_pending
-                        else 'black' if conn_ports else 'darkgray')
+                        else 'black' if connected else 'darkgray')
                 ax.add_patch(mpatches.Circle(
                     (ex, ey), 0.16 * r,
-                    facecolor=(mark if conn_ports or is_pending else 'white'),
+                    facecolor=(mark if connected or is_pending else 'white'),
                     edgecolor=mark, linewidth=1.8, zorder=11.5))
 
             # label INSIDE the cylinder body, node-style bold sans-serif
@@ -1669,6 +1981,7 @@ class ExplicitPortsMixin:
         self.selected_ports = []
         self.selected_lines = []
         self.selected_attachments = []
+        self.selected_taps = []
         self._attach_pending_port = None
 
         known_node_ids = {n['node_id'] for n in self.nodes}
@@ -1729,8 +2042,12 @@ class ExplicitPortsMixin:
         for line in self.line_resonators:
             ends = line['ends']
             for end in ('x0', 'xL'):
-                ends[end] = [c for c in ends.get(end, [])
-                             if c.get('port_id') in known_port_ids]
+                ends[end] = [
+                    c for c in ends.get(end, [])
+                    if (c.get('kind') == 'node'
+                        and c.get('node_id') in known_node_ids)
+                    or (c.get('kind') != 'node'
+                        and c.get('port_id') in known_port_ids)]
             legacy_end = line.get('port_end')
             if legacy_end in ('x0', 'xL') and not any(ends.values()):
                 r = self.node_radius

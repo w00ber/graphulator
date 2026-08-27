@@ -131,19 +131,34 @@ results to machine precision (pinned by a golden-file regression suite).
   modes, and a line is never *implicitly* terminated: placing a terminated
   line creates a real, visible, movable port glyph you can relabel, rewire,
   or delete. That port may also attach to ordinary nodes, since one physical
-  resistor can see both a line and a device. *Explode to Nodes* (Insert
-  menu, one-way) remains only as a manual escape hatch for inspecting or
-  hand-editing the comb — it is not how you connect a line.
+  resistor can see both a line and a device. Several loads may share one
+  physical end — e.g. a stub resonator read out by two ports — and a
+  standalone terminated line is already a complete scattering problem
+  (its S₁₁ is the comb's). *Explode to Nodes* (Insert menu, one-way)
+  remains only as a manual escape hatch for inspecting or hand-editing the
+  comb — it is not how you connect a line.
+- **Node taps** (edge tool, line end → node): tapping a graph mode onto a
+  line end couples it conservatively to *every* comb mode at once through
+  one drawn connection. The per-mode profile is pinned to the reference
+  circuit model: a **capacitive** tap (the default) couples as
+  `g_n ∝ u_n(end)·√n`, an **inductive** one as `g_n ∝ u_n(end)/√n`; the
+  coupling type belongs to the *end* (the physical tap point, shared by
+  everything attached there) and is set in the line's dialog. Because the
+  tapped mode's frequency generally sits *between* harmonics, the rate you
+  enter is defined **at a reference harmonic `n_ref`** that you choose when
+  making the tap (the harmonic nearest the mode's frequency is
+  highlighted); the rate, sign, and `n_ref` remain editable in the
+  **Ports & Lines** panel, and the tap link on the canvas carries an
+  `n=…` chip. The DC comb mode is excluded (free mode; the reference's own
+  transform drops it).
 
 **Phase-2 boundary** (deliberately not implemented, blocked on derivations):
 complex/mixed-sector hub weights (Manley–Rowe pumped scattering through
 hubs — awaits the `M_pumped` two-sector derivation; attachment phases are
 restricted to 0°/180°), band-limited comb expansion (low-side closure
-underived), two-port lines — terminating *both* ends of a line is refused with an
-explicit error, since no verified ABCD two-port reference exists yet — 
-coupling a mode directly to a line end (the conservative "reactive hub"
-fan-out, whose per-mode weights are n-dependent and coupling-type
-dependent), and frequency-dependent hub weights / connector embedding.
+underived), through-lines — *loading both ends* of a line is refused with an
+explicit error, since no verified ABCD two-port reference exists yet — and
+frequency-dependent hub weights / connector embedding.
 
 ### Markdown Notes
 

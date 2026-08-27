@@ -687,3 +687,232 @@ def test_line_only_graph_enters_scattering_mode(para):
     assert win.scattering_mode is True
     ok, _ = win._validate_scattering_parameters()
     assert ok is True
+
+
+# ---------------------------------------------------------------------------
+# Node taps onto a line end (harmonic-referenced; see test_line_taps for the
+# profile's pin against the cmtline_core a-basis reference)
+# ---------------------------------------------------------------------------
+
+def add_gui_edge(win, from_node, to_node, rate=0.05, f_p=0.0, phase=0.0):
+    """A drawable GUI edge (full field set for _draw_edges)."""
+    edge = {'from_node_id': from_node['node_id'],
+            'to_node_id': to_node['node_id'], 'is_self_loop': False,
+            'from_node': from_node, 'to_node': to_node,
+            'double_line': False, 'color': 'black', 'linewidth': 1.5,
+            'linewidth_mult': 1.0, 'label_size_mult': 1.0,
+            'style': 'single', 'direction': 'both', 'flip_labels': False,
+            'looptheta': 30}
+    win.edges.append(edge)
+    win.scattering_assignments[(from_node['node_id'],
+                                to_node['node_id'])] = {
+        'f_p': f_p, 'rate': rate, 'phase': phase}
+    return edge
+
+
+def build_tapped_line_scene(win, config):
+    """Mode C (freq 4.4) tapped onto x0 of TL1 (FSR 1.5, N = 4), xL
+    terminated on the line's own auto-created port glyph."""
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    node = add_node(win, 0, 'C', 0.0, freq=4.4)
+    line = win.add_line_resonator(label='TL1', pos=(0.0, -3.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL',
+                                  Z0_port=50.0)
+    conn = win.connect_line_end_to_node(line, 'x0', node, rate=0.03)
+    return node, line, conn
+
+
+def test_tap_auto_nref_and_fanout(para):
+    """One drawn tap fans out into the +-n comb pairs with the verified
+    capacitive profile; n_ref defaults to the nearest harmonic."""
+    gp, win, config = para
+    node, line, conn = build_tapped_line_scene(win, config)
+
+    # freq 4.4 / FSR 1.5 = 2.93 -> nearest harmonic 3, chosen automatically
+    assert conn['n_ref'] == 3
+
+    pairs = win._gui_tap_edges()
+    assert len(pairs) == 2 * 4          # n = 1..4, one edge per +-n member
+    from graphulator.autograph import LineResonator
+    from graphulator.para_features.explicit_ports import line_payload
+    res = LineResonator(**line_payload(line))
+    by_target = {}
+    for edge, params in pairs:
+        assert edge['from_node_id'] == 0
+        assert params['f_p'] == 0.0     # conservative static coupling
+        by_target[edge['to_node_id']] = params
+    for n in range(1, 5):
+        for k in (n, -n):
+            p = by_target[res.mode_node_id(k)]
+            # rate at n_ref = 3 is the user's 0.03; capacitive tap at x0:
+            # all-plus signs, (n/3)^(1/2) profile
+            assert p['rate'] == pytest.approx(0.03 * (n / 3) ** 0.5)
+            assert p['phase'] == 0.0
+    # the DC comb mode is never tapped
+    assert res.mode_node_id(0) not in by_target
+
+
+def test_tap_live_S_unitary_and_coupling_type_matters(para):
+    gp, win, config = para
+    node, line, conn = build_tapped_line_scene(win, config)
+
+    # the tap merges C and TL1 into one component
+    comps = win._find_connected_components()
+    assert len(comps) == 1
+    assert comps[0]['line_ids'] == [0]
+    assert 0 in comps[0]['node_ids']
+
+    conn['rate'] = 0.2      # strong tap so the profile choice is visible
+    res_cap = compute_live_S(win, f_start=3.0, f_stop=6.0, points=41)
+    S_cap = res_cap['S']
+    assert S_cap.shape[1:] == (1, 1)
+    # everything is lossless: |S11| = 1 to machine precision
+    assert np.max(np.abs(np.abs(S_cap[:, 0, 0]) - 1.0)) < 1e-12
+
+    # switching the END's coupling type changes the physics
+    line['end_coupling']['x0'] = 'inductive'
+    win._invalidate_scattering_data()
+    res_ind = compute_live_S(win, f_start=3.0, f_stop=6.0, points=41)
+    S_ind = res_ind['S']
+    assert np.max(np.abs(np.abs(S_ind[:, 0, 0]) - 1.0)) < 1e-12
+    assert np.max(np.abs(S_ind - S_cap)) > 1e-3
+
+
+def test_tap_round_trip_serialization(para):
+    gp, win, config = para
+    node, line, conn = build_tapped_line_scene(win, config)
+    line['end_coupling']['x0'] = 'inductive'
+    conn['sign'] = -1
+
+    data = json.loads(json.dumps(win._serialize_graph()))
+    assert data['version'] == '3.0'
+    saved_line = data['line_resonators'][0]
+    saved_conn = [c for c in saved_line['ends']['x0']
+                  if c['kind'] == 'node'][0]
+    assert saved_conn == {'kind': 'node', 'node_id': 0, 'rate': 0.03,
+                          'sign': -1, 'n_ref': 3}
+    assert saved_line['end_coupling'] == {'x0': 'inductive',
+                                          'xL': 'capacitive'}
+
+    win._deserialize_graph(data)
+    restored = win.line_resonators[0]
+    assert restored['ends']['x0'][0] == saved_conn
+    assert restored['end_coupling']['x0'] == 'inductive'
+    assert [c['kind'] for c in restored['ends']['xL']] == ['port']
+
+
+def test_tap_panel_has_nref_spinbox(para):
+    """User requirement: the reference harmonic is settable in the Ports &
+    Lines panel."""
+    gp, win, config = para
+    build_tapped_line_scene(win, config)
+    win._enter_scattering_mode()
+    panel = win.properties_panel
+    panel._update_scattering_ports_table()
+
+    layout = panel.ports_param_layout
+    nref_spins = []
+    for i in range(layout.count()):
+        w = layout.itemAt(i).widget()
+        if w is not None and hasattr(w, 'prefix') and w.prefix() == 'n=':
+            nref_spins.append(w)
+    assert len(nref_spins) == 1
+    spin = nref_spins[0]
+    assert spin.value() == 3
+    assert spin.maximum() == 4          # 1..N
+
+    # editing it drives the connection dict (the live model input)
+    spin.setValue(2)
+    line = win.line_resonators[0]
+    assert line['ends']['x0'][0]['n_ref'] == 2
+
+
+def test_generated_code_with_tap_matches_live_S(para):
+    """Single-component export: tap edges are emitted literally and the
+    script reproduces the live S."""
+    gp, win, config = para
+    build_tapped_line_scene(win, config)
+
+    win._enter_scattering_mode()
+    win.properties_panel.freq_center_spin.setValue(4.5)
+    win.properties_panel.freq_span_spin.setValue(3.0)
+    win.properties_panel.freq_points_spin.setValue(41)
+
+    code = win.properties_panel._generate_scattering_calculation_code()
+    assert code is not None
+    assert '# line tap' in code and 'LineResonator' in code
+
+    code_no_plot = code.split("# Plot S-parameters")[0].rsplit("# ====", 1)[0]
+    namespace = {}
+    exec(compile(code_no_plot, '<generated>', 'exec'), namespace)
+    gsm = namespace['scattering_matrix']
+
+    live = compute_live_S(win, f_start=3.0, f_stop=6.0, points=41)
+    np.testing.assert_allclose(gsm.S, live['S'], rtol=1e-12, atol=1e-14)
+    assert gsm.port_labels == ['TL1']
+
+
+def test_multicomponent_generated_code_matches_live_S(para):
+    """Disconnected graph: (A, B sharing P1) + (C tapped onto TL1). The
+    export emits each component literally, mirroring the live jobs — hub
+    attachments referencing comb-mode ids and tap edges included."""
+    gp, win, config = para
+    from graphulator.graphulator_para import _compute_sparams_job
+
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    a = add_node(win, 0, 'A', 0.0, freq=5.0)
+    b = add_node(win, 1, 'B', 2.0, freq=6.0)
+    p1 = win.add_port(label='P1', pos=(4.0, 0.0))
+    win.add_port_attachment(p1, 0, rate=0.2, sign=1)
+    win.add_port_attachment(p1, 1, rate=0.2, sign=-1)
+    add_gui_edge(win, a, b, rate=0.05)
+
+    c = add_node(win, 2, 'C', 8.0, freq=4.4)
+    line = win.add_line_resonator(label='TL1', pos=(8.0, -3.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL',
+                                  Z0_port=50.0)
+    win.connect_line_end_to_node(line, 'x0', c, rate=0.03)
+
+    comps = win._find_connected_components()
+    assert len(comps) == 2
+
+    f = np.linspace(3.0, 6.0, 41)
+    live = {}
+    for comp in comps:
+        job = win._build_sparams_job(comp, f, 3.0, 6.0, 41,
+                                     multi_component=True)
+        result = _compute_sparams_job(job)
+        assert result is not None
+        live[comp['index']] = result
+
+    win._enter_scattering_mode()
+    win.scattering_components = comps
+    win.sparams_data = {
+        'frequencies': f,
+        'components': [dict(live[i], component_index=i)
+                       for i in sorted(live)],
+        'num_components': 2,
+    }
+    win.properties_panel.freq_center_spin.setValue(4.5)
+    win.properties_panel.freq_span_spin.setValue(3.0)
+    win.properties_panel.freq_points_spin.setValue(41)
+
+    code = win.properties_panel._generate_scattering_calculation_code()
+    assert code is not None
+    assert 'gsm_components' in code and "'line:0:n" in code
+
+    head = code.split("# Add traces to each component's GSM")[0].rsplit(
+        "# ====", 1)[0]
+    namespace = {}
+    exec(compile(head, '<generated>', 'exec'), namespace)
+    gsms = namespace['gsm_components']
+    assert set(gsms) == set(live)
+    for i in sorted(live):
+        np.testing.assert_allclose(gsms[i].S, live[i]['S'],
+                                   rtol=1e-12, atol=1e-14)
+    # the tapped component carries the line's port channel
+    labels = {i: gsms[i].port_labels for i in gsms}
+    assert labels[0] == ['P1']
+    assert labels[1] == ['TL1']
