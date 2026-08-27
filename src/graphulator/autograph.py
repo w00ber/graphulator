@@ -18,6 +18,13 @@ from more_itertools import collapse
 
 logger = logging.getLogger(__name__)
 
+
+def _edge_key(a, b):
+    """Canonical undirected edge key, robust to mixed int/str node ids
+    (line-macro expansion introduces string ids like "TL1:n3" alongside the
+    GUI's integer ids; plain sorted() cannot compare those)."""
+    return tuple(sorted([a, b], key=lambda v: (isinstance(v, str), v)))
+
 # ---------------------------------------------------------------------------
 # Dissipation hubs
 # ---------------------------------------------------------------------------
@@ -154,6 +161,236 @@ def _hub_signed_weight(hub_id, node_id, weight_mag, weight_phase_deg) -> float:
         return -float(weight_mag)
     raise ValueError(_COMPLEX_WEIGHT_MSG.format(
         hub_id=hub_id, node_id=node_id, phase=weight_phase_deg))
+
+
+# ---------------------------------------------------------------------------
+# Line-resonator macro (transmission-line standing-wave comb)
+# ---------------------------------------------------------------------------
+#
+# A LineResonator expands at extraction time into the open-open standing-wave
+# mode comb of a transmission line plus (optionally) one monitored port hub
+# with signed couplings kappa_n = (+-1)^n sqrt(gamma) — one physical resistor
+# terminating one end of the line sees ONE scalar, which in the mode basis is
+# a rank-one dense damper. The expansion follows the reference numerics
+# `cmtline_core.comb_poles_K` (natural units v = ell = Ztx = 1, poles at
+# {0, +-n pi}); tests/test_line_macro_vs_core.py pins the expansion arrays to
+# the reference bitwise under the unit mapping below, per the
+# import-and-compare rule (never re-derive silently).
+#
+# Unit mapping (write once, test in test_units_layer.py): the natural comb
+# has angular pole spacing pi; the physical comb has linear-frequency
+# spacing FSR (the same units as autograph's freq/B fields). Frequencies and
+# rates therefore scale by FSR/pi, couplings (sqrt-rate) by sqrt(FSR/pi):
+#     gamma_phys / FSR = gamma_nat / pi = (2/pi) (Ztx / Z0_port)
+#
+# Uniform loss: a spatially uniform per-length amplitude attenuation alpha
+# damps EVERY open-open standing mode at the same amplitude rate alpha*v (by
+# mode orthogonality in the open-open basis: the loss operator is a multiple
+# of the identity there), i.e. Gamma_int = 2*alpha in natural angular units,
+# so per-mode B_int = (2/pi) * alpha_uniform * FSR with alpha_uniform the
+# ONE-WAY attenuation alpha*ell in nepers. Verified against a lossy-ABCD
+# reference (complex propagation angle) in tests/test_uniform_loss.py: the
+# loss-induced change in S11 matches the reference with the residual
+# vanishing at the same 1/N rate as the lossless truncation error.
+
+_LINE_PORT_ENDS = (None, 'x0', 'xL')
+
+_LINE_TWO_PORT_MSG = (
+    "LineResonator '{line_id}': port_end must be one of {ends!r} (one port "
+    "maximum, at either end; the other end is open). A two-port line is a "
+    "Phase-2 feature blocked on a written-and-verified ABCD two-port "
+    "reference."
+)
+
+
+def line_natural_frequency_to_physical(value, FSR):
+    """Map a natural-units (v = ell = 1, angular) frequency/rate to physical
+    linear-frequency units: natural pole spacing pi -> physical spacing FSR."""
+    return value * (FSR / np.pi)
+
+
+def line_natural_coupling_to_physical(value, FSR):
+    """Map a natural-units coupling amplitude (sqrt-rate) to physical units."""
+    return value * np.sqrt(FSR / np.pi)
+
+
+def _line_comb_natural(N, Z0, signs=True):
+    """The comb of `cmtline_core.comb_poles_K` at v = ell = Ztx = 1.
+
+    Mirrors the reference implementation operation for operation so the
+    arrays are bitwise equal (pinned by test_line_macro_vs_core.py):
+    poles {0, +-n pi}, couplings kappa = (+-1)^n sqrt(gamma),
+    gamma = 2 (Ztx/Z0)(v/ell) = 2/Z0.
+    """
+    gam = 2.0 * (1.0 / Z0) * (1.0 / 1.0)
+    poles = [0.0]
+    kap = [np.sqrt(gam)]
+    for n in range(1, N + 1):
+        s = (-1) ** n if signs else 1.0
+        poles += [n * np.pi * 1.0 / 1.0, -n * np.pi * 1.0 / 1.0]
+        kap += [s * np.sqrt(gam), s * np.sqrt(gam)]
+    return np.array(poles), np.array(kap, dtype=float), gam
+
+
+@dataclass
+class LineResonator:
+    """Transmission-line standing-wave comb macro (GUI glyph: cylinder, "L").
+
+    Expands at extraction time into 2N+1 comb modes (full comb from DC,
+    N = ceil(f_max/FSR); band-limiting is Phase 2, blocked on an underived
+    low-side closure) plus one monitored port hub when port_end is set.
+    Expanded node ids are deterministic and addressable
+    (``f"{line_id}:n{k}"``, k = 0, +-1, ..., +-N) so pump edges and devices
+    can target specific modes.
+
+    Attributes
+    ----------
+    line_id : Any
+        Stable identifier; expanded ids and the port hub id derive from it.
+    label : str
+        Display label; the port hub (and hence the S channel) uses it.
+    FSR : float
+        Free spectral range in linear-frequency units (same units as node
+        freq fields).
+    Ztx : float
+        Line characteristic impedance.
+    f_max : float
+        Comb extent: modes up to N = ceil(f_max/FSR).
+    port_end : None | 'x0' | 'xL'
+        Which end carries the port termination (one port max, Phase 1).
+        'xL' -> alternating coupling signs, 'x0' -> all-plus, None -> no
+        port hub (isolated comb; both ends open).
+    Z0_port : float
+        Port termination impedance.
+    alpha_uniform : float
+        One-way amplitude attenuation alpha*ell in nepers; maps to per-mode
+        B_int = (2/pi) alpha FSR (see module comment; gated by
+        tests/test_uniform_loss.py).
+    """
+
+    line_id: Any
+    FSR: float
+    Ztx: float
+    f_max: float
+    label: str = ''
+    port_end: Optional[str] = None
+    Z0_port: float = 50.0
+    alpha_uniform: float = 0.0
+
+    def __post_init__(self):
+        if self.port_end not in _LINE_PORT_ENDS:
+            raise ValueError(_LINE_TWO_PORT_MSG.format(
+                line_id=self.line_id, ends=_LINE_PORT_ENDS))
+        if self.FSR <= 0:
+            raise ValueError(f"LineResonator '{self.line_id}': FSR must be > 0")
+        if self.f_max < self.FSR:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': f_max ({self.f_max}) must "
+                f"be >= FSR ({self.FSR}) so the comb has at least one pair")
+        if not self.label:
+            self.label = str(self.line_id)
+
+    @property
+    def N(self) -> int:
+        """Number of nonzero-frequency pole pairs, N = ceil(f_max/FSR)."""
+        return int(np.ceil(self.f_max / self.FSR))
+
+    def expand_arrays(self):
+        """Return (freqs, kappas, gamma_phys, N) in physical units.
+
+        freqs[i], kappas[i] follow the reference comb order
+        [0, +FSR, -FSR, +2 FSR, -2 FSR, ...] (frequencies to ~1 ulp of
+        k*FSR — they are produced by the tested unit mapping, not by
+        multiplying k*FSR directly).
+        """
+        poles_nat, kap_nat, gam_nat = _line_comb_natural(
+            self.N, self.Z0_port / self.Ztx, signs=(self.port_end == 'xL'))
+        freqs = line_natural_frequency_to_physical(poles_nat, self.FSR)
+        kappas = line_natural_coupling_to_physical(kap_nat, self.FSR)
+        gamma_phys = line_natural_frequency_to_physical(gam_nat, self.FSR)
+        return freqs, kappas, gamma_phys, self.N
+
+    @property
+    def gamma(self) -> float:
+        """Total port coupling rate gamma = (2/pi)(Ztx/Z0_port) FSR."""
+        return self.expand_arrays()[2]
+
+    @property
+    def B_int_per_mode(self) -> float:
+        """Per-mode internal loss from alpha_uniform (see module comment)."""
+        return line_natural_frequency_to_physical(
+            2.0 * self.alpha_uniform, self.FSR)
+
+    def mode_node_id(self, k: int) -> str:
+        """Deterministic node id of comb mode k (k = 0, +-1, ..., +-N)."""
+        return f"{self.line_id}:n{k}"
+
+    @property
+    def port_hub_id(self) -> str:
+        return f"{self.line_id}:port"
+
+    def expand(self):
+        """Expand to (nodes, hubs) in pgraph-style dicts.
+
+        nodes carry freq/B_int/B_ext directly (like .pgraph node dicts);
+        hubs is [] when port_end is None, else one monitored hub whose
+        attachment vector is the signed kappa comb.
+        """
+        freqs, kappas, _, N = self.expand_arrays()
+        ks = [0]
+        for n in range(1, N + 1):
+            ks += [n, -n]
+
+        B_int = self.B_int_per_mode
+        nodes = []
+        for i, k in enumerate(ks):
+            nodes.append({
+                'node_id': self.mode_node_id(k),
+                'label': f"{self.label}:n{k}",
+                'pos': (float(i), -2.0),
+                'conj': False,
+                'freq': float(freqs[i]),
+                'B_int': float(B_int),
+                'B_ext': None,
+            })
+
+        hubs = []
+        if self.port_end is not None:
+            attachments = []
+            for i, k in enumerate(ks):
+                mag = float(abs(kappas[i]))
+                phase = 0.0 if kappas[i] >= 0 else 180.0
+                attachments.append((self.mode_node_id(k), mag, phase))
+            hubs.append({
+                'hub_id': self.port_hub_id,
+                'label': self.label,
+                'attachments': attachments,
+                'monitored': True,
+            })
+        return nodes, hubs
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'line_id': self.line_id,
+            'label': self.label,
+            'FSR': self.FSR,
+            'Ztx': self.Ztx,
+            'f_max': self.f_max,
+            'port_end': self.port_end,
+            'Z0_port': self.Z0_port,
+            'alpha_uniform': self.alpha_uniform,
+        }
+
+
+def _normalize_line(line) -> "LineResonator":
+    """Accept a LineResonator or an equivalent dict."""
+    if isinstance(line, LineResonator):
+        return line
+    kwargs = {k: line[k] for k in ('line_id', 'FSR', 'Ztx', 'f_max')}
+    for k in ('label', 'port_end', 'Z0_port', 'alpha_uniform'):
+        if k in line and line[k] is not None:
+            kwargs[k] = line[k]
+    return LineResonator(**kwargs)
 
 def load_pgraph(filepath: Optional[Union[str, Path]] = None, use_dialog: bool = False) -> Dict[str, Any]:
     """
@@ -484,7 +721,8 @@ class GraphExtractor:
         root_node_id: Optional[int] = None,
         precomputed_tree_edges: Optional[List[List[int]]] = None,
         precomputed_chord_edges: Optional[List[List[int]]] = None,
-        hubs: Optional[List[Any]] = None
+        hubs: Optional[List[Any]] = None,
+        line_resonators: Optional[List[Any]] = None
     ) -> Dict[str, Any]:
         """
         Extract all graph structure and numerical parameters into a single dictionary.
@@ -516,6 +754,12 @@ class GraphExtractor:
             (S channels, in list order); unmonitored hubs are loss channels.
             Legacy per-node B_ext still auto-wraps into single-attachment
             ports appended after the explicit ones (see get_effective_hubs).
+        line_resonators : Optional[List], default=None
+            LineResonator macros (instances or dicts). Each expands BEFORE
+            node processing into its standing-wave comb nodes (appended after
+            the explicit nodes, in comb order) plus its port hub (appended
+            after the explicit hubs). Expanded node ids are stable
+            (``f"{line_id}:n{k}"``) and addressable by pump edges.
 
         Returns
         -------
@@ -537,6 +781,34 @@ class GraphExtractor:
         ValueError
             If root_node_id is specified but not found in nodes
         """
+        # Line-resonator macro pre-pass: expand each macro into its comb
+        # nodes + port hub before any node processing, so downstream code
+        # sees only ordinary nodes and hubs. Expanded nodes go after the
+        # explicit ones (deterministic basis position), expanded hubs after
+        # the explicit hubs (deterministic channel order).
+        normalized_lines = [_normalize_line(l) for l in (line_resonators or [])]
+        if normalized_lines:
+            nodes = list(nodes)
+            scattering_assignments = dict(scattering_assignments)
+            hubs = list(hubs or [])
+            if basis_order is not None:
+                basis_order = list(basis_order)
+            # keep expanded node dicts alive: assignments are keyed by id()
+            self._line_expansion_nodes = []
+            for line in normalized_lines:
+                line_nodes, line_hubs = line.expand()
+                for node in line_nodes:
+                    self._line_expansion_nodes.append(node)
+                    nodes.append(node)
+                    scattering_assignments[id(node)] = {
+                        'freq': node['freq'],
+                        'B_int': node['B_int'],
+                        'B_ext': node['B_ext'],
+                    }
+                    if basis_order is not None:
+                        basis_order.append(node)
+                hubs.extend(line_hubs)
+
         # Use basis_order if provided, otherwise use nodes list
         if basis_order is None:
             basis_order = nodes
@@ -702,7 +974,7 @@ class GraphExtractor:
         # Create edge lookup dictionary for quick access
         edge_lookup = {}
         for edge in extracted_edges:
-            key = tuple(sorted([edge['from_node_id'], edge['to_node_id']]))
+            key = _edge_key(edge['from_node_id'], edge['to_node_id'])
             edge_lookup[key] = edge
 
         # Add f_p to each tree edge, preserving branch grouping
@@ -710,7 +982,7 @@ class GraphExtractor:
         for branch in tree_edges:
             branch_with_fp = []
             for from_id, to_id in branch:
-                edge_key = tuple(sorted([from_id, to_id]))
+                edge_key = _edge_key(from_id, to_id)
                 edge = edge_lookup.get(edge_key)
                 f_p = edge['f_p'] if edge else None
                 branch_with_fp.append([from_id, to_id, f_p])
@@ -724,6 +996,7 @@ class GraphExtractor:
             'nodes': extracted_nodes,
             'edges': extracted_edges,
             'hubs': normalized_hubs,
+            'line_resonators': [l.to_dict() for l in normalized_lines],
             'tree_edges': tree_edges_with_fp,
             'chord_edges': chord_edges,
             'frequency': frequency_settings.copy(),
@@ -952,7 +1225,7 @@ class GraphExtractor:
             to_id = edge['to_node_id']
 
             # Create normalized edge key (undirected)
-            edge_key = tuple(sorted([from_id, to_id]))
+            edge_key = _edge_key(from_id, to_id)
             edge_dict[edge_key] = edge
 
             # Add to adjacency (both directions for undirected graph)
@@ -1079,7 +1352,7 @@ class GraphExtractor:
         # Extract just the (from_id, to_id) pairs from tree_edges (ignoring f_p value)
         # tree_edges is now nested by branch, so we need to flatten it first
         tree_edge_set = set(
-            tuple(sorted([e[0], e[1]]))
+            _edge_key(e[0], e[1])
             for branch in self.graph_data['tree_edges']
             for e in branch
         )
@@ -1090,7 +1363,7 @@ class GraphExtractor:
 
             from_id = edge['from_node_id']
             to_id = edge['to_node_id']
-            edge_key = tuple(sorted([from_id, to_id]))
+            edge_key = _edge_key(from_id, to_id)
 
             required = ['rate', 'phase']
             if edge_key in tree_edge_set:
@@ -1362,7 +1635,7 @@ class GraphExtractor:
 
             from_id = edge['from_node_id']
             to_id = edge['to_node_id']
-            edge_key = tuple(sorted([from_id, to_id]))
+            edge_key = _edge_key(from_id, to_id)
 
             # Check if this is a chord edge
             chord_key_forward = (from_id, to_id)
