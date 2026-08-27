@@ -158,7 +158,7 @@ def test_save_load_round_trip_and_auto_enable(para, tmp_path):
     # P1 plus the line's own (explicit, visible) port glyph
     assert len(data['ports']) == 2
     assert len(data['line_resonators']) == 1
-    assert data['line_resonators'][0]['ends']['xL']['kind'] == 'port'
+    assert data['line_resonators'][0]['ends']['xL'][0]['kind'] == 'port'
 
     # load with the mode off: it must auto-enable and restore everything
     config.EXPLICIT_PORTS_MODE = False
@@ -353,8 +353,9 @@ def test_line_gets_an_explicit_visible_port(para):
                                   Z0_port=50.0)
     assert len(win.ports) == 1
     port = win.ports[0]
-    assert line['ends']['xL'] == {'kind': 'port', 'port_id': port['port_id']}
-    assert line['ends']['x0'] is None
+    assert line['ends']['xL'] == [{'kind': 'port',
+                                   'port_id': port['port_id']}]
+    assert line['ends']['x0'] == []
 
     # the port's hub column carries the whole comb (2N+1 couplings)
     hubs = win._gui_hubs_payload()
@@ -406,7 +407,7 @@ def test_edge_tool_connects_line_end_to_port(para):
     assert win._attach_pending_line_end == (line, 'x0')
     win._on_click_edge_mode(canvas_event(win, -9.0, 0.0))   # the port
     assert win._attach_pending_line_end is None
-    assert line['ends']['x0']['port_id'] == port['port_id']
+    assert line['ends']['x0'][0]['port_id'] == port['port_id']
     assert len(win.nodes) == n_nodes                        # comb stayed inside
 
     hubs = win._gui_hubs_payload()
@@ -424,7 +425,7 @@ def test_port_first_order_also_terminates_line(para):
     win._toggle_edge_mode()
     win._on_click_edge_mode(canvas_event(win, -9.0, 0.0))   # port first
     win._on_click_edge_mode(canvas_event(win, *win._line_end_points(line)['x0']))
-    assert line['ends']['x0']['port_id'] == port['port_id']
+    assert line['ends']['x0'][0]['port_id'] == port['port_id']
 
 
 def test_second_termination_refused_as_phase2(para):
@@ -437,7 +438,7 @@ def test_second_termination_refused_as_phase2(para):
     other = win.add_port(label='P2', pos=(-9.0, 0.0))
     with pytest.raises(ValueError, match="two-port"):
         win.connect_line_end_to_port(line, 'x0', other)
-    assert line['ends']['x0'] is None
+    assert line['ends']['x0'] == []
 
 
 def test_line_shares_a_component_with_its_ports_nodes(para):
@@ -477,7 +478,7 @@ def test_legacy_port_end_migrates_to_explicit_port(para):
     win._deserialize_ports_and_lines(data)
     assert len(win.ports) == 1
     migrated = win.line_resonators[0]
-    assert migrated['ends']['xL']['port_id'] == win.ports[0]['port_id']
+    assert migrated['ends']['xL'][0]['port_id'] == win.ports[0]['port_id']
     assert len(win._gui_hubs_payload()[0]['attachments']) == 2 * 4 + 1
 
 
@@ -638,3 +639,51 @@ def test_rubber_band_selects_glyphs(para):
     win._delete_selected_nodes()
     assert port not in win.ports
     assert win.line_resonators == []
+
+
+def test_same_end_multiport_is_allowed(para):
+    """Several loads may tap the SAME end (e.g. a stub resonator read out by
+    two ports): each contributes its own rank-one u_n(end) damper to its own
+    hub column, which reproduces ABCD within the comb-truncation floor."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL',
+                                  Z0_port=50.0)
+    first = win.ports[0]
+    second = win.add_port(label='P2', pos=(9.0, 3.0))
+    win.connect_line_end_to_port(line, 'xL', second)
+
+    assert [c['port_id'] for c in line['ends']['xL']] == \
+        [first['port_id'], second['port_id']]
+    assert win._line_end_ports(line, 'xL') == [first, second]
+
+    # two hub columns, each carrying the whole comb at the same end
+    hubs = win._gui_hubs_payload()
+    assert len(hubs) == 2
+    n_modes = 2 * 4 + 1
+    assert all(len(h['attachments']) == n_modes for h in hubs)
+
+    from graphulator.graphulator_para import _compute_sparams_job
+    f = np.linspace(0.5, 4.0, 41)
+    comps = win._find_connected_components()
+    res = _compute_sparams_job(win._build_sparams_job(comps[0], f, 0.5, 4.0, 41))
+    S = res['S']
+    assert S.shape[1:] == (2, 2)
+    # lossless: each column carries unit power out of the two channels
+    power = np.abs(S[:, 0, 0]) ** 2 + np.abs(S[:, 1, 0]) ** 2
+    assert np.max(np.abs(power - 1.0)) < 1e-12
+
+
+def test_line_only_graph_enters_scattering_mode(para):
+    """A line-only graph has no GUI nodes (its comb is inside the macro) but
+    is still a valid scattering problem."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5, Ztx=65.0,
+                           f_max=6.0, port_end='xL', Z0_port=50.0)
+    assert win.nodes == []
+    win._toggle_scattering_mode()
+    assert win.scattering_mode is True
+    ok, _ = win._validate_scattering_parameters()
+    assert ok is True

@@ -239,8 +239,9 @@ class LineInputDialog(QDialog):
             "edge tool (E). One terminated end per line in Phase 1.")
         if editing:
             # editing must not silently rewire: show the live topology
-            terminated = [e for e in ('x0', 'xL')
-                          if (line.get('ends') or {}).get(e)]
+            terminated = [f"{e} ({len(ExplicitPortsMixin._end_conns(line, e))})"
+                          for e in ('x0', 'xL')
+                          if ExplicitPortsMixin._end_conns(line, e)]
             status = QLabel(", ".join(terminated) if terminated
                             else "both ends open")
             status.setToolTip("Rewire with the edge tool (E): click a line "
@@ -391,10 +392,15 @@ class ExplicitPortsMixin:
             'label': label,
             'pos': (float(pos[0]), float(pos[1])),
             'angle': float(angle),
-            # Explicit end connections. Each end is None (open) or
-            # {'kind': 'port', 'port_id': int}. A line is NEVER implicitly
-            # terminated: its port is a real, visible, editable glyph.
-            'ends': {'x0': None, 'xL': None},
+            # Explicit end connections: each end holds a LIST, so several
+            # loads can tap the same physical point (e.g. a stub resonator
+            # read out by two ports). A line is NEVER implicitly terminated:
+            # its port is a real, visible, editable glyph.
+            'ends': {'x0': [], 'xL': []},
+            # How a node tap at each end couples to the line. This is a
+            # property of the physical tap, shared by everything attached
+            # there, not of the individual graph mode.
+            'end_coupling': {'x0': 'capacitive', 'xL': 'capacitive'},
             'FSR': float(FSR),
             'Ztx': float(Ztx),
             'f_max': float(f_max),
@@ -540,10 +546,11 @@ class ExplicitPortsMixin:
         for line in self.line_resonators:
             if line_ids is not None and line['line_id'] not in line_ids:
                 continue
-            for end, conn in (line.get('ends') or {}).items():
-                if conn and conn.get('kind') == 'port':
-                    line_terms.setdefault(conn['port_id'], []).append(
-                        (line, end))
+            for end in ('x0', 'xL'):
+                for conn in self._end_conns(line, end):
+                    if conn.get('kind') == 'port':
+                        line_terms.setdefault(conn['port_id'], []).append(
+                            (line, end))
 
         payload = []
         for port in self.ports:
@@ -1202,9 +1209,10 @@ class ExplicitPortsMixin:
                    if a['node_id'] in node_pos]
         # a terminated line end pulls the apex toward that lead too
         for line in self.line_resonators:
-            for end, conn in (line.get('ends') or {}).items():
-                if conn and conn.get('kind') == 'port' \
-                        and conn['port_id'] == port['port_id']:
+            for end in ('x0', 'xL'):
+                if any(c.get('kind') == 'port'
+                       and c.get('port_id') == port['port_id']
+                       for c in self._end_conns(line, end)):
                     targets.append(self._line_end_points(line)[end])
         vx = vy = 0.0
         for pos in targets:
@@ -1243,13 +1251,30 @@ class ExplicitPortsMixin:
                     best, best_d = (line, end), d
         return best
 
+    @staticmethod
+    def _end_conns(line, end):
+        """Connection list at one end (normalizes legacy None/dict forms)."""
+        raw = (line.get('ends') or {}).get(end)
+        if not raw:
+            return []
+        return [raw] if isinstance(raw, dict) else list(raw)
+
+    def _line_end_ports(self, line, end):
+        """Port glyphs terminating `end`, in connection order."""
+        out = []
+        for conn in self._end_conns(line, end):
+            if conn.get('kind') != 'port':
+                continue
+            port = next((p for p in self.ports
+                         if p['port_id'] == conn['port_id']), None)
+            if port is not None:
+                out.append(port)
+        return out
+
     def _line_end_port(self, line, end):
-        """The port glyph terminating `end`, or None."""
-        conn = (line.get('ends') or {}).get(end)
-        if not conn or conn.get('kind') != 'port':
-            return None
-        return next((p for p in self.ports
-                     if p['port_id'] == conn['port_id']), None)
+        """First port glyph terminating `end`, or None (drawing helper)."""
+        ports = self._line_end_ports(line, end)
+        return ports[0] if ports else None
 
     def connect_line_end_to_port(self, line, end, port):
         """Terminate one end of a line on an explicit port glyph.
@@ -1260,26 +1285,41 @@ class ExplicitPortsMixin:
         may also attach to ordinary nodes — one physical resistor can see
         both a line and a device).
         """
-        line.setdefault('ends', {'x0': None, 'xL': None})
+        line.setdefault('ends', {'x0': [], 'xL': []})
+        for e in ('x0', 'xL'):
+            line['ends'][e] = self._end_conns(line, e)   # normalize
         other = 'xL' if end == 'x0' else 'x0'
-        if line['ends'].get(other):
-            # The hub framework can express a doubly-terminated line, and
-            # the result is passive by construction, but nothing has checked
-            # it against the real two-port line: that ABCD reference has not
-            # been written and verified. Refuse rather than ship an
+        if line['ends'][other]:
+            # Several loads at the SAME end are fine: they tap one physical
+            # point, each contributing its own rank-one u_n(end) damper, and
+            # that reproduces ABCD within the comb-truncation floor
+            # (test_line_same_end_multiport). Loading BOTH ends is the
+            # through-line two-port, which has no written-and-verified ABCD
+            # two-port reference yet — refuse rather than ship an
             # unvalidated S21.
             raise ValueError(
                 f"'{line['label']}' is already terminated at its {other} "
-                "end. A two-port line (both ends loaded) is a Phase-2 "
-                "feature blocked on a written-and-verified ABCD two-port "
-                "reference; disconnect the other end first.")
-        line['ends'][end] = {'kind': 'port', 'port_id': port['port_id']}
+                "end. A two-port line (both ends loaded, i.e. transmission "
+                "through the line) is a Phase-2 feature blocked on a "
+                "written-and-verified ABCD two-port reference. Several "
+                "loads on the SAME end are supported.")
+        if any(c.get('port_id') == port['port_id']
+               for c in line['ends'][end]):
+            return None                                   # already attached
+        conn = {'kind': 'port', 'port_id': port['port_id']}
+        line['ends'][end].append(conn)
         self._invalidate_scattering_data()
-        return line['ends'][end]
+        return conn
 
-    def disconnect_line_end(self, line, end):
-        line.setdefault('ends', {'x0': None, 'xL': None})
-        line['ends'][end] = None
+    def disconnect_line_end(self, line, end, port=None):
+        """Drop one connection at `end` (or all of them when port is None)."""
+        line.setdefault('ends', {'x0': [], 'xL': []})
+        conns = self._end_conns(line, end)
+        if port is None:
+            line['ends'][end] = []
+        else:
+            line['ends'][end] = [c for c in conns
+                                 if c.get('port_id') != port['port_id']]
         self._invalidate_scattering_data()
 
     def _connect_line_end_interactively(self, line, end, port):
@@ -1544,20 +1584,19 @@ class ExplicitPortsMixin:
             # port glyph), or pending a connection (blue)
             pend = self._attach_pending_line_end
             for end_name, (ex, ey) in self._line_end_points(line).items():
-                conn_port = self._line_end_port(line, end_name)
+                conn_ports = self._line_end_ports(line, end_name)
                 is_pending = bool(pend and pend[0] is line
                                   and pend[1] == end_name)
-                if conn_port is not None:
+                for conn_port in conn_ports:
                     tx, ty = self._port_lead_tip(conn_port)
                     ax.add_line(mlines.Line2D(
                         [ex, tx], [ey, ty], color='dimgray', linewidth=1.4,
                         linestyle=(0, (4, 3)), zorder=4, alpha=0.9))
                 mark = ('dodgerblue' if is_pending
-                        else 'black' if conn_port is not None else 'darkgray')
+                        else 'black' if conn_ports else 'darkgray')
                 ax.add_patch(mpatches.Circle(
                     (ex, ey), 0.16 * r,
-                    facecolor=(mark if conn_port is not None or is_pending
-                               else 'white'),
+                    facecolor=(mark if conn_ports or is_pending else 'white'),
                     edgecolor=mark, linewidth=1.8, zorder=11.5))
 
             # label INSIDE the cylinder body, node-style bold sans-serif
@@ -1567,7 +1606,7 @@ class ExplicitPortsMixin:
             n_pairs = LineResonator(**line_payload(line)).N
             sub = f"FSR={line['FSR']:g}, N={n_pairs}"
             terminated = [e for e in ('x0', 'xL')
-                          if self._line_end_port(line, e) is not None]
+                          if self._line_end_ports(line, e)]
             if terminated:
                 sub += ", port@" + "+".join(terminated)
             sx, sy = _rotate_point(lx, ly - h - 0.35 * r, lx, ly, angle)
@@ -1605,8 +1644,12 @@ class ExplicitPortsMixin:
                     'FSR': l['FSR'],
                     'Ztx': l['Ztx'],
                     'f_max': l['f_max'],
-                    'ends': {e: (dict(v) if v else None)
-                             for e, v in (l.get('ends') or {}).items()},
+                    'ends': {e: [dict(c) for c
+                                 in ExplicitPortsMixin._end_conns(l, e)]
+                             for e in ('x0', 'xL')},
+                    'end_coupling': dict(l.get('end_coupling')
+                                         or {'x0': 'capacitive',
+                                             'xL': 'capacitive'}),
                     'port_end': l.get('port_end'),   # legacy, read on load
                     'Z0_port': l.get('Z0_port', 50.0),
                     'alpha_uniform': l.get('alpha_uniform', 0.0),
@@ -1664,9 +1707,12 @@ class ExplicitPortsMixin:
                 'FSR': float(ldata['FSR']),
                 'Ztx': float(ldata['Ztx']),
                 'f_max': float(ldata['f_max']),
-                'ends': {e: (dict(v) if v else None) for e, v in
-                         (ldata.get('ends')
-                          or {'x0': None, 'xL': None}).items()},
+                'ends': {e: [dict(c) for c in
+                             ExplicitPortsMixin._end_conns(ldata, e)]
+                         for e in ('x0', 'xL')},
+                'end_coupling': dict(ldata.get('end_coupling')
+                                     or {'x0': 'capacitive',
+                                         'xL': 'capacitive'}),
                 'port_end': ldata.get('port_end'),
                 'Z0_port': float(ldata.get('Z0_port', 50.0)),
                 'alpha_uniform': float(ldata.get('alpha_uniform', 0.0)),
@@ -1682,9 +1728,9 @@ class ExplicitPortsMixin:
         known_port_ids = {p['port_id'] for p in self.ports}
         for line in self.line_resonators:
             ends = line['ends']
-            for end, conn in list(ends.items()):
-                if conn and conn.get('port_id') not in known_port_ids:
-                    ends[end] = None          # dangling reference
+            for end in ('x0', 'xL'):
+                ends[end] = [c for c in ends.get(end, [])
+                             if c.get('port_id') in known_port_ids]
             legacy_end = line.get('port_end')
             if legacy_end in ('x0', 'xL') and not any(ends.values()):
                 r = self.node_radius

@@ -9506,15 +9506,10 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         # component. A line whose port serves nothing else stands alone.
         for line in self.line_resonators:
             partner_node_ids = set()
-            for end, conn in (line.get('ends') or {}).items():
-                if not conn or conn.get('kind') != 'port':
-                    continue
-                port = next((p for p in self.ports
-                             if p['port_id'] == conn['port_id']), None)
-                if port is None:
-                    continue
-                partner_node_ids.update(a['node_id']
-                                        for a in port['attachments'])
+            for end in ('x0', 'xL'):
+                for port in self._line_end_ports(line, end):
+                    partner_node_ids.update(a['node_id']
+                                            for a in port['attachments'])
 
             host = None
             if partner_node_ids:
@@ -9657,7 +9652,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
     def _enter_scattering_mode(self):
         """Enter scattering mode - create scattering graph and tabs"""
-        if not self.nodes:
+        if not self.nodes and not self.line_resonators:
             print("Cannot enter scattering mode: No nodes in graph")
             return
 
