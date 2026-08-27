@@ -20,6 +20,8 @@
   band-limited comb expansion (low-side closure), two-port line macro
   (verified ABCD two-port reference), frequency-dependent hub weights /
   connector embedding (free-Y_L-pole convention).
-- [ ] GUI conveniences deferred from Phase 1: dragging port/line glyphs
-  (reposition currently = delete & re-place), ghost placement previews for
+- [x] Dragging + rotation of port/line glyphs (drag to move with grid
+  snap; Ctrl+U/Ctrl+I rotate the selected glyph's orientation in 15-degree
+  steps; angle persists in .pgraph).
+- [ ] GUI conveniences still deferred: ghost placement previews for
   ports/lines, port glyphs in clipboard copy/paste.

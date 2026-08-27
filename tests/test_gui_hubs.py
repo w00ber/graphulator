@@ -291,3 +291,123 @@ def test_mixed_sector_attachment_rejected_end_to_end(para):
     from graphulator.graphulator_para import _compute_sparams_job
     with pytest.raises(ValueError, match="M_pumped"):
         _compute_sparams_job(job)
+
+
+# ---------------------------------------------------------------------------
+# Interactive canvas flows (synthetic events): edge-tool attachment in both
+# click orders, drag-to-move, rotation, and angle persistence.
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace
+
+
+def canvas_event(win, x, y, button=1):
+    return SimpleNamespace(xdata=x, ydata=y, inaxes=win.canvas.ax,
+                           button=button)
+
+
+def build_unattached_scene(win, config):
+    """Two modes and a port with NO attachments, plus a line."""
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    add_node(win, 0, 'A', 0.0, freq=5.0)
+    add_node(win, 1, 'B', 2.0, freq=6.0)
+    port = win.add_port(label='P1', pos=(5.0, 0.0), monitored=True)
+    line = win.add_line_resonator(label='TL1', pos=(0.0, -4.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL')
+    return port, line
+
+
+def test_edge_tool_attachment_port_first(para):
+    gp, win, config = para
+    port, _ = build_unattached_scene(win, config)
+    win._toggle_edge_mode()
+    win._on_click_edge_mode(canvas_event(win, 5.0, 0.0))   # click the port
+    assert win._attach_pending_port is port
+    win._on_click_edge_mode(canvas_event(win, 0.0, 0.0))   # then the node
+    assert win._attach_pending_port is None
+    assert [a['node_id'] for a in port['attachments']] == [0]
+
+
+def test_edge_tool_attachment_node_first(para):
+    """The natural order — click the mode, then the port — must also work."""
+    gp, win, config = para
+    port, _ = build_unattached_scene(win, config)
+    win._toggle_edge_mode()
+    win._on_click_edge_mode(canvas_event(win, 0.0, 0.0))   # click node A
+    assert win.edge_mode_first_node is win.nodes[0]
+    win._on_click_edge_mode(canvas_event(win, 5.0, 0.0))   # then the port
+    assert win.edge_mode_first_node is None
+    assert [a['node_id'] for a in port['attachments']] == [0]
+
+
+def test_edge_tool_on_line_is_explained_not_silent(para):
+    gp, win, config = para
+    port, line = build_unattached_scene(win, config)
+    win._toggle_edge_mode()
+    consumed = win._maybe_handle_attachment_click(
+        canvas_event(win, 0.0, -4.0))                      # click the line
+    assert consumed is True
+    assert port['attachments'] == []                       # nothing created
+
+
+def test_drag_moves_port_with_snap(para):
+    gp, win, config = para
+    port, _ = build_unattached_scene(win, config)
+    # click on the port in normal mode arms the drag
+    assert win._maybe_handle_ports_normal_click(
+        canvas_event(win, 5.0, 0.0), False, False)
+    assert win._glyph_drag_pending == ('port', port)
+    # move past the threshold with the button held, then release
+    win._on_motion(canvas_event(win, 7.9, 1.1))
+    assert win._glyph_dragging == ('port', port)
+    win._on_release(canvas_event(win, 7.9, 1.1))
+    assert port['pos'] == (8.0, 1.0)                       # snapped to grid
+    # undo restores the original position
+    win._undo()
+    assert win.ports[0]['pos'] == (5.0, 0.0)
+
+
+def test_click_without_motion_does_not_move(para):
+    gp, win, config = para
+    port, _ = build_unattached_scene(win, config)
+    win._maybe_handle_ports_normal_click(canvas_event(win, 5.0, 0.0),
+                                         False, False)
+    win._on_release(canvas_event(win, 5.0, 0.0))
+    assert port['pos'] == (5.0, 0.0)
+    assert win._glyph_drag_pending is None
+
+
+def test_rotate_selected_line_and_hit_test(para):
+    gp, win, config = para
+    _, line = build_unattached_scene(win, config)
+    win.selected_lines = [line]
+
+    # six Ctrl+I steps = 90 degrees; glyph angle, not node positions, changes
+    for _ in range(6):
+        win._rotate_selected_nodes(-15)
+    assert line['angle'] == pytest.approx(90.0)
+
+    # the (wide) cylinder now extends along y: a point above the center hits,
+    # a point far along x (inside the unrotated glyph) misses
+    r = win.node_radius
+    from graphulator.para_features.explicit_ports import LINE_BODY_W
+    far = LINE_BODY_W * r * 0.9
+    assert win._find_line_at_position(0.0, -4.0 + far) is line
+    assert win._find_line_at_position(far, -4.0) is None
+
+
+def test_glyph_angle_round_trips(para):
+    gp, win, config = para
+    port, line = build_unattached_scene(win, config)
+    port['angle'] = 180.0
+    line['angle'] = 90.0
+    data = json.loads(json.dumps(win._serialize_graph()))
+    win._deserialize_graph(data)
+    assert win.ports[0]['angle'] == 180.0
+    assert win.line_resonators[0]['angle'] == 90.0
+    # attachment links start at the rotated lead tip: for a 180-degree port
+    # the tip sits to the LEFT of the glyph center
+    tip_x, tip_y = win._port_lead_tip(win.ports[0])
+    assert tip_x < win.ports[0]['pos'][0]
+    assert tip_y == pytest.approx(win.ports[0]['pos'][1])

@@ -3986,7 +3986,8 @@ class PropertiesPanel(QWidget):
         if not (g.explicit_ports_enabled and g.scattering_mode):
             return
 
-        from .para_features.explicit_ports import PHASE2_PHASE_TOOLTIP
+        from .para_features.explicit_ports import (ALPHA_TOOLTIP,
+                                                   PHASE2_PHASE_TOOLTIP)
 
         node_by_id = {n['node_id']: n for n in g.nodes}
         row = 0
@@ -4106,6 +4107,7 @@ class PropertiesPanel(QWidget):
                 f"Z0={line.get('Z0_port', 50):g}, "
                 f"\N{GREEK SMALL LETTER ALPHA}={line.get('alpha_uniform', 0):g}")
             summary.setStyleSheet("color: dimgray;")
+            summary.setToolTip(ALPHA_TOOLTIP)
             self.ports_param_layout.addWidget(summary, row, 0, 1, 3)
             edit_btn = QPushButton("Edit\N{HORIZONTAL ELLIPSIS}")
             edit_btn.setMaximumWidth(60)
@@ -13293,6 +13295,11 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         if event.inaxes not in valid_axes:
             return
 
+        # Port/line glyph drag (Explicit Ports mode): armed by a click on a
+        # glyph in normal mode, activates past the drag threshold
+        if self._maybe_handle_glyph_motion(event):
+            return
+
         # Check for pending drag - activate only while the left button is actually
         # held (event.button is the button held during the motion, or None on a
         # bare hover). This prevents a stale pending-drag from turning post-release
@@ -14423,6 +14430,9 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
         # Left button
         if event.button == 1:
+            # Port/line glyph drag commit (or pending-drag cleanup)
+            if self._maybe_handle_glyph_release(event):
+                return
             if self.selection_window and self.selection_window_start is not None:
                 self._on_release_selection_window(event)
                 return
