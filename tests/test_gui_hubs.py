@@ -155,14 +155,16 @@ def test_save_load_round_trip_and_auto_enable(para, tmp_path):
 
     data = json.loads(json.dumps(win._serialize_graph()))  # simulate disk
     assert data['version'] == '3.0'
-    assert len(data['ports']) == 1
+    # P1 plus the line's own (explicit, visible) port glyph
+    assert len(data['ports']) == 2
     assert len(data['line_resonators']) == 1
+    assert data['line_resonators'][0]['ends']['xL']['kind'] == 'port'
 
     # load with the mode off: it must auto-enable and restore everything
     config.EXPLICIT_PORTS_MODE = False
     win._deserialize_graph(data)
     assert config.EXPLICIT_PORTS_MODE is True
-    assert len(win.ports) == 1
+    assert len(win.ports) == 2
     restored = win.ports[0]
     assert restored['label'] == 'P1'
     assert restored['attachments'] == port['attachments']
@@ -341,33 +343,142 @@ def test_edge_tool_attachment_node_first(para):
     assert [a['node_id'] for a in port['attachments']] == [0]
 
 
-def test_edge_tool_on_line_offers_explode_declined(para):
+def test_line_gets_an_explicit_visible_port(para):
+    """Placing a terminated line creates a REAL port glyph wired to that
+    end — nothing is implied, and the port is editable like any other."""
     gp, win, config = para
-    port, line = build_unattached_scene(win, config)
-    win._confirm_explode_line = lambda l: False            # user says No
-    win._toggle_edge_mode()
-    consumed = win._maybe_handle_attachment_click(
-        canvas_event(win, 0.0, -4.0))                      # click the line
-    assert consumed is True
-    assert port['attachments'] == []                       # nothing created
-    assert line in win.line_resonators                     # macro kept
+    config.EXPLICIT_PORTS_MODE = True
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL',
+                                  Z0_port=50.0)
+    assert len(win.ports) == 1
+    port = win.ports[0]
+    assert line['ends']['xL'] == {'kind': 'port', 'port_id': port['port_id']}
+    assert line['ends']['x0'] is None
+
+    # the port's hub column carries the whole comb (2N+1 couplings)
+    hubs = win._gui_hubs_payload()
+    assert len(hubs) == 1
+    assert len(hubs[0]['attachments']) == 2 * 4 + 1
+    assert hubs[0]['label'] == 'TL1'
 
 
-def test_edge_tool_on_line_offers_explode_accepted(para):
-    """Saying Yes explodes the macro into nodes + a port, ready for edges."""
+def test_line_termination_matches_implicit_port_physics(para):
+    """The explicit-port refactor is physics-preserving: S is identical to
+    the old implicitly-terminated line."""
     gp, win, config = para
-    _, line = build_unattached_scene(win, config)
-    win._confirm_explode_line = lambda l: True             # user says Yes
+    config.EXPLICIT_PORTS_MODE = True
+    win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5, Ztx=65.0,
+                           f_max=6.0, port_end='xL', Z0_port=50.0)
+    from graphulator.graphulator_para import _compute_sparams_job
+    from graphulator import autograph
+
+    f = np.linspace(0.5, 4.0, 31)
+    comps = win._find_connected_components()
+    result = _compute_sparams_job(win._build_sparams_job(comps[0], f, 0.5, 4.0, 31))
+
+    ref = autograph.LineResonator(line_id='line:0', label='TL1', FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL',
+                                  Z0_port=50.0)
+    ext = autograph.GraphExtractor()
+    ext.extract_graph_data(nodes=[], edges=[], scattering_assignments={},
+                           frequency_settings={'start': 0.5, 'stop': 4.0,
+                                               'points': 31},
+                           line_resonators=[ref])
+    gsm = autograph.GraphScatteringMatrix(ext, f)
+    np.testing.assert_array_equal(result['S'][:, 0, 0], gsm.S[:, 0, 0])
+
+
+def test_edge_tool_connects_line_end_to_port(para):
+    """Click a line-end lead, then a port glyph -> that end is terminated.
+    The comb never leaves the macro (no exploding, no extra nodes)."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end=None)
+    assert win.ports == []                                 # nothing implied
+    port = win.add_port(label='PX', pos=(-9.0, 0.0))
+    n_nodes = len(win.nodes)
+
+    x0_pt = win._line_end_points(line)['x0']
     win._toggle_edge_mode()
-    n_before = len(win.nodes)
-    win._maybe_handle_attachment_click(canvas_event(win, 0.0, -4.0))
-    assert line not in win.line_resonators
-    n_modes = 2 * 4 + 1                                    # N = ceil(6/1.5)
-    assert len(win.nodes) == n_before + n_modes
-    # the comb's port glyph exists and is attached to every mode
-    comb_port = win.ports[-1]
-    assert comb_port['label'] == 'TL1'
-    assert len(comb_port['attachments']) == n_modes
+    win._on_click_edge_mode(canvas_event(win, *x0_pt))      # the end lead
+    assert win._attach_pending_line_end == (line, 'x0')
+    win._on_click_edge_mode(canvas_event(win, -9.0, 0.0))   # the port
+    assert win._attach_pending_line_end is None
+    assert line['ends']['x0']['port_id'] == port['port_id']
+    assert len(win.nodes) == n_nodes                        # comb stayed inside
+
+    hubs = win._gui_hubs_payload()
+    assert len(hubs[0]['attachments']) == 2 * 4 + 1
+    # x0 termination is the all-plus profile u_n(0) = +1
+    assert {ph for _, _, ph in hubs[0]['attachments']} == {0.0}
+
+
+def test_port_first_order_also_terminates_line(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end=None)
+    port = win.add_port(label='PX', pos=(-9.0, 0.0))
+    win._toggle_edge_mode()
+    win._on_click_edge_mode(canvas_event(win, -9.0, 0.0))   # port first
+    win._on_click_edge_mode(canvas_event(win, *win._line_end_points(line)['x0']))
+    assert line['ends']['x0']['port_id'] == port['port_id']
+
+
+def test_second_termination_refused_as_phase2(para):
+    """Both ends loaded = a two-port line: blocked until an ABCD two-port
+    reference is written and verified."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL')
+    other = win.add_port(label='P2', pos=(-9.0, 0.0))
+    with pytest.raises(ValueError, match="two-port"):
+        win.connect_line_end_to_port(line, 'x0', other)
+    assert line['ends']['x0'] is None
+
+
+def test_line_shares_a_component_with_its_ports_nodes(para):
+    """A port serving both a line and a device node puts them in one
+    component (they share a hub column)."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    add_node(win, 0, 'A', 0.0, freq=5.0)
+    line = win.add_line_resonator(label='TL1', pos=(0.0, -6.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL')
+    port = win.ports[0]
+    win.add_port_attachment(port, 0, rate=0.2)
+
+    comps = win._find_connected_components()
+    assert len(comps) == 1
+    assert comps[0]['line_ids'] == [line['line_id']]
+    assert 0 in comps[0]['node_ids']
+
+    # one hub column carrying the device attachment AND the comb
+    hubs = win._gui_hubs_payload()
+    assert len(hubs) == 1
+    assert len(hubs[0]['attachments']) == 1 + (2 * 4 + 1)
+
+
+def test_legacy_port_end_migrates_to_explicit_port(para):
+    """Files written before explicit ends materialize the implied port."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    data = {
+        'version': '3.0', 'format': 'pgraph', 'nodes': [], 'edges': [],
+        'line_resonators': [{
+            'line_id': 0, 'label': 'TLold', 'pos': [0.0, 0.0],
+            'FSR': 1.5, 'Ztx': 65.0, 'f_max': 6.0, 'port_end': 'xL',
+            'Z0_port': 50.0, 'alpha_uniform': 0.0,
+        }],
+    }
+    win._deserialize_ports_and_lines(data)
+    assert len(win.ports) == 1
+    migrated = win.line_resonators[0]
+    assert migrated['ends']['xL']['port_id'] == win.ports[0]['port_id']
+    assert len(win._gui_hubs_payload()[0]['attachments']) == 2 * 4 + 1
 
 
 def test_drag_moves_port_with_snap(para):
@@ -525,4 +636,5 @@ def test_rubber_band_selects_glyphs(para):
     assert line in win.selected_lines
 
     win._delete_selected_nodes()
-    assert win.ports == [] and win.line_resonators == []
+    assert port not in win.ports
+    assert win.line_resonators == []

@@ -116,21 +116,34 @@ results to machine precision (pinned by a golden-file regression suite).
   scattering channel. Enables a per-channel energy audit
   (`GraphScatteringMatrix.absorption`, `.S_full`).
 - **Transmission line** (`L`): the cylinder glyph represents an open–open
-  standing-wave mode comb, parameterized by just `FSR`, `Ztx`, `f_max`, the
-  port end (`x0`/`xL`), `Z0`, and a uniform loss `α`. At extraction it
-  expands into `N = ceil(f_max/FSR)` mode pairs plus DC with signed port
-  couplings `κ_n = (±1)ⁿ √γ`, `γ/FSR = (2/π)(Ztx/Z0)` — validated against an
-  exact ABCD microwave reference (see `examples/demo_line_jpa_port.py`).
+  standing-wave mode comb, parameterized by just `FSR`, `Ztx`, `f_max`,
+  `Z0`, and a uniform loss `α`. At extraction it expands into
+  `N = ceil(f_max/FSR)` mode pairs plus DC with signed couplings
+  `κ_n = u_n(end)·√γ`, `γ/FSR = (2/π)(Ztx/Z0)` — validated against an exact
+  ABCD microwave reference (see `examples/demo_line_jpa_port.py`).
   Cross-damping between comb modes matters whenever γ is comparable to the
-  FSR. *Explode to Nodes* (Insert menu, one-way) materializes the comb for
-  manual pump wiring.
+  FSR.
+
+  **The comb stays inside the macro.** A line is connected by its **end
+  leads**: click a lead with the edge tool (`E`), then a port glyph, and
+  that end is terminated — the whole comb joins that port's single hub
+  column under the hood. You never wire (or even see) the individual comb
+  modes, and a line is never *implicitly* terminated: placing a terminated
+  line creates a real, visible, movable port glyph you can relabel, rewire,
+  or delete. That port may also attach to ordinary nodes, since one physical
+  resistor can see both a line and a device. *Explode to Nodes* (Insert
+  menu, one-way) remains only as a manual escape hatch for inspecting or
+  hand-editing the comb — it is not how you connect a line.
 
 **Phase-2 boundary** (deliberately not implemented, blocked on derivations):
 complex/mixed-sector hub weights (Manley–Rowe pumped scattering through
 hubs — awaits the `M_pumped` two-sector derivation; attachment phases are
 restricted to 0°/180°), band-limited comb expansion (low-side closure
-underived), two-port lines (no verified ABCD two-port reference yet), and
-frequency-dependent hub weights / connector embedding.
+underived), two-port lines — terminating *both* ends of a line is refused with an
+explicit error, since no verified ABCD two-port reference exists yet — 
+coupling a mode directly to a line end (the conservative "reactive hub"
+fan-out, whose per-mode weights are n-dependent and coupling-type
+dependent), and frequency-dependent hub weights / connector embedding.
 
 ### Markdown Notes
 

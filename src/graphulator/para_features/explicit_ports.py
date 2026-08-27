@@ -31,9 +31,22 @@ Data shapes (GUI-side; the extractor schema lives in autograph.py):
         'label': str,
         'pos': (x, y),
         'FSR': float, 'Ztx': float, 'f_max': float,
-        'port_end': None|'x0'|'xL',
         'Z0_port': float, 'alpha_uniform': float,
+        'ends': {                     # explicit terminations, never implied
+            'x0': None | {'kind': 'port', 'port_id': int},
+            'xL': None | {'kind': 'port', 'port_id': int},
+        },
+        'port_end': ...,              # legacy; migrated to 'ends' on load
     }
+
+A transmission line's comb NEVER leaves the macro. Terminating an end on a
+port glyph merges the whole comb (kappa_n = u_n(end)*sqrt(gamma)) into that
+port's single hub column at extraction time, so one drawn connection stands
+for all 2N+1 couplings. The port is a real, visible, editable glyph — a line
+is never implicitly terminated — and the same port may also attach to
+ordinary nodes, because one physical resistor can see both a line and a
+device. "Explode to Nodes" still exists as a manual escape hatch, but it is
+NOT how you connect a line.
 
 Phase-2 items deliberately NOT implemented here (blocked on derivations —
 see autograph.py's blocked list): complex attachment weights (the per-link
@@ -132,7 +145,10 @@ def line_payload(line):
         'FSR': float(line['FSR']),
         'Ztx': float(line['Ztx']),
         'f_max': float(line['f_max']),
-        'port_end': line.get('port_end', 'xL'),
+        # port_end is deprecated: termination comes from line['ends'], which
+        # the GUI merges into the connected port's hub column. Emitting None
+        # keeps LineResonator from generating an implicit hub of its own.
+        'port_end': None,
         'Z0_port': float(line.get('Z0_port', 50.0)),
         'alpha_uniform': float(line.get('alpha_uniform', 0.0)),
     }
@@ -217,9 +233,22 @@ class LineInputDialog(QDialog):
                     if v == current_end), 0)
         self.port_end_combo.setCurrentIndex(idx)
         self.port_end_combo.setToolTip(
-            "Which end carries the port termination. One port per line "
-            "(Phase 1); the other end is open.")
-        form.addRow("Port end:", self.port_end_combo)
+            "Which end gets a port glyph created and wired to it when the "
+            "line is placed. The port is a real, visible glyph afterwards: "
+            "rewire it by clicking a line-end lead then a port with the "
+            "edge tool (E). One terminated end per line in Phase 1.")
+        if editing:
+            # editing must not silently rewire: show the live topology
+            terminated = [e for e in ('x0', 'xL')
+                          if (line.get('ends') or {}).get(e)]
+            status = QLabel(", ".join(terminated) if terminated
+                            else "both ends open")
+            status.setToolTip("Rewire with the edge tool (E): click a line "
+                              "end lead, then a port glyph.")
+            form.addRow("Terminated ends:", status)
+            self.port_end_combo = None
+        else:
+            form.addRow("Terminate end with port:", self.port_end_combo)
 
         self.z0_spin = spin(line.get('Z0_port', 50.0), 1e-6, 1e6, 2, 1.0,
                             "Port termination impedance")
@@ -243,7 +272,8 @@ class LineInputDialog(QDialog):
             'FSR': self.fsr_spin.value(),
             'Ztx': self.ztx_spin.value(),
             'f_max': self.fmax_spin.value(),
-            'port_end': self.port_end_combo.currentData(),
+            'port_end': (self.port_end_combo.currentData()
+                         if self.port_end_combo is not None else None),
             'Z0_port': self.z0_spin.value(),
             'alpha_uniform': self.alpha_spin.value(),
         }
@@ -314,6 +344,7 @@ class ExplicitPortsMixin:
         self.selected_lines = []
         self.selected_attachments = []     # [(port, attachment), ...]
         self._attach_pending_port = None   # port awaiting a node click (edge mode)
+        self._attach_pending_line_end = None  # (line, end) awaiting a port
         self._place_loss_hub_next = False  # next port placement is a loss hub
         self._explicit_ports_notice = None  # keeps the non-modal notice alive
         # glyph drag state (move ports/lines with the mouse in normal mode)
@@ -360,6 +391,10 @@ class ExplicitPortsMixin:
             'label': label,
             'pos': (float(pos[0]), float(pos[1])),
             'angle': float(angle),
+            # Explicit end connections. Each end is None (open) or
+            # {'kind': 'port', 'port_id': int}. A line is NEVER implicitly
+            # terminated: its port is a real, visible, editable glyph.
+            'ends': {'x0': None, 'xL': None},
             'FSR': float(FSR),
             'Ztx': float(Ztx),
             'f_max': float(f_max),
@@ -371,6 +406,21 @@ class ExplicitPortsMixin:
         LineResonator(**line_payload(line))
         self.line_resonators.append(line)
         self.line_id_counter += 1
+
+        # A terminated line gets a REAL port glyph, placed just beyond the
+        # chosen end and wired to it. Nothing is implied: the port is
+        # visible, labelled, movable and deletable like any other.
+        if port_end in ('x0', 'xL'):
+            r = self.node_radius
+            offset = (LINE_BODY_W + 3.0) * r
+            px = line['pos'][0] + (offset if port_end == 'xL' else -offset)
+            port = self.add_port(label=line['label'], pos=(px, line['pos'][1]),
+                                 monitored=True)
+            if port_end == 'xL':
+                port['angle'] = 180.0      # apex faces the line
+                port['angle_pinned'] = True
+            self.connect_line_end_to_port(line, port_end, port)
+
         self._invalidate_scattering_data()
         return line
 
@@ -476,22 +526,39 @@ class ExplicitPortsMixin:
 
     # ---- extractor payloads ----
 
-    def _gui_hubs_payload(self, node_ids=None):
+    def _gui_hubs_payload(self, node_ids=None, line_ids=None):
         """Hub dicts for extract_graph_data(hubs=...).
 
-        Ports with no attachments are inert and omitted. When node_ids is
-        given (component filtering), only hubs entirely inside the component
-        are included (attachments always live in one component because
-        shared ports merge components).
+        A port's hub column is the union of its node attachments and the
+        comb couplings of any transmission-line end terminated on it — one
+        physical resistor can see both a line and a device, and the hub
+        model represents that as one channel. Ports with neither are inert
+        and omitted.
         """
+        # port_id -> [(line, end), ...] terminating on that port
+        line_terms = {}
+        for line in self.line_resonators:
+            if line_ids is not None and line['line_id'] not in line_ids:
+                continue
+            for end, conn in (line.get('ends') or {}).items():
+                if conn and conn.get('kind') == 'port':
+                    line_terms.setdefault(conn['port_id'], []).append(
+                        (line, end))
+
         payload = []
         for port in self.ports:
-            if not port['attachments']:
+            atts = port['attachments']
+            terms = line_terms.get(port['port_id'], [])
+            if node_ids is not None and atts and not all(
+                    a['node_id'] in node_ids for a in atts):
                 continue
-            if node_ids is not None and not all(
-                    a['node_id'] in node_ids for a in port['attachments']):
+            if not atts and not terms:
                 continue
-            payload.append(port_hub_payload(port))
+            hub = port_hub_payload(port)
+            for line, end in terms:
+                resonator = LineResonator(**line_payload(line))
+                hub['attachments'].extend(resonator.end_couplings(end))
+            payload.append(hub)
         return payload
 
     def _gui_lines_payload(self, line_ids=None):
@@ -665,18 +732,61 @@ class ExplicitPortsMixin:
         self._update_plot()
 
     def _maybe_handle_attachment_click(self, event):
-        """Called first from the edge-mode click handler.
+        """Edge-tool click routing for ports, line ends and nodes.
 
-        Both click orders work in a single gesture: port then node, or node
-        then port. Returns True when the click was consumed.
+        Two gestures, either click order:
+          port  +  node      -> attachment link (a shared port simply gets
+                                more than one attachment)
+          line end + port    -> terminate that end of the line on the port
+
+        A transmission line is NEVER exploded to make a connection: its comb
+        stays inside the macro and the coupling is assembled under the hood.
+        Returns True when the click was consumed.
         """
-        if not (self.explicit_ports_enabled or self.ports):
+        if not (self.explicit_ports_enabled or self.ports
+                or self.line_resonators):
             return False
 
+        # --- a line END lead ---
+        hit_end = self._find_line_end_at_position(event.xdata, event.ydata)
+        if hit_end is not None:
+            line, end = hit_end
+            if self._attach_pending_port is not None:
+                port = self._attach_pending_port
+                self._attach_pending_port = None
+                self._connect_line_end_interactively(line, end, port)
+                return True
+            if self.edge_mode_first_node is not None:
+                # node -> line end: the reactive (conservative) fan-out is
+                # Phase 2; see the module note on the reactive hub.
+                self.edge_mode_first_node = None
+                self._status_message(
+                    "Coupling a mode directly to a line end needs the "
+                    "reactive-hub derivation (Phase 2). Terminate the end "
+                    "on a port glyph instead.", 9000)
+                self._update_plot()
+                return True
+            if self._attach_pending_line_end == hit_end:
+                self._attach_pending_line_end = None
+                self._status_message("Line-end connection cancelled", 4000)
+            else:
+                self._attach_pending_line_end = hit_end
+                self._attach_pending_port = None
+                self._status_message(
+                    f"'{line['label']}' {end} end selected \u2014 now click a "
+                    "port glyph to terminate it.", 6000)
+            self._update_plot()
+            return True
+
+        # --- a port glyph ---
         port = self._find_port_at_position(event.xdata, event.ydata)
         if port is not None:
+            if self._attach_pending_line_end is not None:
+                line, end = self._attach_pending_line_end
+                self._attach_pending_line_end = None
+                self._connect_line_end_interactively(line, end, port)
+                return True
             if self.edge_mode_first_node is not None:
-                # node-first order: complete the attachment right here
                 node = self.edge_mode_first_node
                 self.edge_mode_first_node = None
                 self._create_attachment_interactively(port, node)
@@ -687,22 +797,23 @@ class ExplicitPortsMixin:
                     f"Attachment cancelled for '{port['label']}'", 4000)
             else:
                 self._attach_pending_port = port
+                self._attach_pending_line_end = None
                 self._status_message(
-                    f"Port '{port['label']}' selected — now click the mode "
-                    "to attach it to.", 6000)
-                print(f"Port '{port['label']}' selected. Click a node to "
-                      "attach it.")
+                    f"Port '{port['label']}' selected \u2014 now click the mode "
+                    "to attach it to, or a line end to terminate.", 6000)
             self._update_plot()
             return True
 
+        # --- the line BODY: point at the end leads ---
         line = self._find_line_at_position(event.xdata, event.ydata)
         if line is not None:
-            # Phase-1: the line's comb modes are internal to the macro —
-            # offer to explode it right here so the workflow continues
             self._attach_pending_port = None
-            self._offer_explode_line(line)
+            self._status_message(
+                f"Connect '{line['label']}' by its END leads \u2014 click the "
+                "lead at either end, then a port glyph.", 8000)
             return True
 
+        # --- a node completing a pending port ---
         if self._attach_pending_port is not None:
             node = self._find_node_at_position(event.xdata, event.ydata)
             if node is not None:
@@ -921,38 +1032,6 @@ class ExplicitPortsMixin:
                 self.properties_panel._update_scattering_ports_table()
             self._update_plot()
 
-    def _confirm_explode_line(self, line):
-        """Ask whether to explode a line macro (isolated for testability)."""
-        n_modes = 2 * LineResonator(**line_payload(line)).N + 1
-        reply = QMessageBox.question(
-            self, "Explode transmission line?",
-            f"'{line['label']}' is a macro: its {n_modes} comb modes are "
-            "internal, so edges cannot target them directly (its port "
-            "coupling is set by the 'port end' parameter).\n\n"
-            f"Explode '{line['label']}' into {n_modes} real nodes plus a "
-            "port glyph now, so you can wire edges to individual modes?\n"
-            "(One-way: the macro glyph is replaced by its modes.)",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        return reply == QMessageBox.Yes
-
-    def _offer_explode_line(self, line):
-        """Edge-tool click on a line: explain the Phase-1 rule and offer to
-        explode the macro so the user can keep working."""
-        self._status_message(
-            f"'{line['label']}' is a macro — its comb modes take edges only "
-            "after exploding it to nodes.", 8000)
-        if self._confirm_explode_line(line):
-            self._save_state()
-            self.explode_line_resonator(line)
-            if hasattr(self, 'properties_panel'):
-                self.properties_panel._update_scattering_ports_table()
-                if self.scattering_mode:
-                    self.properties_panel._update_scattering_node_table()
-            self._status_message(
-                f"Exploded '{line['label']}' — its modes are now real nodes; "
-                "connect edges to them with E.", 8000)
-            self._update_plot()
-
     def _explode_selected_line(self):
         """Menu action: explode the selected line macro (one-way)."""
         if len(self.selected_lines) != 1:
@@ -1115,23 +1194,111 @@ class ExplicitPortsMixin:
         it terminates. Manual rotation (Ctrl+U/Ctrl+I) pins the angle
         ('angle_pinned'); unattached or pinned ports use the stored angle.
         """
-        if port.get('angle_pinned') or not port['attachments']:
+        if port.get('angle_pinned'):
             return port.get('angle', 0.0)
         px, py = port['pos']
         node_pos = {n['node_id']: n['pos'] for n in self.nodes}
+        targets = [node_pos[a['node_id']] for a in port['attachments']
+                   if a['node_id'] in node_pos]
+        # a terminated line end pulls the apex toward that lead too
+        for line in self.line_resonators:
+            for end, conn in (line.get('ends') or {}).items():
+                if conn and conn.get('kind') == 'port' \
+                        and conn['port_id'] == port['port_id']:
+                    targets.append(self._line_end_points(line)[end])
         vx = vy = 0.0
-        for att in port['attachments']:
-            pos = node_pos.get(att['node_id'])
-            if pos is None:
-                continue
+        for pos in targets:
             dx, dy = pos[0] - px, pos[1] - py
             norm = np.hypot(dx, dy)
             if norm > 1e-12:
                 vx += dx / norm
                 vy += dy / norm
-        if abs(vx) < 1e-12 and abs(vy) < 1e-12:
+        if not targets or (abs(vx) < 1e-12 and abs(vy) < 1e-12):
             return port.get('angle', 0.0)
         return float(np.degrees(np.arctan2(vy, vx)))
+
+    def _line_end_points(self, line):
+        """Rotated lead-tip coordinates of the line's two ends."""
+        r = self.node_radius
+        lx, ly = line['pos']
+        w = LINE_BODY_W * r
+        h = LINE_BODY_H * r
+        angle = line.get('angle', 0.0)
+        x0 = lx - w - LINE_LEAD_LEN * r
+        xL = lx + w + 0.6 * h + LINE_LEAD_LEN * r
+        return {'x0': _rotate_point(x0, ly, lx, ly, angle),
+                'xL': _rotate_point(xL, ly, lx, ly, angle)}
+
+    def _find_line_end_at_position(self, x, y, tol=None):
+        """Return (line, end) whose lead tip is near (x, y), else None."""
+        if x is None or y is None:
+            return None
+        tol = tol if tol is not None else 0.9 * self.node_radius
+        best = None
+        best_d = tol
+        for line in reversed(self.line_resonators):
+            for end, (ex, ey) in self._line_end_points(line).items():
+                d = float(np.hypot(x - ex, y - ey))
+                if d <= best_d:
+                    best, best_d = (line, end), d
+        return best
+
+    def _line_end_port(self, line, end):
+        """The port glyph terminating `end`, or None."""
+        conn = (line.get('ends') or {}).get(end)
+        if not conn or conn.get('kind') != 'port':
+            return None
+        return next((p for p in self.ports
+                     if p['port_id'] == conn['port_id']), None)
+
+    def connect_line_end_to_port(self, line, end, port):
+        """Terminate one end of a line on an explicit port glyph.
+
+        The port's hub column gains the line's comb couplings
+        kappa_n = u_n(end)*sqrt(gamma) at extraction time; the port stays a
+        first-class, movable, deletable glyph carrying its own label (and it
+        may also attach to ordinary nodes — one physical resistor can see
+        both a line and a device).
+        """
+        line.setdefault('ends', {'x0': None, 'xL': None})
+        other = 'xL' if end == 'x0' else 'x0'
+        if line['ends'].get(other):
+            # The hub framework can express a doubly-terminated line, and
+            # the result is passive by construction, but nothing has checked
+            # it against the real two-port line: that ABCD reference has not
+            # been written and verified. Refuse rather than ship an
+            # unvalidated S21.
+            raise ValueError(
+                f"'{line['label']}' is already terminated at its {other} "
+                "end. A two-port line (both ends loaded) is a Phase-2 "
+                "feature blocked on a written-and-verified ABCD two-port "
+                "reference; disconnect the other end first.")
+        line['ends'][end] = {'kind': 'port', 'port_id': port['port_id']}
+        self._invalidate_scattering_data()
+        return line['ends'][end]
+
+    def disconnect_line_end(self, line, end):
+        line.setdefault('ends', {'x0': None, 'xL': None})
+        line['ends'][end] = None
+        self._invalidate_scattering_data()
+
+    def _connect_line_end_interactively(self, line, end, port):
+        self._save_state()
+        try:
+            self.connect_line_end_to_port(line, end, port)
+        except ValueError as exc:
+            if self.undo_stack:
+                self.undo_stack.pop()       # nothing changed
+            QMessageBox.warning(self, "Two-port line not available", str(exc))
+            self._status_message(str(exc), 9000)
+            return
+        msg = (f"Terminated '{line['label']}' ({end}) on port "
+               f"'{port['label']}' — its comb couples through that port")
+        print(f"\u2713 {msg}")
+        self._status_message(msg, 6000)
+        if hasattr(self, 'properties_panel'):
+            self.properties_panel._update_scattering_ports_table()
+        self._update_plot()
 
     def _port_lead_tip(self, port):
         """Rotated position of the lead tip (attachment links start here)."""
@@ -1373,14 +1540,36 @@ class ExplicitPortsMixin:
                                           color=edge_color, linewidth=1.5,
                                           zorder=11, transform=glyph_tf))
 
+            # end leads: open (hollow), terminated (filled + link to the
+            # port glyph), or pending a connection (blue)
+            pend = self._attach_pending_line_end
+            for end_name, (ex, ey) in self._line_end_points(line).items():
+                conn_port = self._line_end_port(line, end_name)
+                is_pending = bool(pend and pend[0] is line
+                                  and pend[1] == end_name)
+                if conn_port is not None:
+                    tx, ty = self._port_lead_tip(conn_port)
+                    ax.add_line(mlines.Line2D(
+                        [ex, tx], [ey, ty], color='dimgray', linewidth=1.4,
+                        linestyle=(0, (4, 3)), zorder=4, alpha=0.9))
+                mark = ('dodgerblue' if is_pending
+                        else 'black' if conn_port is not None else 'darkgray')
+                ax.add_patch(mpatches.Circle(
+                    (ex, ey), 0.16 * r,
+                    facecolor=(mark if conn_port is not None or is_pending
+                               else 'white'),
+                    edgecolor=mark, linewidth=1.8, zorder=11.5))
+
             # label INSIDE the cylinder body, node-style bold sans-serif
             font_pts = h * ppdu * label_font_scale * 2.2
             self._draw_glyph_label(ax, line['label'], lx, ly, font_pts, ppdu)
 
             n_pairs = LineResonator(**line_payload(line)).N
             sub = f"FSR={line['FSR']:g}, N={n_pairs}"
-            if line.get('port_end'):
-                sub += f", port@{line['port_end']}"
+            terminated = [e for e in ('x0', 'xL')
+                          if self._line_end_port(line, e) is not None]
+            if terminated:
+                sub += ", port@" + "+".join(terminated)
             sx, sy = _rotate_point(lx, ly - h - 0.35 * r, lx, ly, angle)
             ax.text(sx, sy, sub, ha='center', va='top',
                     fontsize=7, color='dimgray', zorder=12)
@@ -1416,7 +1605,9 @@ class ExplicitPortsMixin:
                     'FSR': l['FSR'],
                     'Ztx': l['Ztx'],
                     'f_max': l['f_max'],
-                    'port_end': l.get('port_end'),
+                    'ends': {e: (dict(v) if v else None)
+                             for e, v in (l.get('ends') or {}).items()},
+                    'port_end': l.get('port_end'),   # legacy, read on load
                     'Z0_port': l.get('Z0_port', 50.0),
                     'alpha_uniform': l.get('alpha_uniform', 0.0),
                 }
@@ -1473,6 +1664,9 @@ class ExplicitPortsMixin:
                 'FSR': float(ldata['FSR']),
                 'Ztx': float(ldata['Ztx']),
                 'f_max': float(ldata['f_max']),
+                'ends': {e: (dict(v) if v else None) for e, v in
+                         (ldata.get('ends')
+                          or {'x0': None, 'xL': None}).items()},
                 'port_end': ldata.get('port_end'),
                 'Z0_port': float(ldata.get('Z0_port', 50.0)),
                 'alpha_uniform': float(ldata.get('alpha_uniform', 0.0)),
@@ -1480,6 +1674,30 @@ class ExplicitPortsMixin:
             self.line_resonators.append(line)
             max_line_id = max(max_line_id, line['line_id'])
         self.line_id_counter = max_line_id + 1
+
+        # Migration: files written before explicit line-end connections
+        # carry only 'port_end'. Materialize the implied port as a real,
+        # visible glyph wired to that end, so old graphs open with the same
+        # physics and the new, editable topology.
+        known_port_ids = {p['port_id'] for p in self.ports}
+        for line in self.line_resonators:
+            ends = line['ends']
+            for end, conn in list(ends.items()):
+                if conn and conn.get('port_id') not in known_port_ids:
+                    ends[end] = None          # dangling reference
+            legacy_end = line.get('port_end')
+            if legacy_end in ('x0', 'xL') and not any(ends.values()):
+                r = self.node_radius
+                offset = (LINE_BODY_W + 3.0) * r
+                px = line['pos'][0] + (offset if legacy_end == 'xL' else -offset)
+                port = self.add_port(label=line['label'],
+                                     pos=(px, line['pos'][1]), monitored=True)
+                if legacy_end == 'xL':
+                    port['angle'] = 180.0
+                    port['angle_pinned'] = True
+                self.connect_line_end_to_port(line, legacy_end, port)
+                logger.info("Migrated implied port of line %r to an explicit "
+                            "port glyph", line['label'])
 
         if self._has_explicit_port_objects():
             self._auto_enable_explicit_ports(source_name)

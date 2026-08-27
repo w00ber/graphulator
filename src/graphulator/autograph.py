@@ -418,6 +418,38 @@ class LineResonator:
     def port_hub_id(self) -> str:
         return f"{self.line_id}:port"
 
+    def comb_mode_ids(self):
+        """Comb mode node ids in expansion order [0, +1, -1, +2, -2, ...]."""
+        ks = [0]
+        for n in range(1, self.N + 1):
+            ks += [n, -n]
+        return [self.mode_node_id(k) for k in ks]
+
+    def end_couplings(self, end):
+        """Hub attachments for terminating this line at `end`.
+
+        Returns [(node_id, kappa_magnitude, phase_deg), ...] over the comb,
+        with kappa_n = u_n(end) * sqrt(gamma): all-plus at x = 0, alternating
+        at x = L (the open-open standing-wave profile evaluated at the end;
+        see cmtline_core.line_arrays' `e` and `f` vectors).
+
+        Unlike `expand()`, the sign pattern comes from the `end` argument, so
+        one line can be terminated at either or both ends independently of
+        the (deprecated) port_end field.
+        """
+        if end not in ('x0', 'xL'):
+            raise ValueError(
+                f"LineResonator '{self.line_id}': end must be 'x0' or 'xL', "
+                f"got {end!r}")
+        _, kap_nat, _ = _line_comb_natural(
+            self.N, self.Z0_port / self.Ztx, signs=(end == 'xL'))
+        kappas = line_natural_coupling_to_physical(kap_nat, self.FSR)
+        return [
+            (node_id, float(abs(kappas[i])),
+             0.0 if kappas[i] >= 0 else 180.0)
+            for i, node_id in enumerate(self.comb_mode_ids())
+        ]
+
     def expand(self):
         """Expand to (nodes, hubs) in pgraph-style dicts.
 

@@ -25,7 +25,10 @@
     `B_int = (2/π)·α·FSR`, verified against a lossy-ABCD reference.
   - Paragraphulator GUI: port glyph (`P`/`Shift+P`; pentagon + lead), loss
     hub (hatched placeholder glyph, Insert menu), transmission-line cylinder
-    glyph (`L`), dashed attachment links created with the edge tool, a third
+    glyph (`L`) connected by its **end leads** to explicit port glyphs (the
+    comb never leaves the macro and a line is never implicitly terminated;
+    terminating both ends is refused pending a verified ABCD two-port
+    reference), dashed attachment links created with the edge tool, a third
     **Ports & Lines** parameter panel (per-attachment rates + signs; legacy
     `B_ext` shown there as auto-ports while its Nodes-table column hides),
     `.pgraph` format 3.0 with loader migration, hub/macro-aware exported

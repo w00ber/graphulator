@@ -5123,9 +5123,9 @@ class PropertiesPanel(QWidget):
         # Get port channel labels in K-column order: explicit monitored hubs
         # first (hub label), then legacy B_ext nodes (node label + conj mark)
         port_node_labels = []
-        for port in self.graphulator.ports:
-            if port.get('monitored', True) and port['attachments']:
-                port_node_labels.append(port['label'])
+        for hub in self.graphulator._gui_hubs_payload():
+            if hub['monitored']:
+                port_node_labels.append(hub['label'])
         for node in self.graphulator.nodes:
             node_id = _node_key(node)
             params = self.graphulator.scattering_assignments.get(node_id, {})
@@ -9500,19 +9500,38 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         # Sort by number of nodes (largest first) for consistent ordering
         result.sort(key=lambda c: len(c['node_ids']), reverse=True)
 
-        # Each transmission-line macro is its own component in the Phase-1
-        # GUI (coupling a line's comb modes to device nodes requires the
-        # one-way "explode to nodes" action first)
+        # A transmission line computes together with whatever its
+        # terminating port also serves: if that port attaches to nodes, the
+        # line's comb and those nodes share one hub column, so they are one
+        # component. A line whose port serves nothing else stands alone.
         for line in self.line_resonators:
-            result.append({
-                'node_ids': set(),
-                'nodes': [],
-                'edges': [],
-                'port_node_ids': set(),
-                'index': len(result),
-                'line_ids': [line['line_id']],
-                'line_label': line['label'],
-            })
+            partner_node_ids = set()
+            for end, conn in (line.get('ends') or {}).items():
+                if not conn or conn.get('kind') != 'port':
+                    continue
+                port = next((p for p in self.ports
+                             if p['port_id'] == conn['port_id']), None)
+                if port is None:
+                    continue
+                partner_node_ids.update(a['node_id']
+                                        for a in port['attachments'])
+
+            host = None
+            if partner_node_ids:
+                host = next((c for c in result
+                             if c['node_ids'] & partner_node_ids), None)
+            if host is not None:
+                host.setdefault('line_ids', []).append(line['line_id'])
+            else:
+                result.append({
+                    'node_ids': set(),
+                    'nodes': [],
+                    'edges': [],
+                    'port_node_ids': set(),
+                    'index': len(result),
+                    'line_ids': [line['line_id']],
+                    'line_label': line['label'],
+                })
 
         # Re-index after sorting
         for idx, comp in enumerate(result):
@@ -10254,9 +10273,10 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         # Explicit hubs and line macros belonging to this job
         if component is not None:
             comp_node_ids = component['node_ids']
-            hubs = self._gui_hubs_payload(node_ids=comp_node_ids)
-            lines = self._gui_lines_payload(
-                line_ids=component.get('line_ids', []))
+            comp_line_ids = component.get('line_ids', [])
+            hubs = self._gui_hubs_payload(node_ids=comp_node_ids,
+                                          line_ids=comp_line_ids)
+            lines = self._gui_lines_payload(line_ids=comp_line_ids)
         else:
             hubs = self._gui_hubs_payload()
             lines = self._gui_lines_payload()
