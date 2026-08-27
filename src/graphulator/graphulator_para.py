@@ -89,7 +89,8 @@ from .para_core.settings_manager import (
 )
 from .para_core.interaction_state import InteractionMode, PlacementMode
 from .para_core.graph_state import capture_graph_state
-from .autograph import GraphExtractor, GraphScatteringMatrix
+from .autograph import (GraphExtractor, GraphScatteringMatrix,
+                        compute_hub_bridge_links)
 
 logger = logging.getLogger(__name__)
 
@@ -5840,6 +5841,18 @@ def _compute_sparams_job(job):
             for edge in edges
         ]
 
+        # Zero-offset bridge links across shared hubs (see
+        # autograph.compute_hub_bridge_links): the tree must reach
+        # hub-bridged subgraphs so their pump-frame accumulation survives
+        link_pairs = compute_hub_bridge_links(
+            [n['node_id'] for n in nodes],
+            [(e['from_node_id'], e['to_node_id'])
+             for e in gui_edges if not e['is_self_loop']],
+            [[a[0] for a in h['attachments']] for h in hubs])
+        gui_edges = gui_edges + [
+            {'from_node_id': a, 'to_node_id': b, 'is_self_loop': False}
+            for a, b in link_pairs]
+
         tree_edges_nested, chord_edges_list, is_connected = extractor.compute_spanning_tree(
             gui_nodes, gui_edges, root_node_id
         )
@@ -9572,6 +9585,20 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             for edge in edges_to_use
         ]
 
+        # Shared ports bridge otherwise-disconnected subgraphs with
+        # zero-offset links so the tree (and hence f_p classification)
+        # reaches them — mirrors the extractor's own rule
+        comp_node_ids = {n['node_id'] for n in nodes_to_use}
+        link_pairs = compute_hub_bridge_links(
+            comp_node_ids,
+            [(e['from_node_id'], e['to_node_id'])
+             for e in gui_edges if not e['is_self_loop']],
+            [[a['node_id'] for a in p['attachments']
+              if a['node_id'] in comp_node_ids] for p in self.ports])
+        gui_edges = gui_edges + [
+            {'from_node_id': a, 'to_node_id': b, 'is_self_loop': False}
+            for a, b in link_pairs]
+
         # Compute spanning tree with selected root
         tree_edges_nested, chord_edges_list, is_connected = extractor.compute_spanning_tree(
             gui_nodes, gui_edges, root_node_id
@@ -10234,23 +10261,23 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             logger.info(f"  No nodes in {comp_name}")
             return None
 
-        # For this component, we need to compute its own spanning tree
-        # Get injection node for this component
-        if hubs:
-            # first attachment of the first monitored hub (mirrors the
-            # extractor's root rule)
+        # For this component, we need to compute its own spanning tree.
+        # Root precedence: the user's injection-combo choice (full-graph
+        # sweeps), then the first attachment of the first explicit port,
+        # then a legacy port node, then the first node — matching the
+        # exported-code and tree-overlay root rules.
+        root_node_id = None
+        if component is None:
+            root_node_id = self._get_selected_injection_node_id()
+        if root_node_id is None and hubs:
             root_node_id = next(
                 (h['attachments'][0][0] for h in hubs if h['monitored']),
                 None)
-        else:
-            root_node_id = None
         if root_node_id is None and component is not None \
                 and component['port_node_ids']:
             root_node_id = next(iter(component['port_node_ids']))
         if root_node_id is None and component is None:
-            root_node_id = self._get_selected_injection_node_id()
-            if root_node_id is None:
-                root_node_id = self._get_default_root_node_id()
+            root_node_id = self._get_default_root_node_id()
         if root_node_id is None and nodes_to_use:
             root_node_id = nodes_to_use[0]['node_id']
 

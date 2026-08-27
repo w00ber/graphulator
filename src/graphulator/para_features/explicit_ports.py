@@ -47,7 +47,6 @@ treat the hatched pentagon as permanent.
 """
 
 import logging
-import math
 
 import numpy as np
 import matplotlib.patches as mpatches
@@ -78,30 +77,20 @@ LINE_BODY_H = 0.8     # cylinder half-height
 LINE_LEAD_LEN = 0.7
 
 
-def _port_extractor_id(port):
-    """Stable extractor hub_id for a GUI port."""
-    return f"port:{port['port_id']}"
-
-
 def _line_extractor_id(line):
     """Stable extractor line_id for a GUI line resonator."""
     return f"line:{line['line_id']}"
 
 
 def port_hub_payload(port):
-    """GUI port -> extractor hub dict (kappa = sign * sqrt(rate))."""
-    attachments = []
-    for att in port['attachments']:
-        rate = max(float(att['rate']), 0.0)
-        mag = math.sqrt(rate)
-        phase = 0.0 if att.get('sign', 1) >= 0 else 180.0
-        attachments.append((att['node_id'], mag, phase))
-    return {
-        'hub_id': _port_extractor_id(port),
-        'label': port['label'],
-        'attachments': attachments,
-        'monitored': bool(port.get('monitored', True)),
-    }
+    """GUI port -> extractor hub dict (kappa = sign * sqrt(rate)).
+
+    Same conversion as autograph.pgraph_port_to_hub — the GUI dict and the
+    .pgraph 'ports' entry share one schema, so the programmatic
+    extract_from_pgraph route and the live GUI route stay in lockstep.
+    """
+    from ..autograph import pgraph_port_to_hub
+    return pgraph_port_to_hub(port)
 
 
 def line_payload(line):
@@ -441,6 +430,9 @@ class ExplicitPortsMixin:
 
         self.remove_line_resonator(line)
         self._invalidate_scattering_data()
+        # adding nodes stales any committed Kron reduction, same as placement
+        if hasattr(self, '_invalidate_kron_reduction'):
+            self._invalidate_kron_reduction()
         logger.info("Exploded line '%s' into %d nodes%s", line['label'],
                     len(macro_nodes), " + port" if new_port else "")
         return new_port
@@ -606,10 +598,18 @@ class ExplicitPortsMixin:
         if dialog.exec() == QDialog.Accepted:
             result = dialog.get_result()
             self._save_state()
-            line = self.add_line_resonator(pos=(snap_x, snap_y), **result)
-            n_modes = 2 * LineResonator(**line_payload(line)).N + 1
-            print(f"✓ Line '{line['label']}' placed "
-                  f"({n_modes} comb modes at extraction)")
+            try:
+                line = self.add_line_resonator(pos=(snap_x, snap_y), **result)
+            except ValueError as exc:
+                # invalid parameter combination (e.g. f_max < FSR): nothing
+                # was added — drop the no-op undo snapshot and tell the user
+                if self.undo_stack:
+                    self.undo_stack.pop()
+                QMessageBox.warning(self, "Invalid line parameters", str(exc))
+            else:
+                n_modes = 2 * LineResonator(**line_payload(line)).N + 1
+                print(f"✓ Line '{line['label']}' placed "
+                      f"({n_modes} comb modes at extraction)")
         self.placement_mode = None
         self._update_plot()
 
@@ -731,9 +731,17 @@ class ExplicitPortsMixin:
         dialog = LineInputDialog(line=line, parent=self)
         if dialog.exec() == QDialog.Accepted:
             result = dialog.get_result()
+            # validate the candidate BEFORE mutating the stored line, so an
+            # invalid edit cannot poison the glyph (which every redraw uses)
+            candidate = dict(line)
+            candidate.update(result)
+            try:
+                LineResonator(**line_payload(candidate))
+            except ValueError as exc:
+                QMessageBox.warning(self, "Invalid line parameters", str(exc))
+                return
             self._save_state()
             line.update(result)
-            LineResonator(**line_payload(line))  # re-validate
             self._invalidate_scattering_data()
             if hasattr(self, 'properties_panel'):
                 self.properties_panel._update_scattering_ports_table()

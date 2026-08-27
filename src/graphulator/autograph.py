@@ -25,6 +25,95 @@ def _edge_key(a, b):
     GUI's integer ids; plain sorted() cannot compare those)."""
     return tuple(sorted([a, b], key=lambda v: (isinstance(v, str), v)))
 
+
+def compute_hub_bridge_links(node_ids, edge_pairs, hub_attachment_ids):
+    """Zero-offset frame links a spanning tree may use across shared hubs.
+
+    A shared port cross-damps every mode it attaches to, but no frequency
+    conversion happens through a resistor: all its attachments see the same
+    signal frequency. When a hub bridges parts of the graph that no real
+    (pump) edge connects, the spanning tree must still reach them so the
+    pump-frame (f_p) accumulation of those parts is not silently dropped —
+    and the bridging link carries f_p = 0.
+
+    Links are added ONLY between real-edge-disconnected components (union-
+    find), so within a pump-connected region the tree keeps using real
+    edges and the frame structure is untouched.
+
+    Parameters
+    ----------
+    node_ids : iterable
+        All node ids in the graph.
+    edge_pairs : iterable of (a, b)
+        Endpoint pairs of the real non-self-loop edges.
+    hub_attachment_ids : iterable of list
+        For each hub, the list of node ids it attaches to.
+
+    Returns
+    -------
+    list of (a, b) canonical pairs (see _edge_key), cycle-free.
+    """
+    parent = {nid: nid for nid in node_ids}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+            return True
+        return False
+
+    for a, b in edge_pairs:
+        if a in parent and b in parent:
+            union(a, b)
+
+    links = []
+    for ids in hub_attachment_ids:
+        ids = [i for i in ids if i in parent]
+        for other in ids[1:]:
+            if union(ids[0], other):
+                links.append(_edge_key(ids[0], other))
+    return links
+
+
+def pgraph_port_to_hub(port_data) -> Dict[str, Any]:
+    """Convert a .pgraph v3.0 'ports' entry (GUI schema) to a hub dict.
+
+    GUI attachments store {'node_id', 'rate', 'sign'} with rate in arb.
+    units; the hub schema stores (node_id, kappa, phase) with
+    kappa = sqrt(rate) and phase 0/180 from the sign.
+    """
+    attachments = []
+    for att in port_data.get('attachments', []):
+        rate = max(float(att.get('rate', 0.0)), 0.0)
+        phase = 0.0 if att.get('sign', 1) >= 0 else 180.0
+        attachments.append((att['node_id'], float(np.sqrt(rate)), phase))
+    return {
+        'hub_id': f"port:{port_data['port_id']}",
+        'label': port_data.get('label', f"P{port_data['port_id']}"),
+        'attachments': attachments,
+        'monitored': bool(port_data.get('monitored', True)),
+    }
+
+
+def pgraph_line_to_resonator(line_data) -> "LineResonator":
+    """Convert a .pgraph v3.0 'line_resonators' entry to a LineResonator."""
+    return LineResonator(
+        line_id=f"line:{line_data['line_id']}",
+        label=line_data.get('label', f"TL{line_data['line_id']}"),
+        FSR=float(line_data['FSR']),
+        Ztx=float(line_data['Ztx']),
+        f_max=float(line_data['f_max']),
+        port_end=line_data.get('port_end'),
+        Z0_port=float(line_data.get('Z0_port', 50.0)),
+        alpha_uniform=float(line_data.get('alpha_uniform', 0.0)),
+    )
+
 # ---------------------------------------------------------------------------
 # Dissipation hubs
 # ---------------------------------------------------------------------------
@@ -708,6 +797,7 @@ class GraphExtractor:
         self.sign_override = False  # Default: auto-compute f_p signs
         self._unique_labels = True  # Flag indicating if all node labels are unique
         self._duplicate_labels = {}  # Dict mapping duplicate labels to list of node_ids
+        self._hub_link_pairs = set()  # zero-offset tree links across shared hubs
         self.label_to_node_id = None  # Mapping from label to node_id (only if labels are unique)
         self.node_id_to_label = {}  # Mapping from node_id to label (always available)
 
@@ -947,6 +1037,19 @@ class GraphExtractor:
 
             extracted_edges.append(edge_data)
 
+        # Zero-offset bridge links across shared hubs: a multi-attachment
+        # hub joins parts of the graph no real edge connects, and the
+        # spanning tree must reach them so their pump-frame accumulation is
+        # not silently dropped (the link itself carries f_p = 0 — no
+        # frequency conversion happens through a resistor). Links are only
+        # created between real-edge-disconnected components, so pump-derived
+        # frames are never rerouted.
+        real_pairs = [(e['from_node_id'], e['to_node_id'])
+                      for e in extracted_edges if not e['is_self_loop']]
+        self._hub_link_pairs = set(compute_hub_bridge_links(
+            node_id_set, real_pairs,
+            [[a[0] for a in h['attachments']] for h in normalized_hubs]))
+
         # Use pre-computed tree/chord edges if provided, otherwise compute them
         if precomputed_tree_edges is not None and precomputed_chord_edges is not None:
             # Use pre-computed data - convert tree edges to branch format
@@ -964,9 +1067,17 @@ class GraphExtractor:
                     visited_nodes.add(to_id)
             is_connected = len(visited_nodes) == len(nodes)
         else:
-            # Compute spanning tree and chord edges
+            # Compute spanning tree and chord edges (hub bridge links are
+            # tree-eligible so hub-bridged parts stay reachable)
+            edges_for_tree = edges
+            if self._hub_link_pairs:
+                edges_for_tree = list(edges) + [
+                    {'from_node_id': a, 'to_node_id': b,
+                     'is_self_loop': False}
+                    for a, b in sorted(self._hub_link_pairs,
+                                       key=lambda p: (str(p[0]), str(p[1])))]
             tree_edges, chord_edges, is_connected = self.compute_spanning_tree(
-                nodes, edges, root_node_id
+                nodes, edges_for_tree, root_node_id
             )
 
         # Augment tree edges with f_p values: [from_id, to_id] -> [from_id, to_id, f_p]
@@ -984,7 +1095,14 @@ class GraphExtractor:
             for from_id, to_id in branch:
                 edge_key = _edge_key(from_id, to_id)
                 edge = edge_lookup.get(edge_key)
-                f_p = edge['f_p'] if edge else None
+                if edge is not None:
+                    f_p = edge['f_p']
+                elif edge_key in self._hub_link_pairs:
+                    # hub bridge link: zero pump offset (a resistor does not
+                    # convert frequency)
+                    f_p = 0.0
+                else:
+                    f_p = None
                 branch_with_fp.append([from_id, to_id, f_p])
             tree_edges_with_fp.append(branch_with_fp)
 
@@ -1072,6 +1190,13 @@ class GraphExtractor:
             }
             scattering_assignments[id(edge)] = edge_params
 
+        # Explicit ports / line macros (.pgraph format 3.0 sections, saved by
+        # the GUI's Explicit Ports mode; absent in older files)
+        hubs = [pgraph_port_to_hub(p) for p in pgraph_data.get('ports', [])]
+        hubs = [h for h in hubs if h['attachments']]  # attachment-less = inert
+        line_resonators = [pgraph_line_to_resonator(l)
+                           for l in pgraph_data.get('line_resonators', [])]
+
         # Get frequency settings and pre-computed tree/chord from scattering data
         precomputed_tree_edges = None
         precomputed_chord_edges = None
@@ -1087,6 +1212,13 @@ class GraphExtractor:
         else:
             frequency_settings = {'start': 0.0, 'stop': 10.0, 'points': 100}
 
+        # Precomputed trees saved by the GUI predate the hub bridge links, so
+        # when hubs are present recompute the tree fresh (the extractor adds
+        # the zero-offset links itself)
+        if hubs or line_resonators:
+            precomputed_tree_edges = None
+            precomputed_chord_edges = None
+
         # Call the main extraction method
         return self.extract_graph_data(
             nodes=nodes,
@@ -1096,7 +1228,9 @@ class GraphExtractor:
             basis_order=None,  # pgraph files don't store basis_order separately
             root_node_id=root_node_id,
             precomputed_tree_edges=precomputed_tree_edges,
-            precomputed_chord_edges=precomputed_chord_edges
+            precomputed_chord_edges=precomputed_chord_edges,
+            hubs=hubs,
+            line_resonators=line_resonators
         )
 
     def _convert_to_branch_format(
@@ -2344,9 +2478,9 @@ class GraphScatteringMatrix:
         # the frequency axis, so the whole sweep is one vectorized expression.
         # Contraction uses the conjugate transpose (identical to .T for the
         # real Phase-1 K) and PORT columns only: loss-hub damping is inside M
-        # but exposes no channel.
+        # but exposes no channel. Minv is NOT retained (line-macro graphs
+        # make it large); S_full recomputes it on demand.
         Minv = np.linalg.inv(self.M)
-        self._Minv = Minv
         self.S = 1j * (self.K.conj().T @ Minv @ self.K) - np.eye(self.num_ports)
         self.SdB = 20 * np.log10(np.abs(self.S))
 
@@ -2362,10 +2496,14 @@ class GraphScatteringMatrix:
         ports first then loss hubs. Exactly unitary when every B_int is zero
         (all dissipation is then carried by channels) — a built-in self-test
         even for lossy models. The leading num_ports x num_ports block equals
-        .S identically (same solve).
+        .S identically (same inverse algorithm).
+
+        Computed on demand (the (num_freqs, N, N) inverse is not cached —
+        line-macro graphs make it large).
         """
         n_chan = self.K_full.shape[1]
-        return (1j * (self.K_full.conj().T @ self._Minv @ self.K_full)
+        Minv = np.linalg.inv(self.M)
+        return (1j * (self.K_full.conj().T @ Minv @ self.K_full)
                 - np.eye(n_chan))
 
     @property
@@ -2389,7 +2527,10 @@ class GraphScatteringMatrix:
                 Magnitude of determinant in dB, shape (len(f_root_s),)
         """
         self.det_M = np.linalg.det(self.M)
-        self.det_M_dB = 20 * np.log10(np.abs(self.det_M))
+        # det overflows to inf for large mode counts (e.g. line-macro combs);
+        # slogdet keeps the dB display finite
+        _, logabsdet = np.linalg.slogdet(self.M)
+        self.det_M_dB = (20.0 / np.log(10.0)) * logabsdet
 
     # =========================================================================
     # Plotting API - Trace Management
