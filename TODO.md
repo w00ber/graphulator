@@ -55,8 +55,15 @@
   reference check adjudicates. Gain-type (squeezing) node<->comb pumping
   stays blocked on the Phase-2 M_pumped derivation regardless.
 
-## FEATURES: PARAGRPAPHULATOR / autograph
+## FEATURES: PARAGRAPHULATOR / autograph
 - [ ] **Autocompute stability.** Need to find the zeros of the M-matrix as we update coupling. Add experimental/optional setting to display the zeros in the complex plane. Since the determinant is always in the denominator of the scattering matrix, it tells us about stability via the Routh-Hurwitz criterion. We want to flag whether a set of given graph parameters is actually not stable and would like this to be highlighted in indianred or darkred at the top of the window (or wherever you think is the most effective for the user interface).
 
 ## BUGFIXES: PARAGRAPHULATOR / autograph
 - [ ] **Conjugated-node hop sign.** `autograph.GraphScatteringMatrix._build_M_matrix` writes `+beta` for an edge whose two endpoints are both conjugated (the `conj_j == conj_k` branch treats conj/conj like unconj/unconj). The row of a conjugated node is minus the complex conjugate of the unconjugated row, so a real resonant coupling between two conjugated nodes must enter as `-beta` (the pump edges already carry `-conj(beta)`; the diagonal already flips the sign of `f0`). Consequence today: |S| is unaffected only up to a pi-per-cell pump phase step (verified DTWPA_A ledger 55), but any pump phase derived from a physical pump wavenumber is off by pi per cell. Fix: in the `conj_j == conj_k` branch, when both are conjugated write `-beta` / `-conj(beta)`; check the symbolic M display and any code-generation path do the same; add a test with a 4-node two-rail amplifier comparing against the DTWPA_A `stagger.py` builder (now -beta_B). Found 2026-09-07 while fixing the DTWPA_A convention.
+
+- [ ] **Widen the S-parameter selection section in S-parameters tab** to accommodate the labels. We can actually remove the "S_" part of the checkbox text because it's redundant. 
+
+
+---
+# Physics things to work out
+- in the full port-inclusive graph picture, we need to understand what it means to drive a system a little more thoughtfully. When we conjugate a set of modes, is the same port connected to both the signal and the conjugate?
