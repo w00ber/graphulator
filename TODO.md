@@ -39,6 +39,21 @@
   steps; angle persists in .pgraph).
 - [ ] GUI conveniences still deferred: ghost placement previews for
   ports/lines, port glyphs in clipboard copy/paste.
+- [ ] **Pumped taps** (conversion-type pumping of a line-end tap):
+  mechanically the pipeline already computes it — the tap fan-out edges are
+  ordinary edges, and a probe with f_p injected on them ran frame-consistent
+  and unitary (2e-15) with the expected conversion feature — but it is NOT
+  exposed, pending the derivation gate: verify that the modulated part of
+  the coupler inherits the static (n/n_ref)^(+-1/2) profile, against a
+  pumped-coupler sideband reference (extend cmtline_core.hb_signal_idler's
+  P matrix to modulate the coupling element instead of the device L_J).
+  Then: per-tap f_p + pump phase in the connection dict/dialog/panel/
+  serialization/codegen; refuse a pumped tap whose node shares a hub with
+  the same comb (zero-offset bridge links), and two taps on one line with
+  different pump frequencies (one frame per comb). The DC-complete +-n comb
+  should capture both modulation sidebands with a single f_p — same
+  reference check adjudicates. Gain-type (squeezing) node<->comb pumping
+  stays blocked on the Phase-2 M_pumped derivation regardless.
 
 ## FEATURES: PARAGRPAPHULATOR / autograph
 - [ ] **Autocompute stability.** Need to find the zeros of the M-matrix as we update coupling. Add experimental/optional setting to display the zeros in the complex plane. Since the determinant is always in the denominator of the scattering matrix, it tells us about stability via the Routh-Hurwitz criterion. We want to flag whether a set of given graph parameters is actually not stable and would like this to be highlighted in indianred or darkred at the top of the window (or wherever you think is the most effective for the user interface).
