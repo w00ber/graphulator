@@ -6999,6 +6999,11 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         self.examples_menu = file_menu.addMenu("&Examples")
         self._populate_examples_menu()
 
+        # Test submenu: canonical explicit-ports scenes (aesthetics +
+        # physics checks); shipped with the repo under examples/test_scenes
+        self.test_menu = file_menu.addMenu("&Test")
+        self._populate_test_menu()
+
         # Reload Last Graph
         reload_action = QAction("Reload Last Graph", self)
         reload_action.triggered.connect(self._reload_last_graph)
@@ -7264,6 +7269,54 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             pass
 
         return None
+
+    @staticmethod
+    def _get_test_scenes_dir():
+        """Find examples/test_scenes (package resources or dev layout)."""
+        try:
+            from importlib import resources
+            scenes_path = resources.files('graphulator').joinpath(
+                'examples/test_scenes')
+            if hasattr(scenes_path, '__fspath__'):
+                scenes_str = str(scenes_path)
+                if Path(scenes_str).is_dir():
+                    return scenes_str
+        except Exception:
+            pass
+        try:
+            this_file = Path(__file__).resolve()
+            project_root = this_file.parent.parent.parent
+            dev_scenes = project_root / 'examples' / 'test_scenes'
+            if dev_scenes.is_dir():
+                return str(dev_scenes)
+        except Exception:
+            pass
+        return None
+
+    def _populate_test_menu(self):
+        """Populate File -> Test with the bundled test scenes."""
+        self.test_menu.clear()
+        scene_files = []
+        scenes_dir = self._get_test_scenes_dir()
+        if scenes_dir:
+            try:
+                scene_files = sorted(
+                    f for f in Path(scenes_dir).iterdir()
+                    if f.name.endswith('.pgraph'))
+            except (FileNotFoundError, OSError) as exc:
+                logger.warning("Could not list test scenes from %s: %s",
+                               scenes_dir, exc)
+        if not scene_files:
+            empty = QAction("(No test scenes available)", self)
+            empty.setEnabled(False)
+            self.test_menu.addAction(empty)
+            return
+        for scene_file in scene_files:
+            action = QAction(scene_file.stem, self)
+            action.setToolTip(f"Load test scene: {scene_file.name}")
+            action.triggered.connect(
+                lambda checked, f=scene_file: self._load_example(f))
+            self.test_menu.addAction(action)
 
     def _populate_examples_menu(self):
         """Populate the Examples submenu with example graphs from package resources"""
@@ -9609,8 +9662,21 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
             host = None
             if partner_node_ids:
-                host = next((c for c in result
-                             if c['node_ids'] & partner_node_ids), None)
+                hosts = [c for c in result
+                         if c['node_ids'] & partner_node_ids]
+                if hosts:
+                    # every partner computes WITH the line (all coupled
+                    # through the same comb), so components that only
+                    # touch through this line merge into one
+                    host = hosts[0]
+                    for other in hosts[1:]:
+                        host['node_ids'] |= other['node_ids']
+                        host['nodes'].extend(other['nodes'])
+                        host['edges'].extend(other['edges'])
+                        host['port_node_ids'] |= other['port_node_ids']
+                        host.setdefault('line_ids', []).extend(
+                            other.get('line_ids', []))
+                        result.remove(other)
             if host is not None:
                 host.setdefault('line_ids', []).append(line['line_id'])
             else:
@@ -11754,6 +11820,13 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         if self.selected_edges:
             self._adjust_edge_properties(direction)
             return
+
+        # Selected port/line glyphs stretch with the arrow keys (node-key
+        # parity: Up/Down height, Left/Right length)
+        if getattr(self, 'selected_ports', None) or \
+                getattr(self, 'selected_lines', None):
+            if self._adjust_glyph_size(direction):
+                return
 
         # Otherwise, pan the view
         # Determine which canvas is currently visible
@@ -16367,13 +16440,22 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
     def _auto_fit_view(self):
         """Auto-fit view to original graph nodes - applies same extents to Original, Scattering, and Kron views"""
-        # Always use the original graph nodes for calculating extents
-        if not self.nodes:
+        # Always use the original graph nodes for calculating extents.
+        # Port/line glyphs count too (a line-only graph has no nodes at
+        # all): use each glyph's lead-tip extremes so nothing gets cut off.
+        points = [node['pos'] for node in self.nodes]
+        for port in getattr(self, 'ports', []):
+            points.append(port['pos'])
+            points.append(self._port_lead_tip(port))
+        for line in getattr(self, 'line_resonators', []):
+            points.append(line['pos'])
+            points.extend(self._line_end_points(line).values())
+        if not points:
             print("No nodes to fit view to")
             return
 
         # Calculate extents based on original graph
-        positions = np.array([node['pos'] for node in self.nodes])
+        positions = np.array(points, dtype=float)
         centroid = positions.mean(axis=0)
 
         distances = np.sqrt(((positions - centroid) ** 2).sum(axis=1))
