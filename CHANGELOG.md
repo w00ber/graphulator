@@ -28,7 +28,7 @@
     glyph (`L`) connected by its **end leads** to explicit port glyphs (the
     comb never leaves the macro and a line is never implicitly terminated;
     loading both ends is refused pending a verified ABCD two-port
-    reference), dashed attachment links created with the edge tool, a third
+    reference), attachment wires created with the edge tool, a third
     **Ports & Lines** parameter panel (per-attachment rates + signs; legacy
     `B_ext` shown there as auto-ports while its Nodes-table column hides),
     `.pgraph` format 3.0 with loader migration, hub/macro-aware exported
