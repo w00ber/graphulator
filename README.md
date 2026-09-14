@@ -107,11 +107,18 @@ makes the external damping non-diagonal (cross-damping). Legacy per-node
 `B_ext` auto-wraps into single-attachment ports, reproducing the historical
 results to machine precision (pinned by a golden-file regression suite).
 
-- **Port tool** (`P` single, `Shift+P` continuous): the pentagon glyph with a
-  lead; attach it to nodes with the edge tool (`E`) — click the port, then a
-  node. Attachment links draw as thin dashed lines; per-link coupling rate
-  and sign live in the **Ports & Lines** panel (below the Nodes panel) or the
-  per-link editor (double-click a link).
+- **Port tool** (`P` single, `Shift+P` continuous): a home-plate pentagon
+  with a terminal lead (diagrammer-style); attach it to nodes with the edge
+  tool (`E`) — click the port, then a node. Wiring routes as smooth rounded
+  curves: every wire leaves the lead tip colinear with the lead (a
+  multi-wire fan collimates through it before spreading) and enters each
+  node normal to its circle. Per-link coupling rate and sign live in the
+  **Ports & Lines** panel (below the Nodes panel) or the per-link editor
+  (double-click a link). Ports auto-orient toward the center of their
+  attached group (toggleable per port; manual rotation `Ctrl+U/I` pins).
+  Glyphs stretch with the arrow keys when selected, and stroke width /
+  stroke color / fill are per-glyph properties in the edit dialog. The
+  **File → Test** menu ships canonical scenes for trying all of this.
 - **Loss hub** (Insert menu): hatched port variant, same attachments, no
   scattering channel. Enables a per-channel energy audit
   (`GraphScatteringMatrix.absorption`, `.S_full`).

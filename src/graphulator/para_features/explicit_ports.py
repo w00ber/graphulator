@@ -81,14 +81,20 @@ PHASE2_PHASE_TOOLTIP = (
     "M_pumped two-sector derivation."
 )
 
-# Glyph geometry (data units, scaled by the node radius at draw time)
-PORT_BODY_W = 1.6     # pentagon body width (x node_radius)
-PORT_BODY_H = 1.2     # pentagon height
-PORT_APEX_W = 0.7     # apex extension beyond the body
-PORT_LEAD_LEN = 0.6   # thick lead at the apex
-LINE_BODY_W = 2.6     # cylinder half-width
-LINE_BODY_H = 0.8     # cylinder half-height
-LINE_LEAD_LEN = 0.7
+# Glyph geometry (data units, scaled by the node radius at draw time).
+# Default proportions follow the diagrammer reference art (port_coax):
+# a boxy home-plate port with a long terminal lead, and a slender coax
+# cylinder (~10:1) with a closed left cap and an open right mouth.
+PORT_BODY_W = 1.5     # pentagon straight-body width (x node_radius)
+PORT_BODY_H = 1.35    # pentagon height
+PORT_APEX_W = 0.55    # tapered nose beyond the body
+PORT_LEAD_LEN = 1.2   # terminal lead at the apex
+LINE_BODY_W = 2.7     # cylinder half-length
+LINE_BODY_H = 0.28    # cylinder half-height
+LINE_LEAD_LEN = 0.55  # terminal stubs at both ends
+PORT_LINEWIDTH = 2.0  # default stroke (uniform across body + lead)
+LINE_LINEWIDTH = 1.6
+GLYPH_SIZE_MIN, GLYPH_SIZE_MAX = 0.3, 4.0
 
 
 def _line_extractor_id(line):
@@ -154,13 +160,87 @@ def line_payload(line):
     }
 
 
+def _color_button(initial, parent=None):
+    """Small swatch button opening a QColorDialog; .color() reads it."""
+    from PySide6.QtWidgets import QPushButton, QColorDialog
+    from PySide6.QtGui import QColor
+    btn = QPushButton(parent)
+    btn.setFixedSize(46, 22)
+
+    def _apply(name):
+        btn._color = name
+        btn.setStyleSheet(
+            f"background-color: {name}; border: 1px solid #888;")
+
+    def _pick():
+        col = QColorDialog.getColor(QColor(btn._color), btn.window())
+        if col.isValid():
+            _apply(col.name())
+
+    btn.clicked.connect(_pick)
+    btn.color = lambda: btn._color
+    _apply(initial)
+    return btn
+
+
+def _mult_spin(value, tooltip=''):
+    box = QDoubleSpinBox()
+    box.setRange(GLYPH_SIZE_MIN, GLYPH_SIZE_MAX)
+    box.setDecimals(2)
+    box.setSingleStep(0.1)
+    box.setValue(value)
+    if tooltip:
+        box.setToolTip(tooltip)
+    return box
+
+
+def _add_appearance_rows(form, obj, default_lw, default_fill):
+    """Length/height/stroke/color rows shared by the port & line dialogs.
+    Returns the widget dict; read back with _appearance_result."""
+    widgets = {}
+    widgets['w_mult'] = _mult_spin(obj.get('w_mult', 1.0),
+                                   "Stretch the glyph length "
+                                   "(× default; "
+                                   "arrow keys ←/"
+                                   "→ when selected)")
+    form.addRow("Length ×:", widgets['w_mult'])
+    widgets['h_mult'] = _mult_spin(obj.get('h_mult', 1.0),
+                                   "Stretch the glyph height "
+                                   "(× default; "
+                                   "arrow keys ↑/"
+                                   "↓ when selected)")
+    form.addRow("Height ×:", widgets['h_mult'])
+    lw = QDoubleSpinBox()
+    lw.setRange(0.25, 8.0)
+    lw.setDecimals(2)
+    lw.setSingleStep(0.25)
+    lw.setValue(float(obj.get('linewidth', default_lw)))
+    widgets['linewidth'] = lw
+    form.addRow("Stroke width:", lw)
+    widgets['color'] = _color_button(obj.get('color', 'black'))
+    form.addRow("Stroke color:", widgets['color'])
+    widgets['fill'] = _color_button(obj.get('fill', default_fill))
+    form.addRow("Fill color:", widgets['fill'])
+    return widgets
+
+
+def _appearance_result(widgets):
+    return {'w_mult': widgets['w_mult'].value(),
+            'h_mult': widgets['h_mult'].value(),
+            'linewidth': widgets['linewidth'].value(),
+            'color': widgets['color'].color(),
+            'fill': widgets['fill'].color()}
+
+
 class PortInputDialog(QDialog):
-    """Label + monitored/loss choice for a new (or edited) port glyph."""
+    """Label, monitored/loss choice, orientation and appearance of a
+    (new or edited) port glyph."""
 
     def __init__(self, default_label='P1', monitored=True, parent=None,
-                 editing=False):
+                 editing=False, port=None):
         super().__init__(parent)
         self.setWindowTitle("Edit Port" if editing else "Place Port")
+        port = port or {}
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self.label_edit = QLineEdit(default_label)
@@ -172,6 +252,16 @@ class PortInputDialog(QDialog):
             "of S.\nUnchecked: a loss hub — same damping in M, no channel "
             "(energy exits unobserved).")
         form.addRow(self.monitored_check)
+        self.auto_orient_check = QCheckBox(
+            "Auto-orient toward attached group")
+        self.auto_orient_check.setChecked(not port.get('angle_pinned', False))
+        self.auto_orient_check.setToolTip(
+            "Checked: the lead points at the center of the attached "
+            "nodes/line ends.\nUnchecked: the rotation is fixed — set it "
+            "with Ctrl+U / Ctrl+I (which also fixes it).")
+        form.addRow(self.auto_orient_check)
+        self.appearance = _add_appearance_rows(form, port, PORT_LINEWIDTH,
+                                               'white')
         layout.addLayout(form)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -181,8 +271,11 @@ class PortInputDialog(QDialog):
         self.label_edit.selectAll()
 
     def get_result(self):
-        return {'label': self.label_edit.text().strip() or 'P',
-                'monitored': self.monitored_check.isChecked()}
+        result = {'label': self.label_edit.text().strip() or 'P',
+                  'monitored': self.monitored_check.isChecked(),
+                  'auto_orient': self.auto_orient_check.isChecked()}
+        result.update(_appearance_result(self.appearance))
+        return result
 
 
 class LineInputDialog(QDialog):
@@ -279,6 +372,9 @@ class LineInputDialog(QDialog):
         alpha_label.setToolTip(ALPHA_TOOLTIP)
         form.addRow(alpha_label, self.alpha_spin)
 
+        self.appearance = _add_appearance_rows(form, line, LINE_LINEWIDTH,
+                                               '#cccccc')
+
         layout.addLayout(form)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -297,6 +393,7 @@ class LineInputDialog(QDialog):
                              for e, c in self.end_coupling_combos.items()},
             'Z0_port': self.z0_spin.value(),
             'alpha_uniform': self.alpha_spin.value(),
+            **_appearance_result(self.appearance),
         }
 
 
@@ -455,6 +552,11 @@ class ExplicitPortsMixin:
             'pos': (float(pos[0]), float(pos[1])),
             'angle': float(angle),
             'monitored': bool(monitored),
+            'w_mult': 1.0,
+            'h_mult': 1.0,
+            'linewidth': PORT_LINEWIDTH,
+            'color': 'black',
+            'fill': 'white',
             'attachments': [],
         }
         self.ports.append(port)
@@ -465,7 +567,8 @@ class ExplicitPortsMixin:
     def add_line_resonator(self, label=None, pos=(0.0, 0.0), FSR=1.0,
                            Ztx=65.0, f_max=10.0, port_end='xL',
                            Z0_port=50.0, alpha_uniform=0.0, angle=0.0,
-                           end_coupling=None):
+                           end_coupling=None, w_mult=1.0, h_mult=1.0,
+                           linewidth=None, color='black', fill='#cccccc'):
         """Create a transmission-line macro glyph."""
         if label is None:
             label = f"TL{self.line_id_counter + 1}"
@@ -474,6 +577,12 @@ class ExplicitPortsMixin:
             'label': label,
             'pos': (float(pos[0]), float(pos[1])),
             'angle': float(angle),
+            'w_mult': float(w_mult),
+            'h_mult': float(h_mult),
+            'linewidth': float(linewidth if linewidth is not None
+                               else LINE_LINEWIDTH),
+            'color': color,
+            'fill': fill,
             # Explicit end connections: each end holds a LIST, so several
             # loads can tap the same physical point (e.g. a stub resonator
             # read out by two ports). A line is NEVER implicitly terminated:
@@ -500,8 +609,7 @@ class ExplicitPortsMixin:
         # chosen end and wired to it. Nothing is implied: the port is
         # visible, labelled, movable and deletable like any other.
         if port_end in ('x0', 'xL'):
-            r = self.node_radius
-            offset = (LINE_BODY_W + 3.0) * r
+            offset = self._default_port_offset_for_line(line)
             px = line['pos'][0] + (offset if port_end == 'xL' else -offset)
             port = self.add_port(label=line['label'], pos=(px, line['pos'][1]),
                                  monitored=True)
@@ -776,6 +884,7 @@ class ExplicitPortsMixin:
             self._save_state()
             port = self.add_port(label=result['label'], pos=(snap_x, snap_y),
                                  monitored=result['monitored'])
+            self._apply_port_style(port, result)
             kind = "Port" if port['monitored'] else "Loss hub"
             print(f"✓ {kind} '{port['label']}' placed at "
                   f"({snap_x:.3f}, {snap_y:.3f}). Use edge mode (E) to "
@@ -1103,12 +1212,17 @@ class ExplicitPortsMixin:
             menu = QMenu(self)
             menu.addAction("Edit\N{HORIZONTAL ELLIPSIS}",
                            lambda: self._edit_port(port))
-            if port.get('angle_pinned') and port['attachments']:
-                def unpin():
-                    self._save_state()
-                    port['angle_pinned'] = False
-                    self._update_plot()
-                menu.addAction("Resume auto-orient", unpin)
+            auto = menu.addAction("Auto-orient")
+            auto.setCheckable(True)
+            auto.setChecked(not port.get('angle_pinned', False))
+
+            def toggle_auto():
+                # desired auto state = opposite of current (= pinned flag)
+                self._save_state()
+                self._apply_port_style(
+                    port, {'auto_orient': port.get('angle_pinned', False)})
+                self._update_plot()
+            auto.triggered.connect(lambda _=False: toggle_auto())
             def delete_port():
                 self._save_state()
                 self.remove_port(port)
@@ -1152,15 +1266,30 @@ class ExplicitPortsMixin:
             return True
         return False
 
+    def _apply_port_style(self, port, result):
+        """Apply a PortInputDialog result's appearance + orientation."""
+        for key in ('w_mult', 'h_mult', 'linewidth', 'color', 'fill'):
+            if key in result:
+                port[key] = result[key]
+        if 'auto_orient' in result:
+            if result['auto_orient']:
+                port['angle_pinned'] = False
+            elif not port.get('angle_pinned'):
+                # freeze at the current effective angle so unchecking the
+                # box never visibly snaps the glyph
+                port['angle'] = self._port_effective_angle(port)
+                port['angle_pinned'] = True
+
     def _edit_port(self, port):
         dialog = PortInputDialog(default_label=port['label'],
                                  monitored=port['monitored'], parent=self,
-                                 editing=True)
+                                 editing=True, port=port)
         if dialog.exec() == QDialog.Accepted:
             result = dialog.get_result()
             self._save_state()
             port['label'] = result['label']
             port['monitored'] = result['monitored']
+            self._apply_port_style(port, result)
             self._invalidate_scattering_data()
             if hasattr(self, 'properties_panel'):
                 self.properties_panel._update_scattering_ports_table()
@@ -1360,9 +1489,9 @@ class ExplicitPortsMixin:
         """
         r = self.node_radius
         x, y = port['pos']
-        w = PORT_BODY_W * r
-        h = PORT_BODY_H * r
-        apex_x = x + w / 2 + PORT_APEX_W * r
+        w = PORT_BODY_W * r * port.get('w_mult', 1.0)
+        h = PORT_BODY_H * r * port.get('h_mult', 1.0)
+        apex_x = x + w / 2 + PORT_APEX_W * r * port.get('w_mult', 1.0)
         lead_tip_x = apex_x + PORT_LEAD_LEN * r
         return x, y, w, h, apex_x, lead_tip_x
 
@@ -1387,26 +1516,37 @@ class ExplicitPortsMixin:
                        and c.get('port_id') == port['port_id']
                        for c in self._end_conns(line, end)):
                     targets.append(self._line_end_points(line)[end])
-        vx = vy = 0.0
-        for pos in targets:
-            dx, dy = pos[0] - px, pos[1] - py
-            norm = np.hypot(dx, dy)
-            if norm > 1e-12:
-                vx += dx / norm
-                vy += dy / norm
-        if not targets or (abs(vx) < 1e-12 and abs(vy) < 1e-12):
+        if not targets:
+            return port.get('angle', 0.0)
+        # aim the lead at the CENTER of the attached group (its centroid),
+        # not the mean unit direction, so a cluster pulls proportionally
+        cx = sum(pos[0] for pos in targets) / len(targets)
+        cy = sum(pos[1] for pos in targets) / len(targets)
+        vx, vy = cx - px, cy - py
+        if abs(vx) < 1e-12 and abs(vy) < 1e-12:
             return port.get('angle', 0.0)
         return float(np.degrees(np.arctan2(vy, vx)))
+
+    def _line_geometry(self, line):
+        """(lx, ly, w, h, rx) in UNROTATED data units.
+
+        w/h are the cylinder half-length/half-height (stretchable per line
+        via 'w_mult'/'h_mult'); rx is the end-cap ellipse half-depth, tied
+        to h so the coax perspective survives stretching.
+        """
+        r = self.node_radius
+        lx, ly = line['pos']
+        w = LINE_BODY_W * r * line.get('w_mult', 1.0)
+        h = LINE_BODY_H * r * line.get('h_mult', 1.0)
+        return lx, ly, w, h, 0.5 * h
 
     def _line_end_points(self, line):
         """Rotated lead-tip coordinates of the line's two ends."""
         r = self.node_radius
-        lx, ly = line['pos']
-        w = LINE_BODY_W * r
-        h = LINE_BODY_H * r
+        lx, ly, w, h, rx = self._line_geometry(line)
         angle = line.get('angle', 0.0)
-        x0 = lx - w - LINE_LEAD_LEN * r
-        xL = lx + w + 0.6 * h + LINE_LEAD_LEN * r
+        x0 = lx - w - rx - LINE_LEAD_LEN * r
+        xL = lx + w + rx + LINE_LEAD_LEN * r
         return {'x0': _rotate_point(x0, ly, lx, ly, angle),
                 'xL': _rotate_point(xL, ly, lx, ly, angle)}
 
@@ -1576,26 +1716,16 @@ class ExplicitPortsMixin:
         if x is None or y is None:
             return None
         tol = tol if tol is not None else 0.35 * self.node_radius
-        node_pos = {n['node_id']: n['pos'] for n in self.nodes}
+        node_by_id = {n['node_id']: n for n in self.nodes}
         for line in self.line_resonators:
-            pts = self._line_end_points(line)
             for end in ('x0', 'xL'):
-                p0 = np.array(pts[end])
                 for conn in self._end_conns(line, end):
                     if conn.get('kind') != 'node':
                         continue
-                    pos = node_pos.get(conn['node_id'])
-                    if pos is None:
+                    wire = self._tap_wire(line, end, conn, node_by_id)
+                    if wire is None:
                         continue
-                    p1 = np.array(pos, dtype=float)
-                    seg = p1 - p0
-                    seg_len2 = float(seg @ seg)
-                    if seg_len2 == 0.0:
-                        continue
-                    t = float(np.clip((np.array([x, y]) - p0) @ seg
-                                      / seg_len2, 0.0, 1.0))
-                    d = float(np.hypot(*(np.array([x, y]) - (p0 + t * seg))))
-                    if d <= tol:
+                    if self._dist_to_polyline(x, y, wire) <= tol:
                         return line, end, conn
         return None
 
@@ -1628,6 +1758,13 @@ class ExplicitPortsMixin:
             self.properties_panel._update_scattering_ports_table()
         self._update_plot()
 
+    def _default_port_offset_for_line(self, line):
+        """Center-to-center distance placing a port just beyond a lead."""
+        r = self.node_radius
+        _, _, w, _, rx = self._line_geometry(line)
+        return (w + rx + LINE_LEAD_LEN * r
+                + (PORT_LEAD_LEN + PORT_APEX_W + PORT_BODY_W / 2 + 0.4) * r)
+
     def _port_lead_tip(self, port):
         """Rotated position of the lead tip (attachment links start here)."""
         x, y, _, _, _, lead_tip_x = self._port_geometry(port)
@@ -1651,10 +1788,10 @@ class ExplicitPortsMixin:
             return None
         r = self.node_radius
         for line in reversed(self.line_resonators):
-            lx, ly = line['pos']
+            lx, ly, w, h, rx = self._line_geometry(line)
             ux, uy = _rotate_point(x, y, lx, ly, -line.get('angle', 0.0))
-            w = LINE_BODY_W * r + LINE_LEAD_LEN * r
-            h = LINE_BODY_H * r
+            w = w + rx + LINE_LEAD_LEN * r
+            h = max(h, 0.35 * r)   # slender coax stays grabbable
             if (lx - w <= ux <= lx + w) and (ly - h <= uy <= ly + h):
                 return line
         return None
@@ -1664,24 +1801,138 @@ class ExplicitPortsMixin:
         if x is None or y is None:
             return None
         tol = tol if tol is not None else 0.35 * self.node_radius
-        node_pos = {n['node_id']: n['pos'] for n in self.nodes}
+        node_by_id = {n['node_id']: n for n in self.nodes}
         for port in self.ports:
-            p0 = np.array(self._port_lead_tip(port))
             for att in port['attachments']:
-                pos = node_pos.get(att['node_id'])
-                if pos is None:
+                pts = self._attachment_wire(port, att, node_by_id)
+                if pts is None:
                     continue
-                p1 = np.array(pos, dtype=float)
-                seg = p1 - p0
-                seg_len2 = float(seg @ seg)
-                if seg_len2 == 0.0:
-                    continue
-                t = float(np.clip((np.array([x, y]) - p0) @ seg / seg_len2,
-                                  0.0, 1.0))
-                dist = float(np.hypot(*(np.array([x, y]) - (p0 + t * seg))))
-                if dist <= tol:
+                if self._dist_to_polyline(x, y, pts) <= tol:
                     return port, att
         return None
+
+    # ---- wire routing (rounded, tangent-constrained) ----
+
+    def _wire_points(self, p0, t0, p1, t1, samples=33):
+        """Sampled cubic-Bezier wire from p0 (leaving along unit tangent
+        t0) to p1 (arriving traveling along unit tangent t1).
+
+        This is the ComfyUI/Blender-node routing style: every wire leaves
+        its terminal colinear with the terminal's lead and lands on its
+        target along the target's own normal, with one smooth rounded
+        curve in between (no rectilinear jogs). All wires out of one port
+        share p0 and t0, so a fan collimates through the lead before
+        spreading.
+        """
+        p0 = np.asarray(p0, dtype=float)
+        p1 = np.asarray(p1, dtype=float)
+        t0 = np.asarray(t0, dtype=float)
+        t1 = np.asarray(t1, dtype=float)
+        r = self.node_radius
+        d = float(np.hypot(*(p1 - p0)))
+        c = min(max(0.45 * d, 0.9 * r), 4.0 * r)
+        c0 = p0 + c * t0
+        c1 = p1 - c * t1
+        ts = np.linspace(0.0, 1.0, samples)[:, None]
+        pts = ((1 - ts) ** 3 * p0 + 3 * (1 - ts) ** 2 * ts * c0
+               + 3 * (1 - ts) * ts ** 2 * c1 + ts ** 3 * p1)
+        return pts
+
+    def _port_wire_start(self, port):
+        """(lead-tip point, outward unit tangent) of a port terminal."""
+        theta = np.radians(self._port_effective_angle(port))
+        return (np.array(self._port_lead_tip(port), dtype=float),
+                np.array([np.cos(theta), np.sin(theta)]))
+
+    def _line_end_wire_start(self, line, end):
+        """(lead-tip point, outward unit tangent) of a line-end terminal."""
+        theta = np.radians(line.get('angle', 0.0))
+        axis = np.array([np.cos(theta), np.sin(theta)])
+        pt = np.array(self._line_end_points(line)[end], dtype=float)
+        return pt, (axis if end == 'xL' else -axis)
+
+    def _node_wire_end(self, node, toward):
+        """(entry point on the node circle, arrival unit tangent).
+
+        The wire enters normal to the circle tangent — i.e. radially — on
+        the side facing `toward` (the emitting terminal's lead tip).
+        """
+        cx, cy = node['pos']
+        radius = self.node_radius * node.get('node_size_mult', 1.0)
+        u = np.array([toward[0] - cx, toward[1] - cy], dtype=float)
+        norm = float(np.hypot(*u))
+        u = u / norm if norm > 1e-12 else np.array([1.0, 0.0])
+        return np.array([cx, cy]) + radius * u, -u
+
+    def _attachment_wire(self, port, att, node_by_id=None):
+        """Sampled wire for one port->node attachment link, or None."""
+        nodes = (node_by_id if node_by_id is not None
+                 else {n['node_id']: n for n in self.nodes})
+        node = nodes.get(att['node_id'])
+        if node is None:
+            return None
+        p0, t0 = self._port_wire_start(port)
+        p1, t1 = self._node_wire_end(node, p0)
+        return self._wire_points(p0, t0, p1, t1)
+
+    def _tap_wire(self, line, end, conn, node_by_id=None):
+        """Sampled wire for one line-end->node tap link, or None."""
+        nodes = (node_by_id if node_by_id is not None
+                 else {n['node_id']: n for n in self.nodes})
+        node = nodes.get(conn['node_id'])
+        if node is None:
+            return None
+        p0, t0 = self._line_end_wire_start(line, end)
+        p1, t1 = self._node_wire_end(node, p0)
+        return self._wire_points(p0, t0, p1, t1)
+
+    def _line_end_port_wire(self, line, end, port):
+        """Sampled wire for a line-end->port termination link."""
+        p0, t0 = self._line_end_wire_start(line, end)
+        p1, tp = self._port_wire_start(port)
+        # arrive at the port lead tip traveling INTO the lead
+        return self._wire_points(p0, t0, p1, -tp)
+
+    @staticmethod
+    def _dist_to_polyline(x, y, pts):
+        """Minimum distance from (x, y) to a sampled wire."""
+        p = np.array([x, y], dtype=float)
+        a = pts[:-1]
+        b = pts[1:]
+        seg = b - a
+        seg_len2 = np.einsum('ij,ij->i', seg, seg)
+        seg_len2[seg_len2 == 0.0] = 1e-30
+        t = np.clip(np.einsum('ij,ij->i', p - a, seg) / seg_len2, 0.0, 1.0)
+        proj = a + t[:, None] * seg
+        return float(np.min(np.hypot(*(p - proj).T)))
+
+    def _draw_wire(self, ax, pts, color, linewidth, linestyle='-',
+                   selected=False, zorder=4, alpha=0.9):
+        """Draw one routed wire (with the salmon selection underlay)."""
+        if selected:
+            ax.add_line(mlines.Line2D(
+                pts[:, 0], pts[:, 1], color='salmon', linewidth=4.0,
+                zorder=zorder - 0.5, alpha=0.9, solid_capstyle='round'))
+        ax.add_line(mlines.Line2D(
+            pts[:, 0], pts[:, 1], color=color, linewidth=linewidth,
+            linestyle=linestyle, zorder=zorder, alpha=alpha,
+            solid_capstyle='round'))
+
+    def _adjust_glyph_size(self, direction):
+        """Arrow-key stretch for selected ports/lines (node-key parity):
+        Up/Down = height, Left/Right = length."""
+        glyphs = list(self.selected_ports) + list(self.selected_lines)
+        if not glyphs:
+            return False
+        self._save_state()
+        key, step = (('h_mult', 0.1) if direction in ('up', 'down')
+                     else ('w_mult', 0.1))
+        sign = 1 if direction in ('up', 'right') else -1
+        for g in glyphs:
+            g[key] = float(np.clip(g.get(key, 1.0) + sign * step,
+                                   GLYPH_SIZE_MIN, GLYPH_SIZE_MAX))
+        self._update_plot()
+        return True
 
     # ---- drawing ----
 
@@ -1734,12 +1985,12 @@ class ExplicitPortsMixin:
             usetex=self.use_latex, zorder=12)
 
     def _draw_ports_and_lines(self, ax=None):
-        """Draw port/loss-hub/line glyphs and attachment links."""
+        """Draw port/loss-hub/line glyphs and their routed wiring."""
         if not (self.ports or self.line_resonators):
             return
         ax = ax or self.canvas.ax
         r = self.node_radius
-        node_pos = {n['node_id']: n['pos'] for n in self.nodes}
+        node_by_id = {n['node_id']: n for n in self.nodes}
         ppdu = self._glyph_points_per_data_unit(ax)
         config = self.APP_CONFIG
         label_font_scale = getattr(config, 'PLOT_NODE_LABEL_FONT_SCALE', 0.35)
@@ -1749,12 +2000,14 @@ class ExplicitPortsMixin:
             angle = self._port_effective_angle(port)
             selected = port in self.selected_ports
             pending = port is self._attach_pending_port
-            edge_color = 'dodgerblue' if pending else 'black'
+            stroke = 'dodgerblue' if pending else port.get('color', 'black')
+            lw = float(port.get('linewidth', PORT_LINEWIDTH))
 
             def rot(px, py):
                 return _rotate_point(px, py, x, y, angle)
 
-            # home-plate pentagon pointing right (rotated about pos)
+            # home-plate pentagon: square back, flat top/bottom, tapered
+            # nose (diagrammer reference art), rotated about pos
             verts = [
                 rot(x - w / 2, y - h / 2),
                 rot(x + w / 2, y - h / 2),
@@ -1771,37 +2024,33 @@ class ExplicitPortsMixin:
                 ax.add_patch(halo)
             body = mpatches.Polygon(
                 verts, closed=True,
-                facecolor='white' if port['monitored'] else '#e8e8e8',
-                edgecolor=edge_color, linewidth=2.5, zorder=11,
+                facecolor=(port.get('fill', 'white') if port['monitored']
+                           else '#e8e8e8'),
+                edgecolor=stroke, linewidth=lw, zorder=11,
+                joinstyle='miter',
                 linestyle='--' if pending else '-',
                 hatch=None if port['monitored'] else '///')
             ax.add_patch(body)
 
-            # short thick lead at the apex
+            # terminal lead at the apex — same stroke as the body
             (ax0, ay0), (ax1, ay1) = rot(apex_x, y), rot(lead_tip_x, y)
             ax.add_line(mlines.Line2D(
-                [ax0, ax1], [ay0, ay1], color=edge_color,
-                linewidth=4.0, solid_capstyle='butt', zorder=11))
+                [ax0, ax1], [ay0, ay1], color=stroke,
+                linewidth=lw, solid_capstyle='butt', zorder=11))
 
-            # attachment links: thin dashed, visually distinct from edges;
-            # a selected link draws with a salmon underlay + midpoint dot
-            # (the same indicator edges use)
-            tip_x, tip_y = ax1, ay1
+            # attachment wires: every wire leaves the lead tip colinear
+            # with the lead (a multi-wire fan collimates through it) and
+            # enters its node normal to the circle
             for att in port['attachments']:
-                pos = node_pos.get(att['node_id'])
-                if pos is None:
+                pts = self._attachment_wire(port, att, node_by_id)
+                if pts is None:
                     continue
                 att_selected = (port, att) in self.selected_attachments
                 link_color = 'gray' if att['sign'] >= 0 else 'firebrick'
-                if att_selected:
-                    ax.add_line(mlines.Line2D(
-                        [tip_x, pos[0]], [tip_y, pos[1]], color='salmon',
-                        linewidth=4.0, zorder=3.5, alpha=0.9))
-                ax.add_line(mlines.Line2D(
-                    [tip_x, pos[0]], [tip_y, pos[1]], color=link_color,
-                    linewidth=1.2, linestyle=(0, (4, 3)), zorder=4,
-                    alpha=0.9))
-                mx, my = (tip_x + pos[0]) / 2, (tip_y + pos[1]) / 2
+                self._draw_wire(ax, pts, link_color, 1.2,
+                                linestyle=(0, (4, 3)),
+                                selected=att_selected, zorder=4)
+                mx, my = pts[len(pts) // 2]
                 if att_selected:
                     ax.add_patch(mpatches.Circle(
                         (mx, my), 0.3, facecolor='lightcoral',
@@ -1814,16 +2063,20 @@ class ExplicitPortsMixin:
             # label INSIDE the glyph body, node-style bold sans-serif,
             # shifted slightly away from the apex
             cx, cy = rot(x - 0.15 * w, y)
-            font_pts = h * ppdu * label_font_scale * 1.6
+            font_pts = h * ppdu * label_font_scale * 1.45
+            # long labels shrink to stay inside the body (~0.6 pt of
+            # glyph width per point of font size per character)
+            n_chars = max(len(port['label']), 1)
+            font_pts = min(font_pts, 0.92 * w * ppdu / (0.62 * n_chars))
             self._draw_glyph_label(ax, port['label'], cx, cy, font_pts, ppdu)
 
         for line in self.line_resonators:
-            lx, ly = line['pos']
-            w = LINE_BODY_W * r
-            h = LINE_BODY_H * r
+            lx, ly, w, h, rx = self._line_geometry(line)
             angle = line.get('angle', 0.0)
             selected = line in self.selected_lines
-            edge_color = 'black'
+            stroke = line.get('color', 'black')
+            fill = line.get('fill', '#cccccc')
+            lw = float(line.get('linewidth', LINE_LINEWIDTH))
 
             # glyph rotation: draw axis-aligned, then rotate every artist
             # about the glyph center
@@ -1833,42 +2086,48 @@ class ExplicitPortsMixin:
             # selection indicator: salmon halo around the cylinder, matching
             # the node/edge selection language
             if selected:
+                hh = max(1.6 * h, 0.5 * r)
                 halo = mpatches.Rectangle(
-                    (lx - w - LINE_LEAD_LEN * r, ly - 1.4 * h),
-                    2 * (w + LINE_LEAD_LEN * r), 2.8 * h, fill=False,
+                    (lx - w - rx - LINE_LEAD_LEN * r, ly - hh),
+                    2 * (w + rx + LINE_LEAD_LEN * r), 2 * hh, fill=False,
                     edgecolor='salmon', linewidth=5.0, zorder=9.5,
                     transform=glyph_tf)
                 ax.add_patch(halo)
 
-            # cylinder: body rectangle + right elliptical end-cap + left arc
+            # slender coax cylinder (diagrammer reference art): gray body,
+            # closed rounded cap on the left, open elliptical mouth on the
+            # right, terminal stubs on both ends
             body = mpatches.Rectangle(
-                (lx - w, ly - h), 2 * w, 2 * h, facecolor='#dddddd',
+                (lx - w, ly - h), 2 * w, 2 * h, facecolor=fill,
                 edgecolor='none', zorder=10, transform=glyph_tf)
             ax.add_patch(body)
-            cap = mpatches.Ellipse(
-                (lx + w, ly), 0.6 * h * 2, 2 * h, facecolor='#cccccc',
-                edgecolor=edge_color, linewidth=1.5, zorder=11,
-                transform=glyph_tf)
-            ax.add_patch(cap)
+            left_fill = mpatches.Ellipse(
+                (lx - w, ly), 2 * rx, 2 * h, facecolor=fill,
+                edgecolor='none', zorder=10, transform=glyph_tf)
+            ax.add_patch(left_fill)
             left_arc = mpatches.Arc(
-                (lx - w, ly), 0.6 * h * 2, 2 * h, theta1=90, theta2=270,
-                edgecolor=edge_color, linewidth=1.5, zorder=11,
+                (lx - w, ly), 2 * rx, 2 * h, theta1=90, theta2=270,
+                edgecolor=stroke, linewidth=lw, zorder=11,
                 transform=glyph_tf)
             ax.add_patch(left_arc)
+            mouth = mpatches.Ellipse(
+                (lx + w, ly), 2 * rx, 2 * h, facecolor='white',
+                edgecolor=stroke, linewidth=lw, zorder=11,
+                transform=glyph_tf)
+            ax.add_patch(mouth)
             for seg in ((lx - w, ly - h, lx + w, ly - h),
                         (lx - w, ly + h, lx + w, ly + h)):
                 ax.add_line(mlines.Line2D([seg[0], seg[2]], [seg[1], seg[3]],
-                                          color=edge_color, linewidth=1.5,
+                                          color=stroke, linewidth=lw,
                                           zorder=11, transform=glyph_tf))
-            # thin leads centered on both ends
-            for x0, x1 in ((lx - w - LINE_LEAD_LEN * r, lx - w),
-                           (lx + w + 0.6 * h, lx + w + 0.6 * h
-                            + LINE_LEAD_LEN * r)):
+            # terminal stubs centered on both ends
+            for x0, x1 in ((lx - w - rx - LINE_LEAD_LEN * r, lx - w - rx),
+                           (lx + w + rx, lx + w + rx + LINE_LEAD_LEN * r)):
                 ax.add_line(mlines.Line2D([x0, x1], [ly, ly],
-                                          color=edge_color, linewidth=1.5,
+                                          color=stroke, linewidth=lw,
                                           zorder=11, transform=glyph_tf))
 
-            # end leads: open (hollow), terminated (filled + link to the
+            # end leads: open (hollow), terminated (filled + wire to the
             # port glyph), or pending a connection (blue)
             pend = self._attach_pending_line_end
             for end_name, (ex, ey) in self._line_end_points(line).items():
@@ -1876,27 +2135,21 @@ class ExplicitPortsMixin:
                 is_pending = bool(pend and pend[0] is line
                                   and pend[1] == end_name)
                 for conn_port in conn_ports:
-                    tx, ty = self._port_lead_tip(conn_port)
-                    ax.add_line(mlines.Line2D(
-                        [ex, tx], [ey, ty], color='dimgray', linewidth=1.4,
-                        linestyle=(0, (4, 3)), zorder=4, alpha=0.9))
-                # node taps at this end: thin solid links with an n_ref tag
+                    pts = self._line_end_port_wire(line, end_name, conn_port)
+                    self._draw_wire(ax, pts, 'dimgray', 1.4,
+                                    linestyle=(0, (4, 3)), zorder=4)
+                # node taps at this end: thin solid wires with an n_ref tag
                 tap_conns = [cn for cn in self._end_conns(line, end_name)
                              if cn.get('kind') == 'node']
                 for conn in tap_conns:
-                    pos = node_pos.get(conn['node_id'])
-                    if pos is None:
+                    pts = self._tap_wire(line, end_name, conn, node_by_id)
+                    if pts is None:
                         continue
                     tap_selected = ((line, end_name, conn)
                                     in self.selected_taps)
-                    if tap_selected:
-                        ax.add_line(mlines.Line2D(
-                            [ex, pos[0]], [ey, pos[1]], color='salmon',
-                            linewidth=4.0, zorder=3.5, alpha=0.9))
-                    ax.add_line(mlines.Line2D(
-                        [ex, pos[0]], [ey, pos[1]], color='teal',
-                        linewidth=1.3, zorder=4, alpha=0.9))
-                    mx, my = (ex + pos[0]) / 2, (ey + pos[1]) / 2
+                    self._draw_wire(ax, pts, 'teal', 1.3,
+                                    selected=tap_selected, zorder=4)
+                    mx, my = pts[len(pts) // 2]
                     ax.text(mx, my, f"n={conn.get('n_ref', 1)}",
                             fontsize=7, color='teal', ha='center',
                             va='center', zorder=5,
@@ -1907,13 +2160,19 @@ class ExplicitPortsMixin:
                 mark = ('dodgerblue' if is_pending
                         else 'black' if connected else 'darkgray')
                 ax.add_patch(mpatches.Circle(
-                    (ex, ey), 0.16 * r,
+                    (ex, ey), 0.12 * r,
                     facecolor=(mark if connected or is_pending else 'white'),
-                    edgecolor=mark, linewidth=1.8, zorder=11.5))
+                    edgecolor=mark, linewidth=1.6, zorder=11.5))
 
-            # label INSIDE the cylinder body, node-style bold sans-serif
-            font_pts = h * ppdu * label_font_scale * 2.2
-            self._draw_glyph_label(ax, line['label'], lx, ly, font_pts, ppdu)
+            # label: inside the body when it is tall enough, else floated
+            # above; node-style bold sans-serif either way
+            if 2 * h >= 0.85 * r:
+                tx, ty = lx, ly
+                font_pts = min(2 * h, 1.1 * r) * ppdu * label_font_scale * 1.6
+            else:
+                tx, ty = _rotate_point(lx, ly + h + 0.45 * r, lx, ly, angle)
+                font_pts = 0.9 * r * ppdu * label_font_scale * 1.6
+            self._draw_glyph_label(ax, line['label'], tx, ty, font_pts, ppdu)
 
             n_pairs = LineResonator(**line_payload(line)).N
             sub = f"FSR={line['FSR']:g}, N={n_pairs}"
@@ -1921,7 +2180,8 @@ class ExplicitPortsMixin:
                           if self._line_end_ports(line, e)]
             if terminated:
                 sub += ", port@" + "+".join(terminated)
-            sx, sy = _rotate_point(lx, ly - h - 0.35 * r, lx, ly, angle)
+            sy_off = max(h, 0.3 * r) + 0.35 * r
+            sx, sy = _rotate_point(lx, ly - sy_off, lx, ly, angle)
             ax.text(sx, sy, sub, ha='center', va='top',
                     fontsize=7, color='dimgray', zorder=12)
 
@@ -1938,6 +2198,11 @@ class ExplicitPortsMixin:
                     'angle': p.get('angle', 0.0),
                     'angle_pinned': bool(p.get('angle_pinned', False)),
                     'monitored': p['monitored'],
+                    'w_mult': p.get('w_mult', 1.0),
+                    'h_mult': p.get('h_mult', 1.0),
+                    'linewidth': p.get('linewidth', PORT_LINEWIDTH),
+                    'color': p.get('color', 'black'),
+                    'fill': p.get('fill', 'white'),
                     'attachments': [
                         {'node_id': a['node_id'], 'rate': a['rate'],
                          'sign': a['sign']}
@@ -1953,6 +2218,11 @@ class ExplicitPortsMixin:
                     'label': l['label'],
                     'pos': list(l['pos']),
                     'angle': l.get('angle', 0.0),
+                    'w_mult': l.get('w_mult', 1.0),
+                    'h_mult': l.get('h_mult', 1.0),
+                    'linewidth': l.get('linewidth', LINE_LINEWIDTH),
+                    'color': l.get('color', 'black'),
+                    'fill': l.get('fill', '#cccccc'),
                     'FSR': l['FSR'],
                     'Ztx': l['Ztx'],
                     'f_max': l['f_max'],
@@ -2004,6 +2274,11 @@ class ExplicitPortsMixin:
                 'angle': float(pdata.get('angle', 0.0)),
                 'angle_pinned': bool(pdata.get('angle_pinned', False)),
                 'monitored': bool(pdata.get('monitored', True)),
+                'w_mult': float(pdata.get('w_mult', 1.0)),
+                'h_mult': float(pdata.get('h_mult', 1.0)),
+                'linewidth': float(pdata.get('linewidth', PORT_LINEWIDTH)),
+                'color': pdata.get('color', 'black'),
+                'fill': pdata.get('fill', 'white'),
                 'attachments': attachments,
             }
             self.ports.append(port)
@@ -2017,6 +2292,11 @@ class ExplicitPortsMixin:
                 'label': ldata.get('label', f"TL{ldata['line_id']}"),
                 'pos': tuple(ldata.get('pos', (0.0, 0.0))),
                 'angle': float(ldata.get('angle', 0.0)),
+                'w_mult': float(ldata.get('w_mult', 1.0)),
+                'h_mult': float(ldata.get('h_mult', 1.0)),
+                'linewidth': float(ldata.get('linewidth', LINE_LINEWIDTH)),
+                'color': ldata.get('color', 'black'),
+                'fill': ldata.get('fill', '#cccccc'),
                 'FSR': float(ldata['FSR']),
                 'Ztx': float(ldata['Ztx']),
                 'f_max': float(ldata['f_max']),
@@ -2050,8 +2330,7 @@ class ExplicitPortsMixin:
                         and c.get('port_id') in known_port_ids)]
             legacy_end = line.get('port_end')
             if legacy_end in ('x0', 'xL') and not any(ends.values()):
-                r = self.node_radius
-                offset = (LINE_BODY_W + 3.0) * r
+                offset = self._default_port_offset_for_line(line)
                 px = line['pos'][0] + (offset if legacy_end == 'xL' else -offset)
                 port = self.add_port(label=line['label'],
                                      pos=(px, line['pos'][1]), monitored=True)

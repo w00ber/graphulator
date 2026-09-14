@@ -573,12 +573,15 @@ def test_port_auto_orients_toward_attachments(para):
     expected = np.degrees(np.arctan2(2.0, -4.0))           # toward (0, 2)
     assert win._port_effective_angle(port) == pytest.approx(expected)
 
-    # two symmetric attachments: mean direction (straight left)
+    # two symmetric attachments: centroid direction (straight left)
     win.add_port_attachment(port, 1, rate=0.2)
     assert win._port_effective_angle(port) == pytest.approx(180.0)
 
     # hit-testing follows the auto-orientation: glyph now extends LEFT
-    assert win._find_port_at_position(3.2, 0.0) is port
+    # (probe just inside the rotated apex, derived from the geometry)
+    _, _, w, _, apex_x, _ = win._port_geometry(port)
+    probe_x = 4.0 - (apex_x - 4.0) + 0.05
+    assert win._find_port_at_position(probe_x, 0.0) is port
     # ... and the attachment links leave from the rotated lead tip
     tip_x, tip_y = win._port_lead_tip(port)
     assert tip_x < 4.0 and tip_y == pytest.approx(0.0)
@@ -916,3 +919,128 @@ def test_multicomponent_generated_code_matches_live_S(para):
     labels = {i: gsms[i].port_labels for i in gsms}
     assert labels[0] == ['P1']
     assert labels[1] == ['TL1']
+
+
+# ---------------------------------------------------------------------------
+# Aesthetics round: routed wires, glyph styling, bundled test scenes
+# ---------------------------------------------------------------------------
+
+SCENES_DIR = os.path.join(HERE, os.pardir, "examples", "test_scenes")
+
+
+def test_wire_leaves_lead_colinear_and_enters_node_radially(para):
+    """Routing contract: exit tangent = lead direction (shared by every
+    wire out of the port), entry normal to the node circle."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    a = add_node(win, 0, 'A', 0.0)
+    b = add_node(win, 1, 'B', 1.0)
+    b['pos'] = (0.0, 5.0)
+    port = win.add_port(label='P1', pos=(4.0, 0.0))
+    win.add_port_attachment(port, 0, rate=0.2)
+    win.add_port_attachment(port, 1, rate=0.2)
+
+    p0, t0 = win._port_wire_start(port)
+    node_by_id = {n['node_id']: n for n in win.nodes}
+    for att in port['attachments']:
+        node = node_by_id[att['node_id']]
+        p1, t1 = win._node_wire_end(node, p0)
+        # fine sampling so chord directions converge to the tangents
+        pts = win._wire_points(p0, t0, p1, t1, samples=4001)
+        # shared exit point and exit tangent (the collimated bundle)
+        np.testing.assert_allclose(pts[0], p0, atol=1e-12)
+        d0 = pts[1] - pts[0]
+        d0 /= np.hypot(*d0)
+        np.testing.assert_allclose(d0, t0, atol=1e-3)
+        # radial entry: the final direction points at the node center
+        d1 = pts[-1] - pts[-2]
+        d1 /= np.hypot(*d1)
+        to_center = np.array(node['pos']) - pts[-1]
+        to_center /= np.hypot(*to_center)
+        np.testing.assert_allclose(d1, to_center, atol=1e-3)
+        # ... and the endpoint sits ON the node circle
+        gap = np.hypot(*(np.array(node['pos']) - pts[-1]))
+        assert gap == pytest.approx(
+            win.node_radius * node.get('node_size_mult', 1.0), rel=1e-9)
+
+
+def test_glyph_style_round_trip_and_stretch(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    port = win.add_port(label='P1', pos=(0.0, 0.0))
+    line = win.add_line_resonator(label='TL1', pos=(0.0, -4.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end=None,
+                                  w_mult=1.5, color='#123456')
+    port.update({'w_mult': 2.0, 'h_mult': 0.5, 'linewidth': 3.0,
+                 'color': '#ff0000', 'fill': '#eeeeee'})
+
+    # stretch changes the live geometry
+    _, _, w1, h1, _, _ = win._port_geometry(port)
+    _, _, w0, h0, _, _ = win._port_geometry(
+        {'pos': (0, 0), 'w_mult': 1.0, 'h_mult': 1.0})
+    assert w1 == pytest.approx(2.0 * w0) and h1 == pytest.approx(0.5 * h0)
+
+    # arrow-key stretch (node-key parity)
+    win.selected_lines = [line]
+    assert win._adjust_glyph_size('up') is True
+    assert line['h_mult'] == pytest.approx(1.1)
+    assert win._adjust_glyph_size('left') is True
+    assert line['w_mult'] == pytest.approx(1.4)
+    win.selected_lines = []
+
+    data = json.loads(json.dumps(win._serialize_graph()))
+    win._deserialize_graph(data)
+    rp = win.ports[0]
+    assert (rp['w_mult'], rp['h_mult'], rp['linewidth']) == (2.0, 0.5, 3.0)
+    assert (rp['color'], rp['fill']) == ('#ff0000', '#eeeeee')
+    rl = win.line_resonators[0]
+    assert (rl['w_mult'], rl['h_mult']) == (1.4, 1.1)
+    assert rl['color'] == '#123456'
+
+
+def test_auto_orient_toggle(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    a = add_node(win, 0, 'A', 0.0)
+    port = win.add_port(label='P1', pos=(4.0, 0.0))
+    win.add_port_attachment(port, 0, rate=0.2)
+    assert win._port_effective_angle(port) == pytest.approx(180.0)
+
+    # turning auto-orient OFF freezes the current effective angle (no snap)
+    win._apply_port_style(port, {'auto_orient': False})
+    assert port['angle_pinned'] is True
+    assert port['angle'] == pytest.approx(180.0)
+    a['pos'] = (4.0, 6.0)
+    assert win._port_effective_angle(port) == pytest.approx(180.0)
+
+    # turning it back ON resumes tracking the centroid
+    win._apply_port_style(port, {'auto_orient': True})
+    assert port['angle_pinned'] is False
+    assert win._port_effective_angle(port) == pytest.approx(90.0)
+
+
+@pytest.mark.parametrize("scene", sorted(
+    f for f in os.listdir(SCENES_DIR) if f.endswith('.pgraph')))
+def test_bundled_scene_loads_and_validates(para, scene):
+    """Every File -> Test scene opens, auto-enables the mode, and passes
+    scattering validation (they double as physics checks)."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = False
+    win._open_graph_file(os.path.join(SCENES_DIR, scene))
+    assert config.EXPLICIT_PORTS_MODE is True
+    ok, msg = win._validate_scattering_parameters()
+    assert ok, f"{scene}: {msg}"
+
+
+def test_bundled_tap_scene_computes_unitary_S(para):
+    gp, win, config = para
+    from graphulator.graphulator_para import _compute_sparams_job
+    win._open_graph_file(os.path.join(SCENES_DIR, "LINE_TAP_2NODES.pgraph"))
+    comps = win._find_connected_components()
+    assert len(comps) == 1
+    f = np.linspace(3.0, 6.0, 21)
+    res = _compute_sparams_job(win._build_sparams_job(comps[0], f, 3.0,
+                                                      6.0, 21))
+    S = res['S']
+    assert S.shape[1:] == (1, 1)
+    assert np.max(np.abs(np.abs(S[:, 0, 0]) - 1.0)) < 1e-12

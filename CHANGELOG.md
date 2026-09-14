@@ -50,6 +50,27 @@
     edges, and multi-component graphs now export one literal block per
     component (mirroring the live per-component jobs, including comb-mode
     hub attachments), replacing the runtime component filter.
+  - **Glyph aesthetics & routed wiring** (aligned with the diagrammer
+    reference art): the port is a boxy home-plate pentagon with a long
+    terminal lead and the transmission line a slender coax cylinder
+    (closed left cap, open right mouth, terminal stubs). Both glyphs are
+    stretchable (length/height, arrow keys or dialog), with per-glyph
+    stroke width, stroke color and fill color (dialogs, serialized in
+    .pgraph). Wires route as smooth rounded curves in the ComfyUI/Blender
+    node style: every wire leaves its terminal colinear with the lead (a
+    multi-wire fan collimates through the port lead before spreading),
+    enters nodes normal to the circle, and line-end links arrive at ports
+    along their leads; selection hit-testing follows the curves. Ports
+    auto-orient toward the CENTER of their attached group, with an
+    explicit Auto-orient toggle (dialog + context menu; manual rotation
+    still pins). Auto-fit ('a') now includes port/line glyphs. A new
+    **File → Test** menu ships seven canonical
+    explicit-ports scenes (regenerable via misc/make_test_scenes.py) used
+    for aesthetics iteration and physics checks; each is load-validated in
+    the test suite. Fixed: several nodes tapped onto the same line (or
+    joined only through a shared line) now compute as ONE component — the
+    component discovery previously left the extra tap partners in
+    separate components.
   - Phase-2 items are explicitly blocked pending derivations (complex /
     mixed-sector hub weights, band-limited combs, two-port lines,
     frequency-dependent weights); attachments enforce real signed weights
