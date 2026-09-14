@@ -1044,3 +1044,150 @@ def test_bundled_tap_scene_computes_unitary_S(para):
     S = res['S']
     assert S.shape[1:] == (1, 1)
     assert np.max(np.abs(np.abs(S[:, 0, 0]) - 1.0)) < 1e-12
+
+
+# ---------------------------------------------------------------------------
+# Keyboard routing + glyph properties panel
+# ---------------------------------------------------------------------------
+
+def test_punctuation_shortcuts_bind_shifted_alias(para):
+    """'?' and '+' are TYPED with Shift, so Qt delivers them with
+    ShiftModifier and a bare QKeySequence never matches. Every unmodified
+    punctuation binding gets a companion Shift+<key> shortcut; letters and
+    digits must NOT (Shift+G is its own separate binding)."""
+    gp, win, config = para
+    from PySide6.QtGui import QKeySequence
+    sm = win.shortcut_manager
+
+    for action_id in ('overlay.toggle', 'view.zoom_in'):
+        alias = sm._qt_shift_aliases.get(action_id)
+        assert alias is not None and alias.isEnabled(), action_id
+        primary = sm._qt_shortcuts[action_id].key().toString()
+        assert alias.key() == QKeySequence(f"Shift+{primary}")
+
+    # a letter binding gets no alias (it would collide with Shift+<letter>)
+    letter_alias = sm._qt_shift_aliases.get('node.place_single')
+    assert letter_alias is None or not letter_alias.isEnabled()
+    assert sm._shifted_alias('?') == 'Shift+?'
+    assert sm._shifted_alias('g') == ''
+    assert sm._shifted_alias('Ctrl+U') == ''
+
+
+def test_canvas_click_releases_input_focus(para):
+    """Single-key shortcuts are suppressed while a panel spinbox holds
+    focus (so typing numbers doesn't zoom). Clicking the canvas must hand
+    the keyboard back, or the shortcuts stay dead with no visible cue."""
+    gp, win, config = para
+    from PySide6.QtWidgets import QDoubleSpinBox
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from PySide6.QtWidgets import QApplication
+    build_shared_port_scene(win, config)
+    win._enter_scattering_mode()
+    win.show()
+    QApplication.setActiveWindow(win)      # focus only tracks an active window
+    QApplication.processEvents()
+    spins = win.properties_panel.findChildren(QDoubleSpinBox)
+    assert spins
+    spins[0].setFocus()
+    QApplication.processEvents()
+    if not win._is_input_widget_focused():
+        pytest.skip("platform did not grant keyboard focus (offscreen)")
+
+    QTest.mouseClick(win.canvas, Qt.LeftButton)
+    assert win._is_input_widget_focused() is False
+
+
+def test_auto_enable_notice_does_not_steal_keyboard(para):
+    """The 'Explicit Ports enabled' popup is informational: it must not
+    activate, or it swallows every WindowShortcut-scoped single key."""
+    gp, win, config = para
+    from PySide6.QtCore import Qt
+    config.EXPLICIT_PORTS_MODE = False
+    win._open_graph_file(os.path.join(SCENES_DIR, "PORT_1NODE.pgraph"))
+    assert config.EXPLICIT_PORTS_MODE is True
+    notice = getattr(win, '_explicit_ports_notice', None)
+    if notice is not None:
+        assert notice.testAttribute(Qt.WA_ShowWithoutActivating)
+        assert not notice.isModal()
+
+
+def test_glyph_selection_drives_properties_panel(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    port = win.add_port(label='P1', pos=(0.0, 0.0))
+    line = win.add_line_resonator(label='TL1', pos=(0.0, -5.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end=None)
+    panel = win.properties_panel
+
+    win.selected_ports = [port]
+    win._update_properties_panel()
+    assert panel.current_type == 'port'
+    assert panel.current_object is port
+    assert 'P1' in panel.title_label.text()
+    assert win._shortcut_context() == 'glyph'
+
+    win.selected_ports = []
+    win.selected_lines = [line]
+    win._update_properties_panel()
+    assert panel.current_type == 'line'
+    assert panel.current_object is line
+
+    # a glyph plus a node is a mixed selection: no glyph page
+    win.selected_nodes = [add_node(win, 0, 'A', 3.0)]
+    win._update_properties_panel()
+    assert panel.current_type != 'line'
+
+
+def test_port_label_autosize(para):
+    """The port body grows so the label fits; a manual length edit takes
+    over from autosize instead of fighting it."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    port = win.add_port(label='P1', pos=(0.0, 0.0))
+
+    _, _, w_short, _, _, _ = win._port_geometry(port)
+    port['label'] = 'P_readout_long'
+    _, _, w_long, _, _, _ = win._port_geometry(port)
+    assert w_long > w_short, "long label must widen the body"
+
+    # ... and the drawn label then fits inside it
+    assert win._port_label_w_mult(port) == pytest.approx(
+        w_long / (win.node_radius * 1.5), rel=1e-9)
+
+    # turning autosize off restores the stored width
+    port['autosize'] = False
+    _, _, w_off, _, _, _ = win._port_geometry(port)
+    assert w_off == pytest.approx(w_short)
+
+    # an arrow-key stretch takes over from autosize at the current width
+    port['autosize'] = True
+    win.selected_ports = [port]
+    win._adjust_glyph_size('right')
+    assert port['autosize'] is False
+    assert port['w_mult'] > 1.0
+
+
+def test_context_menu_rotate_is_selection_independent(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    a = add_node(win, 0, 'A', 0.0)
+    port = win.add_port(label='P1', pos=(4.0, 0.0))
+    win.add_port_attachment(port, 0, rate=0.2)
+    line = win.add_line_resonator(label='TL1', pos=(0.0, -6.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end=None)
+
+    # nothing selected: the menu action still rotates its own glyph
+    win.selected_ports, win.selected_lines, win.selected_nodes = [], [], []
+    win._rotate_selected_glyph(port, 15)
+    assert port['angle_pinned'] is True
+    assert port['angle'] == pytest.approx(165.0)   # 180 auto-orient - 15
+    win._rotate_selected_glyph(line, -15)
+    assert line['angle'] == pytest.approx(15.0)
+
+    # the caller's selection is left untouched
+    assert win.selected_ports == [] and win.selected_lines == []
+    # node positions are never disturbed by a glyph rotation
+    assert a['pos'] == (0.0, 0.0)

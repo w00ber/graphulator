@@ -71,6 +71,15 @@
     joined only through a shared line) now compute as ONE component — the
     component discovery previously left the extra tap partners in
     separate components.
+  - **Properties panel for glyphs**: selecting a port or transmission
+    line now fills the Properties tab with its live-applied properties
+    (label, monitored/loss, auto-orient, auto-size, length/height, stroke
+    width, stroke and fill color; for a line also FSR, Ztx, f_max, Z0,
+    alpha and the per-end tap coupling, each validated through the
+    numerics schema before it is committed). Port bodies auto-size so the
+    label always fits, and a manual length edit takes over from that.
+    Rotation (`Ctrl+U`/`Ctrl+I`) is also on the glyph right-click menu,
+    and the shortcut-hint overlay gains a "Port / line selected" context.
   - Phase-2 items are explicitly blocked pending derivations (complex /
     mixed-sector hub weights, band-limited combs, two-port lines,
     frequency-dependent weights); attachments enforce real signed weights
@@ -78,6 +87,23 @@
     derivation.
 
 ### Fixed
+- Keyboard: shortcuts bound to punctuation typed WITH Shift (`?` for the
+  hint overlay, `+` for zoom in) never fired, because the key arrives with
+  `ShiftModifier` and a bare `QKeySequence("?")` cannot match it. Every
+  unmodified punctuation binding now also registers a companion
+  `Shift+<key>` shortcut (letters and digits are excluded, so `G` and
+  `Shift+G` stay distinct), kept in sync when a binding is remapped.
+- Keyboard: single-key shortcuts are suppressed while an input widget has
+  focus (so typing in a spinbox doesn't zoom or place nodes), but clicking
+  back onto the canvas did not release that focus — leaving every
+  single-key shortcut silently dead after any panel edit, with no visible
+  cue. A canvas click now clears input focus (the canvas itself still
+  stays out of the Tab chain).
+- Keyboard: the "Explicit Ports enabled" auto-enable notice was a
+  non-modal popup that took keyboard activation, swallowing every
+  window-scoped single-key shortcut until it was dismissed — so `+`/`-`
+  and `?` appeared broken for any file containing ports or lines. It now
+  shows without activating and hands focus straight back to the canvas.
 - Scattering: S-matrix port labels were wrong for graphs whose ports are not in
   ascending node-id order. The K columns are built by walking the nodes in
   basis order, but every label path (S-parameter checkboxes, plot legends,

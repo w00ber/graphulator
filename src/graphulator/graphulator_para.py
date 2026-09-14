@@ -3423,6 +3423,260 @@ class PropertiesPanel(QWidget):
 
         self.properties_layout.addLayout(form)
 
+    # ---- Explicit Ports: port / transmission-line glyph properties ----
+
+    def _glyph_color_button(self, glyph, key, default):
+        """Swatch button writing `key` on the glyph, live-applied."""
+        from PySide6.QtWidgets import QColorDialog
+        btn = QPushButton()
+        btn.setFixedSize(46, 22)
+
+        def paint(name):
+            btn.setStyleSheet(
+                f"background-color: {name}; border: 1px solid #888;")
+
+        def pick():
+            col = QColorDialog.getColor(QColor(glyph.get(key, default)),
+                                        self.graphulator)
+            if col.isValid():
+                self.graphulator._save_state()
+                glyph[key] = col.name()
+                paint(col.name())
+                self.graphulator._update_plot()
+
+        btn.clicked.connect(pick)
+        paint(glyph.get(key, default))
+        return btn
+
+    def _glyph_mult_spin(self, glyph, key, tooltip, on_change=None):
+        from .para_features.explicit_ports import (GLYPH_SIZE_MIN,
+                                                   GLYPH_SIZE_MAX)
+        box = QDoubleSpinBox()
+        box.setRange(GLYPH_SIZE_MIN, GLYPH_SIZE_MAX)
+        box.setDecimals(2)
+        box.setSingleStep(0.1)
+        box.setValue(float(glyph.get(key, 1.0)))
+        box.setToolTip(tooltip)
+        box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+        def apply(value):
+            glyph[key] = float(value)
+            if on_change is not None:
+                on_change()
+            self.graphulator._update_plot()
+
+        box.valueChanged.connect(apply)
+        return box
+
+    def _add_glyph_appearance_rows(self, form, glyph, default_lw, default_fill):
+        """Length / height / stroke / colors, shared by both glyph types."""
+        is_port = 'port_id' in glyph
+
+        def drop_autosize():
+            # a manual length edit takes over from label autosizing
+            if is_port:
+                glyph['autosize'] = False
+
+        form.addRow("Length \N{MULTIPLICATION SIGN}:", self._glyph_mult_spin(
+            glyph, 'w_mult',
+            "Stretch the glyph length (\N{LEFTWARDS ARROW}/"
+            "\N{RIGHTWARDS ARROW} when selected)", drop_autosize))
+        form.addRow("Height \N{MULTIPLICATION SIGN}:", self._glyph_mult_spin(
+            glyph, 'h_mult',
+            "Stretch the glyph height (\N{UPWARDS ARROW}/"
+            "\N{DOWNWARDS ARROW} when selected)"))
+
+        lw = QDoubleSpinBox()
+        lw.setRange(0.25, 8.0)
+        lw.setDecimals(2)
+        lw.setSingleStep(0.25)
+        lw.setValue(float(glyph.get('linewidth', default_lw)))
+        lw.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        lw.valueChanged.connect(
+            lambda v: (glyph.__setitem__('linewidth', float(v)),
+                       self.graphulator._update_plot()))
+        form.addRow("Stroke width:", lw)
+        form.addRow("Stroke color:",
+                    self._glyph_color_button(glyph, 'color', 'black'))
+        form.addRow("Fill color:",
+                    self._glyph_color_button(glyph, 'fill', default_fill))
+
+    def show_port_properties(self, port):
+        """Editable properties for a selected port / loss-hub glyph."""
+        from .para_features.explicit_ports import PORT_LINEWIDTH
+        self.clear_properties()
+        self.current_object = port
+        self.current_type = 'port'
+        kind = "Port" if port.get('monitored', True) else "Loss hub"
+        self.title_label.setText(f"{kind}: {port['label']}")
+        g = self.graphulator
+
+        form = QFormLayout()
+        label_edit = QLineEdit(port['label'])
+
+        def set_label(text):
+            port['label'] = text.strip() or port['label']
+            self.title_label.setText(f"{kind}: {port['label']}")
+            g._invalidate_scattering_data()
+            g._update_plot()
+
+        label_edit.textChanged.connect(set_label)
+        form.addRow("Label:", label_edit)
+
+        monitored = QCheckBox("Monitored (scattering port)")
+        monitored.setChecked(bool(port.get('monitored', True)))
+        monitored.setToolTip(
+            "Checked: a port \N{EM DASH} its damping appears in M and it is "
+            "a channel of S.\nUnchecked: a loss hub \N{EM DASH} same "
+            "damping, no channel.")
+
+        def set_monitored(state):
+            g._save_state()
+            port['monitored'] = monitored.isChecked()
+            g._invalidate_scattering_data()
+            g._update_plot()
+
+        monitored.stateChanged.connect(set_monitored)
+        form.addRow(monitored)
+
+        auto = QCheckBox("Auto-orient toward attached group")
+        auto.setChecked(not port.get('angle_pinned', False))
+        auto.setToolTip(
+            "Checked: the lead points at the center of the attached nodes "
+            "and line ends.\nUnchecked: rotation is fixed "
+            "(Ctrl+U / Ctrl+I, or the right-click menu).")
+
+        def set_auto(state):
+            g._save_state()
+            g._apply_port_style(port, {'auto_orient': auto.isChecked()})
+            g._update_plot()
+
+        auto.stateChanged.connect(set_auto)
+        form.addRow(auto)
+
+        autosize = QCheckBox("Auto-size length to label")
+        autosize.setChecked(bool(port.get('autosize', True)))
+        autosize.setToolTip(
+            "Grow the body so the label always fits inside it. Stretching "
+            "the length by hand turns this off.")
+        autosize.stateChanged.connect(
+            lambda _s: (port.__setitem__('autosize', autosize.isChecked()),
+                        g._update_plot()))
+        form.addRow(autosize)
+
+        self._add_glyph_appearance_rows(form, port, PORT_LINEWIDTH, 'white')
+        self.properties_layout.addLayout(form)
+
+        n_att = len(port.get('attachments', []))
+        info = QLabel(
+            f"{n_att} attachment(s). Rates and signs live in the "
+            "Ports & Lines panel (scattering mode); rewire with the edge "
+            "tool (E).")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666; font-style: italic;")
+        self.properties_layout.addWidget(info)
+        self.properties_layout.addStretch()
+
+    def show_line_properties(self, line):
+        """Editable properties for a selected transmission-line glyph."""
+        from .para_features.explicit_ports import (LINE_LINEWIDTH,
+                                                   LineResonator,
+                                                   line_payload, ALPHA_TOOLTIP)
+        self.clear_properties()
+        self.current_object = line
+        self.current_type = 'line'
+        self.title_label.setText(f"Transmission line: {line['label']}")
+        g = self.graphulator
+
+        form = QFormLayout()
+        label_edit = QLineEdit(line['label'])
+
+        def set_label(text):
+            line['label'] = text.strip() or line['label']
+            self.title_label.setText(f"Transmission line: {line['label']}")
+            g._invalidate_scattering_data()
+            g._update_plot()
+
+        label_edit.textChanged.connect(set_label)
+        form.addRow("Label:", label_edit)
+
+        def physics_spin(key, lo, hi, decimals, step, tooltip):
+            box = QDoubleSpinBox()
+            box.setRange(lo, hi)
+            box.setDecimals(decimals)
+            box.setSingleStep(step)
+            box.setValue(float(line.get(key, 0.0)))
+            box.setToolTip(tooltip)
+            box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+            def apply(value):
+                # validate through the numerics schema before committing, so
+                # an invalid combination can never poison the live glyph
+                candidate = dict(line)
+                candidate[key] = float(value)
+                try:
+                    LineResonator(**line_payload(candidate))
+                except ValueError:
+                    return
+                line[key] = float(value)
+                g._invalidate_scattering_data()
+                g._update_plot()
+
+            box.valueChanged.connect(apply)
+            return box
+
+        form.addRow("FSR [au]:", physics_spin(
+            'FSR', 1e-9, 1e9, 4, 0.1,
+            "Free spectral range [a.u.] (comb mode spacing)"))
+        form.addRow("Ztx [\N{GREEK CAPITAL LETTER OMEGA}]:", physics_spin(
+            'Ztx', 1e-6, 1e6, 2, 1.0, "Line characteristic impedance"))
+        form.addRow("f_max [au]:", physics_spin(
+            'f_max', 1e-9, 1e12, 4, 1.0,
+            "Comb extent: N = ceil(f_max/FSR) mode pairs from DC"))
+        form.addRow("Z0 [\N{GREEK CAPITAL LETTER OMEGA}]:", physics_spin(
+            'Z0_port', 1e-6, 1e6, 2, 1.0, "Port termination impedance"))
+        form.addRow("\N{GREEK SMALL LETTER ALPHA} [Np]:", physics_spin(
+            'alpha_uniform', 0.0, 100.0, 6, 0.001, ALPHA_TOOLTIP))
+
+        couplings = (line.get('end_coupling')
+                     or {'x0': 'capacitive', 'xL': 'capacitive'})
+        for end in ('x0', 'xL'):
+            combo = QComboBox()
+            combo.addItem("capacitive  (g_n \N{PROPORTIONAL TO} \N{SQUARE ROOT}n)",
+                          'capacitive')
+            combo.addItem("inductive  (g_n \N{PROPORTIONAL TO} 1/\N{SQUARE ROOT}n)",
+                          'inductive')
+            combo.setCurrentIndex(
+                0 if couplings.get(end, 'capacitive') == 'capacitive' else 1)
+            combo.setToolTip(
+                "Coupling type of a mode tapped at this end \N{EM DASH} a "
+                "property of the physical tap point, shared by everything "
+                "attached there.")
+
+            def set_coupling(_idx, e=end, c=combo):
+                g._save_state()
+                line.setdefault('end_coupling', {})[e] = c.currentData()
+                g._invalidate_scattering_data()
+                g._update_plot()
+
+            combo.currentIndexChanged.connect(set_coupling)
+            form.addRow(f"Tap coupling @ {end}:", combo)
+
+        self._add_glyph_appearance_rows(form, line, LINE_LINEWIDTH, '#cccccc')
+        self.properties_layout.addLayout(form)
+
+        try:
+            n_pairs = LineResonator(**line_payload(line)).N
+            summary = f"{2 * n_pairs + 1} comb modes at extraction (N = {n_pairs})."
+        except ValueError as exc:
+            summary = f"Invalid parameters: {exc}"
+        info = QLabel(summary + " Connect the end leads with the edge tool "
+                      "(E) to a port glyph or a mode.")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666; font-style: italic;")
+        self.properties_layout.addWidget(info)
+        self.properties_layout.addStretch()
+
     def show_no_selection(self):
         """Show message when nothing is selected"""
         self.clear_properties()
@@ -16325,8 +16579,17 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
     def _update_properties_panel(self):
         """Update the properties panel based on current selection"""
+        n_glyphs = len(getattr(self, 'selected_ports', [])) \
+            + len(getattr(self, 'selected_lines', []))
+        # Single port / transmission-line glyph selected
+        if n_glyphs == 1 and not self.selected_nodes and not self.selected_edges:
+            glyph = (self.selected_ports or self.selected_lines)[0]
+            if self.selected_ports:
+                self.properties_panel.show_port_properties(glyph)
+            else:
+                self.properties_panel.show_line_properties(glyph)
         # Single node selected
-        if len(self.selected_nodes) == 1 and len(self.selected_edges) == 0:
+        elif len(self.selected_nodes) == 1 and len(self.selected_edges) == 0:
             self.properties_panel.show_node_properties(self.selected_nodes[0])
         # Single edge selected
         elif len(self.selected_edges) == 1 and len(self.selected_nodes) == 0:
@@ -16384,10 +16647,19 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             (None, 'Right-click', 'Style menu'),
             ('edit.delete', 'Delete'),
         ],
+        'glyph': [
+            ('rotate.ccw', 'Rotate glyph'),
+            (None, '←/→', 'Stretch length'),
+            (None, '↑/↓', 'Stretch height'),
+            (None, 'Double-click', 'Edit / appearance'),
+            (None, 'Right-click', 'Rotate, auto-orient, delete'),
+            ('edit.delete', 'Delete'),
+        ],
     }
 
     # Shortcut categories that make up the full ('all') list per context.
     _SHORTCUT_ALL_CATEGORIES = {
+        'glyph': ['Ports & Lines', 'Graph Rotation', 'Selection & Clipboard'],
         'none': ['Node Placement', 'Edge Operations', 'View',
                  'Canvas Navigation', 'Grid Controls', 'Selection & Clipboard',
                  'Edit', 'Help'],

@@ -116,9 +116,20 @@ results to machine precision (pinned by a golden-file regression suite).
   **Ports & Lines** panel (below the Nodes panel) or the per-link editor
   (double-click a link). Ports auto-orient toward the center of their
   attached group (toggleable per port; manual rotation `Ctrl+U/I` pins).
-  Glyphs stretch with the arrow keys when selected, and stroke width /
-  stroke color / fill are per-glyph properties in the edit dialog. The
-  **File → Test** menu ships canonical scenes for trying all of this.
+  Selecting a glyph fills the **Properties** panel with its editable
+  properties (label, monitored/loss, auto-orient, auto-size, length,
+  height, stroke width, stroke and fill color — plus FSR/Ztx/f_max/Z₀/α
+  and the per-end tap coupling for a line), all live-applied. Glyphs also
+  stretch with the arrow keys when selected and rotate with `Ctrl+U`/`I`
+  (also on the right-click menu). A port's length auto-sizes so its label
+  always fits; stretching it by hand takes over. The **File → Test** menu
+  ships canonical scenes for trying all of this.
+
+**Wire language**: a **dashed** wire is a *dissipative* coupling into a
+hub — a port attachment, or a line end terminated on a port — while a
+**solid teal** wire is a *conservative* node tap onto a line end (carrying
+an `n=…` chip for its reference harmonic). Dashed links turn firebrick with
+a `−` mark when the attachment's sign is inverted.
 - **Loss hub** (Insert menu): hatched port variant, same attachments, no
   scattering channel. Enables a per-channel energy audit
   (`GraphScatteringMatrix.absorption`, `.S_full`).

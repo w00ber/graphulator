@@ -90,6 +90,7 @@ class GraphWindowCommonMixin:
         'node': 'Node selected',
         'edge': 'Edge selected',
         'selfloop': 'Self-loop selected',
+        'glyph': 'Port / line selected',
     }
 
     def _shortcut_hint_rows(self, context):

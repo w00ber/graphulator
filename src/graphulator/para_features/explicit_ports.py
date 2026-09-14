@@ -95,6 +95,8 @@ LINE_LEAD_LEN = 0.55  # terminal stubs at both ends
 PORT_LINEWIDTH = 2.0  # default stroke (uniform across body + lead)
 LINE_LINEWIDTH = 1.6
 GLYPH_SIZE_MIN, GLYPH_SIZE_MAX = 0.3, 4.0
+PORT_LABEL_FILL = 0.92      # fraction of the body width a label may occupy
+PORT_LABEL_ADVANCE = 0.60   # mean glyph advance / font size (bold sans)
 
 
 def _line_extractor_id(line):
@@ -806,13 +808,26 @@ class ExplicitPortsMixin:
                "You can toggle it in Settings \N{RIGHTWARDS ARROW} Interface.")
         self._status_message("Explicit Ports mode auto-enabled", 8000)
         try:
+            from PySide6.QtCore import Qt as _Qt
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Information)
             box.setWindowTitle("Explicit Ports enabled")
             box.setText(msg)
             box.setModal(False)
+            # The notice must never take the keyboard: it is informational,
+            # and the app's single-key shortcuts ('+', '-', '?', 'a', ...)
+            # are WindowShortcut-scoped to the main window, so an activated
+            # popup silently swallows every one of them until it is
+            # dismissed. Show it without activating and hand focus straight
+            # back to the canvas.
+            box.setAttribute(_Qt.WA_ShowWithoutActivating, True)
+            box.setWindowFlag(_Qt.Tool, True)
             box.show()
             self._explicit_ports_notice = box
+            self.activateWindow()
+            self.raise_()
+            if getattr(self, 'canvas', None) is not None:
+                self.canvas.setFocus()
         except Exception:  # headless/exotic platforms: statusbar is enough
             logger.info(msg)
 
@@ -1212,6 +1227,11 @@ class ExplicitPortsMixin:
             menu = QMenu(self)
             menu.addAction("Edit\N{HORIZONTAL ELLIPSIS}",
                            lambda: self._edit_port(port))
+            menu.addAction("Rotate 15\N{DEGREE SIGN} CCW  (Ctrl+U)",
+                           lambda: self._rotate_selected_glyph(port, 15))
+            menu.addAction("Rotate 15\N{DEGREE SIGN} CW  (Ctrl+I)",
+                           lambda: self._rotate_selected_glyph(port, -15))
+            menu.addSeparator()
             auto = menu.addAction("Auto-orient")
             auto.setCheckable(True)
             auto.setChecked(not port.get('angle_pinned', False))
@@ -1236,6 +1256,11 @@ class ExplicitPortsMixin:
             menu = QMenu(self)
             menu.addAction("Edit\N{HORIZONTAL ELLIPSIS}",
                            lambda: self._edit_line(line))
+            menu.addAction("Rotate 15\N{DEGREE SIGN} CCW  (Ctrl+U)",
+                           lambda: self._rotate_selected_glyph(line, 15))
+            menu.addAction("Rotate 15\N{DEGREE SIGN} CW  (Ctrl+I)",
+                           lambda: self._rotate_selected_glyph(line, -15))
+            menu.addSeparator()
             def explode():
                 self._save_state()
                 self.explode_line_resonator(line)
@@ -1265,6 +1290,28 @@ class ExplicitPortsMixin:
             menu.exec(QCursor.pos())
             return True
         return False
+
+    def _shortcut_context(self):
+        """Add a 'glyph' context for selected ports / lines."""
+        if (self.selected_ports or self.selected_lines) \
+                and not self.selected_nodes and not self.selected_edges:
+            return 'glyph'
+        return super()._shortcut_context()
+
+    def _rotate_selected_glyph(self, glyph, angle_degrees):
+        """Rotate one glyph from the context menu (selection-independent,
+        so it works even when the keyboard shortcut is unavailable)."""
+        saved = (self.selected_ports, self.selected_lines,
+                 self.selected_nodes)
+        is_port = 'port_id' in glyph
+        self.selected_ports = [glyph] if is_port else []
+        self.selected_lines = [] if is_port else [glyph]
+        self.selected_nodes = []
+        try:
+            self._rotate_selected_nodes(angle_degrees)
+        finally:
+            (self.selected_ports, self.selected_lines,
+             self.selected_nodes) = saved
 
     def _apply_port_style(self, port, result):
         """Apply a PortInputDialog result's appearance + orientation."""
@@ -1489,11 +1536,29 @@ class ExplicitPortsMixin:
         """
         r = self.node_radius
         x, y = port['pos']
-        w = PORT_BODY_W * r * port.get('w_mult', 1.0)
+        w_mult = port.get('w_mult', 1.0)
+        if port.get('autosize', True):
+            # grow (never shrink) the body so the label fits inside it
+            w_mult = max(w_mult, self._port_label_w_mult(port))
+        w = PORT_BODY_W * r * w_mult
         h = PORT_BODY_H * r * port.get('h_mult', 1.0)
-        apex_x = x + w / 2 + PORT_APEX_W * r * port.get('w_mult', 1.0)
+        apex_x = x + w / 2 + PORT_APEX_W * r * w_mult
         lead_tip_x = apex_x + PORT_LEAD_LEN * r
         return x, y, w, h, apex_x, lead_tip_x
+
+    def _port_label_font_data(self, port):
+        """Label font height in DATA units (shared by draw + autosize, so
+        the two can never drift apart)."""
+        scale = getattr(self.APP_CONFIG, 'PLOT_NODE_LABEL_FONT_SCALE', 0.35)
+        h = PORT_BODY_H * self.node_radius * port.get('h_mult', 1.0)
+        return h * scale * 1.45
+
+    def _port_label_w_mult(self, port):
+        """Smallest length multiplier whose body holds the port's label."""
+        n_chars = max(len(str(port.get('label', ''))), 1)
+        label_w = PORT_LABEL_ADVANCE * n_chars * self._port_label_font_data(port)
+        needed = label_w / PORT_LABEL_FILL
+        return needed / (PORT_BODY_W * self.node_radius)
 
     def _port_effective_angle(self, port):
         """Drawing/hit-test angle of a port glyph.
@@ -1929,6 +1994,13 @@ class ExplicitPortsMixin:
                      else ('w_mult', 0.1))
         sign = 1 if direction in ('up', 'right') else -1
         for g in glyphs:
+            if key == 'w_mult' and g.get('autosize', True) \
+                    and 'port_id' in g:
+                # take over from autosize starting at its current width, so
+                # the first keystroke is a small visible nudge
+                g['w_mult'] = max(g.get('w_mult', 1.0),
+                                  self._port_label_w_mult(g))
+                g['autosize'] = False
             g[key] = float(np.clip(g.get(key, 1.0) + sign * step,
                                    GLYPH_SIZE_MIN, GLYPH_SIZE_MAX))
         self._update_plot()
@@ -2063,11 +2135,12 @@ class ExplicitPortsMixin:
             # label INSIDE the glyph body, node-style bold sans-serif,
             # shifted slightly away from the apex
             cx, cy = rot(x - 0.15 * w, y)
-            font_pts = h * ppdu * label_font_scale * 1.45
-            # long labels shrink to stay inside the body (~0.6 pt of
-            # glyph width per point of font size per character)
+            font_pts = self._port_label_font_data(port) * ppdu
+            # with autosize OFF the body no longer grows for the label, so
+            # a long one shrinks instead of spilling over the outline
             n_chars = max(len(port['label']), 1)
-            font_pts = min(font_pts, 0.92 * w * ppdu / (0.62 * n_chars))
+            font_pts = min(font_pts, PORT_LABEL_FILL * w * ppdu
+                           / (PORT_LABEL_ADVANCE * n_chars))
             self._draw_glyph_label(ax, port['label'], cx, cy, font_pts, ppdu)
 
         for line in self.line_resonators:
