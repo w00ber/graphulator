@@ -98,6 +98,15 @@ GLYPH_SIZE_MIN, GLYPH_SIZE_MAX = 0.3, 4.0
 PORT_LABEL_FILL = 0.90      # fraction of the body width a label may occupy
 PORT_LABEL_ADVANCE = 0.60   # mean glyph advance / font size (bold sans)
 
+# Wire (connection) appearance. Wires are SOLID: a wire reaching a port
+# glyph already says "dissipative", so a dashed variant carried no extra
+# information. Per-wire overrides ('color', 'linewidth_mult', 'label',
+# 'label_size_mult') mirror the controls ordinary graph edges have.
+WIRE_COLOR = 'dimgray'
+WIRE_COLOR_INVERTED = 'firebrick'   # default for a sign = -1 attachment
+WIRE_COLOR_TAP = 'teal'             # conservative node tap
+WIRE_LINEWIDTH = 1.4                # data-unit base, scaled by linewidth_mult
+
 
 def _line_extractor_id(line):
     """Stable extractor line_id for a GUI line resonator."""
@@ -2017,17 +2026,43 @@ class ExplicitPortsMixin:
         proj = a + t[:, None] * seg
         return float(np.min(np.hypot(*(p - proj).T)))
 
+    @staticmethod
+    def wire_style(conn, default_color=WIRE_COLOR):
+        """(color, linewidth) of one wire, honoring per-wire overrides."""
+        color = conn.get('color') or default_color
+        mult = float(conn.get('linewidth_mult', 1.25))
+        return color, WIRE_LINEWIDTH * mult
+
     def _draw_wire(self, ax, pts, color, linewidth, linestyle='-',
                    selected=False, zorder=4, alpha=0.9):
         """Draw one routed wire (with the salmon selection underlay)."""
         if selected:
             ax.add_line(mlines.Line2D(
-                pts[:, 0], pts[:, 1], color='salmon', linewidth=4.0,
+                pts[:, 0], pts[:, 1], color='salmon',
+                linewidth=max(4.0, linewidth + 2.6),
                 zorder=zorder - 0.5, alpha=0.9, solid_capstyle='round'))
         ax.add_line(mlines.Line2D(
             pts[:, 0], pts[:, 1], color=color, linewidth=linewidth,
             linestyle=linestyle, zorder=zorder, alpha=alpha,
             solid_capstyle='round'))
+
+    def _draw_wire_label(self, ax, pts, conn, ppdu, color, fallback=None):
+        """Label a wire at its midpoint, node-style (edge-label parity).
+
+        A user-set 'label' wins; otherwise `fallback` (the tap's reference
+        harmonic) is drawn, and a wire with neither stays bare.
+        """
+        text = conn.get('label') or fallback
+        if not text:
+            return
+        mx, my = pts[len(pts) // 2]
+        scale = float(conn.get('label_size_mult', 1.0))
+        font_pts = 0.55 * self.node_radius * ppdu * scale * getattr(
+            self.APP_CONFIG, 'PLOT_NODE_LABEL_FONT_SCALE', 0.35) * 1.45
+        ax.text(mx, my, text, fontsize=max(font_pts, 1.0), color=color,
+                ha='center', va='center', zorder=5,
+                bbox=dict(boxstyle='round,pad=0.18', fc='white',
+                          ec=color, lw=0.6))
 
     def _adjust_glyph_size(self, direction):
         """Arrow-key stretch for selected ports/lines (node-key parity):
@@ -2179,19 +2214,21 @@ class ExplicitPortsMixin:
                 if pts is None:
                     continue
                 att_selected = (port, att) in self.selected_attachments
-                link_color = 'gray' if att['sign'] >= 0 else 'firebrick'
-                self._draw_wire(ax, pts, link_color, 1.2,
-                                linestyle=(0, (4, 3)),
+                default = (WIRE_COLOR if att['sign'] >= 0
+                           else WIRE_COLOR_INVERTED)
+                link_color, lw = self.wire_style(att, default)
+                self._draw_wire(ax, pts, link_color, lw,
                                 selected=att_selected, zorder=4)
                 mx, my = pts[len(pts) // 2]
                 if att_selected:
                     ax.add_patch(mpatches.Circle(
                         (mx, my), 0.3, facecolor='lightcoral',
                         edgecolor='red', linewidth=2, zorder=20))
-                if att['sign'] < 0:
-                    # mark inverted-sign links near the midpoint
-                    ax.text(mx, my, '\N{MINUS SIGN}', color='firebrick',
-                            fontsize=9, ha='center', va='center', zorder=5)
+                # an inverted-sign wire is marked at the midpoint unless the
+                # user gave the wire a label of its own
+                self._draw_wire_label(
+                    ax, pts, att, ppdu, link_color,
+                    fallback=('\N{MINUS SIGN}' if att['sign'] < 0 else None))
 
             # label centered in the STRAIGHT part of the body (the nose
             # tapers, so text there would clip); this is the same width
@@ -2272,8 +2309,13 @@ class ExplicitPortsMixin:
                                   and pend[1] == end_name)
                 for conn_port in conn_ports:
                     pts = self._line_end_port_wire(line, end_name, conn_port)
-                    self._draw_wire(ax, pts, 'dimgray', 1.4,
-                                    linestyle=(0, (4, 3)), zorder=4)
+                    conn = next(
+                        (c for c in self._end_conns(line, end_name)
+                         if c.get('kind') == 'port'
+                         and c.get('port_id') == conn_port['port_id']), {})
+                    wire_color, lw = self.wire_style(conn)
+                    self._draw_wire(ax, pts, wire_color, lw, zorder=4)
+                    self._draw_wire_label(ax, pts, conn, ppdu, wire_color)
                 # node taps at this end: thin solid wires with an n_ref tag
                 tap_conns = [cn for cn in self._end_conns(line, end_name)
                              if cn.get('kind') == 'node']
@@ -2283,14 +2325,12 @@ class ExplicitPortsMixin:
                         continue
                     tap_selected = ((line, end_name, conn)
                                     in self.selected_taps)
-                    self._draw_wire(ax, pts, 'teal', 1.3,
+                    tap_color, lw = self.wire_style(conn, WIRE_COLOR_TAP)
+                    self._draw_wire(ax, pts, tap_color, lw,
                                     selected=tap_selected, zorder=4)
-                    mx, my = pts[len(pts) // 2]
-                    ax.text(mx, my, f"n={conn.get('n_ref', 1)}",
-                            fontsize=7, color='teal', ha='center',
-                            va='center', zorder=5,
-                            bbox=dict(boxstyle='round,pad=0.15',
-                                      fc='white', ec='teal', lw=0.6))
+                    self._draw_wire_label(
+                        ax, pts, conn, ppdu, tap_color,
+                        fallback=f"n={conn.get('n_ref', 1)}")
 
                 connected = bool(conn_ports or tap_conns)
                 mark = ('dodgerblue' if is_pending
@@ -2343,8 +2383,10 @@ class ExplicitPortsMixin:
                     'color': p.get('color', 'black'),
                     'fill': p.get('fill', 'white'),
                     'attachments': [
-                        {'node_id': a['node_id'], 'rate': a['rate'],
-                         'sign': a['sign']}
+                        {k: v for k, v in a.items()
+                         if k in ('node_id', 'rate', 'sign', 'color',
+                                  'linewidth_mult', 'label',
+                                  'label_size_mult')}
                         for a in p['attachments']
                     ],
                 }
@@ -2403,9 +2445,16 @@ class ExplicitPortsMixin:
                         "Dropping attachment of port %r to unknown node %r",
                         pdata.get('label'), a['node_id'])
                     continue
-                attachments.append({'node_id': a['node_id'],
-                                    'rate': float(a.get('rate', 0.1)),
-                                    'sign': 1 if a.get('sign', 1) >= 0 else -1})
+                att = {'node_id': a['node_id'],
+                       'rate': float(a.get('rate', 0.1)),
+                       'sign': 1 if a.get('sign', 1) >= 0 else -1}
+                for key in ('color', 'label'):
+                    if a.get(key):
+                        att[key] = a[key]
+                for key in ('linewidth_mult', 'label_size_mult'):
+                    if a.get(key) is not None:
+                        att[key] = float(a[key])
+                attachments.append(att)
             port = {
                 'port_id': int(pdata['port_id']),
                 'label': pdata.get('label', f"P{pdata['port_id']}"),

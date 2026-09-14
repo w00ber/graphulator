@@ -90,6 +90,19 @@
     body, flipping past a quarter turn so they never read upside down,
     and a port's label is centered in the straight part of the body — the
     same width budget its auto-size grows to satisfy.
+  - **Wires carry edge-parity properties, and are solid.** The dashed
+    linestyle is gone — a wire reaching a port glyph already says
+    "dissipative", so the dash carried no extra information. Every wire
+    (port attachment, line-end termination, node tap) now takes the same
+    controls an ordinary graph edge has: line width (the shared
+    Thin/Medium/Thick/X-Thick multipliers), color with a "Default" reset,
+    label text and label size. Selecting a wire opens a Properties page
+    holding those alongside its physics — rate and sign, plus the
+    reference harmonic for a tap — and the styling round-trips through
+    `.pgraph` without touching the physics. Role-encoding defaults
+    survive: gray for an attachment, firebrick plus a `−` mark when the
+    sign is inverted, teal for a tap (labelled `n=…` until the user sets
+    a label).
   - Phase-2 items are explicitly blocked pending derivations (complex /
     mixed-sector hub weights, band-limited combs, two-port lines,
     frequency-dependent weights); attachments enforce real signed weights

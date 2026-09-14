@@ -125,11 +125,14 @@ results to machine precision (pinned by a golden-file regression suite).
   always fits; stretching it by hand takes over. The **File → Test** menu
   ships canonical scenes for trying all of this.
 
-**Wire language**: a **dashed** wire is a *dissipative* coupling into a
-hub — a port attachment, or a line end terminated on a port — while a
-**solid teal** wire is a *conservative* node tap onto a line end (carrying
-an `n=…` chip for its reference harmonic). Dashed links turn firebrick with
-a `−` mark when the attachment's sign is inverted.
+**Wires** carry the same per-wire controls as ordinary graph edges — line
+width, color, label text and label size — editable in the Properties panel
+when a wire is selected, alongside its physics (rate, sign, and a tap's
+reference harmonic). Wires are drawn solid: reaching a port glyph is
+already what marks a coupling as dissipative. Defaults still encode the
+role at a glance — gray for a port attachment, firebrick with a `−` mark
+when its sign is inverted, teal for a conservative node tap (labelled with
+its `n=…` reference harmonic until you give it a label of your own).
 - **Loss hub** (Insert menu): hatched port variant, same attachments, no
   scattering channel. Enables a per-channel energy audit
   (`GraphScatteringMatrix.absorption`, `.S_full`).

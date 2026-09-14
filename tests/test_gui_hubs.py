@@ -1273,3 +1273,102 @@ def test_glyph_only_rotation_still_spins_in_place(para):
     win._rotate_selected_nodes(15)
     assert line['pos'] == before
     assert line['angle'] == pytest.approx(345.0)
+
+
+# ---------------------------------------------------------------------------
+# Wires: solid, with edge-parity per-wire properties
+# ---------------------------------------------------------------------------
+
+def test_wires_are_solid(para):
+    """The port glyph already says 'dissipative', so no wire is dashed.
+
+    (The one surviving dash is the pending-attachment highlight on a port
+    BODY outline, which is a transient interaction cue, not a wire.)
+    """
+    import inspect
+    from graphulator.para_features import explicit_ports as ep
+    source = inspect.getsource(ep.ExplicitPortsMixin._draw_ports_and_lines)
+    assert '(0, (4, 3))' not in source          # the old wire dash pattern
+    for line in source.splitlines():
+        if '_draw_wire(' in line or 'self._draw_wire' in line:
+            assert 'linestyle' not in line, line
+
+
+def test_wire_style_overrides(para):
+    gp, win, config = para
+    from graphulator.para_features.explicit_ports import (
+        WIRE_COLOR, WIRE_COLOR_INVERTED, WIRE_COLOR_TAP, WIRE_LINEWIDTH)
+    ExplicitPortsMixin = type(win).__mro__[1]
+
+    # defaults follow the wire's role and sign
+    color, lw = win.wire_style({'sign': 1}, WIRE_COLOR)
+    assert color == WIRE_COLOR
+    assert lw == pytest.approx(WIRE_LINEWIDTH * 1.25)
+    assert win.wire_style({}, WIRE_COLOR_INVERTED)[0] == WIRE_COLOR_INVERTED
+    assert win.wire_style({}, WIRE_COLOR_TAP)[0] == WIRE_COLOR_TAP
+
+    # explicit per-wire values win
+    conn = {'color': '#123456', 'linewidth_mult': 2.0}
+    color, lw = win.wire_style(conn, WIRE_COLOR)
+    assert color == '#123456'
+    assert lw == pytest.approx(WIRE_LINEWIDTH * 2.0)
+
+
+def test_wire_properties_panel_and_round_trip(para):
+    gp, win, config = para
+    from PySide6.QtWidgets import QComboBox
+    port = build_shared_port_scene(win, config)
+    att = port['attachments'][0]
+    panel = win.properties_panel
+
+    win.selected_attachments = [(port, att)]
+    win._update_properties_panel()
+    assert panel.current_type == 'attachment'
+    assert panel.current_object is att
+    assert 'P1' in panel.title_label.text()
+
+    # the Line Width combo writes the same multipliers ordinary edges use
+    width_combo = next(c for c in panel.findChildren(QComboBox)
+                       if c.count() and c.itemText(0) == 'Thin')
+    width_combo.setCurrentText('X-Thick')
+    assert att['linewidth_mult'] == pytest.approx(
+        config.EDGE_LINEWIDTH_OPTIONS['X-Thick'])
+
+    att['color'] = '#0055aa'
+    att['label'] = r'\kappa_a'
+    att['label_size_mult'] = 1.4
+
+    data = json.loads(json.dumps(win._serialize_graph()))
+    win._deserialize_graph(data)
+    restored = win.ports[0]['attachments'][0]
+    assert restored['color'] == '#0055aa'
+    assert restored['label'] == r'\kappa_a'
+    assert restored['label_size_mult'] == pytest.approx(1.4)
+    assert restored['linewidth_mult'] == pytest.approx(
+        config.EDGE_LINEWIDTH_OPTIONS['X-Thick'])
+    # the physics is untouched by styling
+    assert restored['rate'] == pytest.approx(att['rate'])
+    assert restored['sign'] == att['sign']
+
+
+def test_tap_properties_panel(para):
+    gp, win, config = para
+    node, line, conn = build_tapped_line_scene(win, config)
+    panel = win.properties_panel
+
+    win.selected_taps = [(line, 'x0', conn)]
+    win._update_properties_panel()
+    assert panel.current_type == 'tap'
+    assert panel.current_object is conn
+    assert 'TL1' in panel.title_label.text()
+
+    # a user label overrides the default n= chip; style round-trips
+    conn['label'] = 'g_tap'
+    conn['color'] = '#884400'
+    data = json.loads(json.dumps(win._serialize_graph()))
+    win._deserialize_graph(data)
+    restored = [c for c in win._end_conns(win.line_resonators[0], 'x0')
+                if c.get('kind') == 'node'][0]
+    assert restored['label'] == 'g_tap'
+    assert restored['color'] == '#884400'
+    assert restored['n_ref'] == conn['n_ref']

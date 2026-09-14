@@ -3423,6 +3423,203 @@ class PropertiesPanel(QWidget):
 
         self.properties_layout.addLayout(form)
 
+    # ---- Explicit Ports: wire (connection) properties ----
+
+    def _add_wire_appearance_rows(self, form, conn, default_color):
+        """Line width / color / label rows — edge-panel parity for wires."""
+        g = self.graphulator
+
+        width_combo = QComboBox()
+        names = list(config.EDGE_LINEWIDTH_OPTIONS.keys())
+        width_combo.addItems(names)
+        current = float(conn.get('linewidth_mult', 1.25))
+        closest = min(config.EDGE_LINEWIDTH_OPTIONS.items(),
+                      key=lambda kv: abs(kv[1] - current))[0]
+        width_combo.setCurrentText(closest)
+        width_combo.currentTextChanged.connect(
+            lambda name: (conn.__setitem__(
+                'linewidth_mult', config.EDGE_LINEWIDTH_OPTIONS[name]),
+                g._update_plot()))
+        form.addRow("Line Width:", width_combo)
+
+        from PySide6.QtWidgets import QColorDialog
+        color_btn = QPushButton()
+        color_btn.setFixedSize(46, 22)
+
+        def paint(name):
+            color_btn.setStyleSheet(
+                f"background-color: {name}; border: 1px solid #888;")
+
+        def pick():
+            col = QColorDialog.getColor(
+                QColor(conn.get('color') or default_color), g)
+            if col.isValid():
+                g._save_state()
+                conn['color'] = col.name()
+                paint(col.name())
+                g._update_plot()
+
+        color_btn.clicked.connect(pick)
+        paint(conn.get('color') or default_color)
+
+        reset = QPushButton("Default")
+        reset.setToolTip("Drop the per-wire color override.")
+
+        def reset_color():
+            g._save_state()
+            conn.pop('color', None)
+            paint(default_color)
+            g._update_plot()
+
+        reset.clicked.connect(reset_color)
+        color_row = QHBoxLayout()
+        color_row.addWidget(color_btn)
+        color_row.addWidget(reset)
+        color_row.addStretch()
+        form.addRow("Color:", color_row)
+
+        label_edit = QLineEdit(conn.get('label', ''))
+        label_edit.setPlaceholderText("(none)")
+        label_edit.textChanged.connect(
+            lambda text: (conn.__setitem__('label', text.strip()),
+                          g._update_plot()))
+        form.addRow("Label:", label_edit)
+
+        label_size = QDoubleSpinBox()
+        label_size.setRange(0.2, 5.0)
+        label_size.setDecimals(2)
+        label_size.setSingleStep(0.1)
+        label_size.setValue(float(conn.get('label_size_mult', 1.0)))
+        label_size.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        label_size.valueChanged.connect(
+            lambda v: (conn.__setitem__('label_size_mult', float(v)),
+                       g._update_plot()))
+        form.addRow("Label Size:", label_size)
+
+    def _wire_rate_row(self, form, conn, key, label, tooltip, scale=1000.0):
+        """Rate spinbox in milli-arb units, writing straight to the wire."""
+        g = self.graphulator
+        box = FineControlSpinBox()
+        box.setRange(config.B_EXT_SPINBOX_MIN, config.B_EXT_SPINBOX_MAX)
+        box.setDecimals(config.B_EXT_SPINBOX_DECIMALS)
+        box.setSingleStep(config.B_EXT_SPINBOX_STEP)
+        box.setValue(float(conn.get(key, 0.0)) * scale)
+        box.setToolTip(tooltip)
+        box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        box.valueChanged.connect(
+            lambda v: (conn.__setitem__(key, float(v) / scale),
+                       g._invalidate_scattering_data(),
+                       g._schedule_scattering_update()
+                       if hasattr(g, '_schedule_scattering_update') else None,
+                       g._update_plot()))
+        form.addRow(label, box)
+        return box
+
+    def _wire_sign_row(self, form, conn):
+        g = self.graphulator
+        combo = QComboBox()
+        combo.addItem("+  (0\N{DEGREE SIGN})", 1)
+        combo.addItem("\N{MINUS SIGN}  (180\N{DEGREE SIGN})", -1)
+        combo.setCurrentIndex(0 if conn.get('sign', 1) >= 0 else 1)
+        combo.setToolTip(
+            "Sign of the coupling amplitude. Phase-1 allows 0\N{DEGREE SIGN} "
+            "/ 180\N{DEGREE SIGN} only; complex weights await the M_pumped "
+            "derivation.")
+        combo.currentIndexChanged.connect(
+            lambda _i: (conn.__setitem__('sign', combo.currentData()),
+                        g._invalidate_scattering_data(),
+                        g._update_plot()))
+        form.addRow("Sign:", combo)
+
+    def show_attachment_properties(self, port, att):
+        """Properties for one port-to-mode wire."""
+        from .para_features.explicit_ports import (WIRE_COLOR,
+                                                   WIRE_COLOR_INVERTED)
+        self.clear_properties()
+        self.current_object = att
+        self.current_type = 'attachment'
+        g = self.graphulator
+        node = next((n for n in g.nodes
+                     if n['node_id'] == att['node_id']), None)
+        node_label = node['label'] if node else str(att['node_id'])
+        self.title_label.setText(
+            f"Wire: {port['label']} \N{RIGHTWARDS ARROW} {node_label}")
+
+        form = QFormLayout()
+        self._wire_rate_row(
+            form, att, 'rate', "Rate [mau]:",
+            "External coupling rate of this mode to the port's channel "
+            "[milli-arb. units].")
+        self._wire_sign_row(form, att)
+        default = WIRE_COLOR if att.get('sign', 1) >= 0 else WIRE_COLOR_INVERTED
+        self._add_wire_appearance_rows(form, att, default)
+        self.properties_layout.addLayout(form)
+
+        info = QLabel(
+            "Dissipative coupling: this mode radiates into the port's "
+            "channel. Rates and signs also appear in the Ports & Lines "
+            "panel.")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666; font-style: italic;")
+        self.properties_layout.addWidget(info)
+        self.properties_layout.addStretch()
+
+    def show_tap_properties(self, line, end, conn):
+        """Properties for one node-tap wire onto a line end."""
+        from .para_features.explicit_ports import (WIRE_COLOR_TAP,
+                                                   LineResonator,
+                                                   line_payload)
+        self.clear_properties()
+        self.current_object = conn
+        self.current_type = 'tap'
+        g = self.graphulator
+        node = next((n for n in g.nodes
+                     if n['node_id'] == conn['node_id']), None)
+        node_label = node['label'] if node else str(conn['node_id'])
+        self.title_label.setText(
+            f"Tap: {node_label} \N{RIGHTWARDS ARROW} {line['label']} @{end}")
+
+        coupling = (line.get('end_coupling')
+                    or {}).get(end, 'capacitive')
+        form = QFormLayout()
+        self._wire_rate_row(
+            form, conn, 'rate', "Rate @ n_ref [mau]:",
+            "Conservative coupling rate AT the reference harmonic "
+            "[milli-arb. units]; the other comb modes follow the verified "
+            f"{coupling} profile.")
+
+        n_ref = FineControlSpinBox()
+        n_ref.setDecimals(0)
+        try:
+            n_max = LineResonator(**line_payload(line)).N
+        except ValueError:
+            n_max = 1
+        n_ref.setRange(1, n_max)
+        n_ref.setSingleStep(1)
+        n_ref.setPrefix("n=")
+        n_ref.setValue(int(conn.get('n_ref', 1)))
+        n_ref.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        n_ref.setToolTip(
+            f"Reference harmonic the rate is defined at (1..{n_max}).")
+        n_ref.valueChanged.connect(
+            lambda v: (conn.__setitem__('n_ref', int(v)),
+                       g._invalidate_scattering_data(),
+                       g._update_plot()))
+        form.addRow("Reference harmonic:", n_ref)
+
+        self._wire_sign_row(form, conn)
+        self._add_wire_appearance_rows(form, conn, WIRE_COLOR_TAP)
+        self.properties_layout.addLayout(form)
+
+        info = QLabel(
+            f"Conservative {coupling} tap: one wire stands for the coupling "
+            "to every comb mode. The coupling type belongs to the line END "
+            "(set it in the line's properties).")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666; font-style: italic;")
+        self.properties_layout.addWidget(info)
+        self.properties_layout.addStretch()
+
     # ---- Explicit Ports: port / transmission-line glyph properties ----
 
     def _glyph_color_button(self, glyph, key, default):
@@ -16581,8 +16778,19 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         """Update the properties panel based on current selection"""
         n_glyphs = len(getattr(self, 'selected_ports', [])) \
             + len(getattr(self, 'selected_lines', []))
+        n_wires = len(getattr(self, 'selected_attachments', [])) \
+            + len(getattr(self, 'selected_taps', []))
+        # Single wire (port attachment or line tap) selected
+        if n_wires == 1 and not n_glyphs and not self.selected_nodes \
+                and not self.selected_edges:
+            if self.selected_attachments:
+                port, att = self.selected_attachments[0]
+                self.properties_panel.show_attachment_properties(port, att)
+            else:
+                line, end, conn = self.selected_taps[0]
+                self.properties_panel.show_tap_properties(line, end, conn)
         # Single port / transmission-line glyph selected
-        if n_glyphs == 1 and not self.selected_nodes and not self.selected_edges:
+        elif n_glyphs == 1 and not self.selected_nodes and not self.selected_edges:
             glyph = (self.selected_ports or self.selected_lines)[0]
             if self.selected_ports:
                 self.properties_panel.show_port_properties(glyph)
