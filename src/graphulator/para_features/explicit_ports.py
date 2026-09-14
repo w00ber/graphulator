@@ -95,7 +95,7 @@ LINE_LEAD_LEN = 0.55  # terminal stubs at both ends
 PORT_LINEWIDTH = 2.0  # default stroke (uniform across body + lead)
 LINE_LINEWIDTH = 1.6
 GLYPH_SIZE_MIN, GLYPH_SIZE_MAX = 0.3, 4.0
-PORT_LABEL_FILL = 0.92      # fraction of the body width a label may occupy
+PORT_LABEL_FILL = 0.90      # fraction of the body width a label may occupy
 PORT_LABEL_ADVANCE = 0.60   # mean glyph advance / font size (bold sans)
 
 
@@ -1471,15 +1471,61 @@ class ExplicitPortsMixin:
             return True
         return False
 
+    def _select_all(self):
+        """Select everything, glyphs included.
+
+        Ctrl+A previously took only nodes and edges, so a "whole graph"
+        selection silently left ports and lines behind — most visibly when
+        rotating, where the modes turned and the glyphs stayed put.
+        """
+        super()._select_all()
+        self.selected_ports = list(self.ports)
+        self.selected_lines = list(self.line_resonators)
+        self.selected_attachments = [
+            (port, att) for port in self.ports
+            for att in port['attachments']]
+        self.selected_taps = [
+            (line, end, conn)
+            for line in self.line_resonators
+            for end in ('x0', 'xL')
+            for conn in self._end_conns(line, end)
+            if conn.get('kind') == 'node']
+        self._update_plot()
+
     def _rotate_selected_nodes(self, angle_degrees):
-        """Rotate selection. With only port/line glyphs selected, rotate the
-        glyphs' own orientation in place; otherwise defer to the node
-        behavior (rotation of node positions about the selection centroid).
+        """Rotate selection.
+
+        With ONLY port/line glyphs selected, spin each glyph's own
+        orientation in place (the useful primitive for aiming a lead).
+        When nodes are selected too, the selection is a layout: everything
+        rotates rigidly about the node centroid — glyph positions travel
+        with the modes and each glyph's orientation turns by the same
+        angle, so the drawing keeps its shape.
 
         Manually rotating an attached port pins its angle (turns off the
         auto-orient toward its attachments), starting from the current
-        auto-orientation so the first step is a small visible nudge.
+        auto-orientation so the first step is a small visible nudge. In a
+        rigid-body rotation an auto-orienting port is left UNpinned: its
+        attachments moved too, so it re-aims itself correctly.
         """
+        glyphs = list(self.selected_ports) + list(self.selected_lines)
+        if glyphs and self.selected_nodes:
+            # rigid-body: nodes exactly as before, glyphs carried along
+            positions = np.array([n['pos'] for n in self.selected_nodes])
+            centroid = positions.mean(axis=0)
+            super()._rotate_selected_nodes(angle_degrees)
+            for glyph in glyphs:
+                gx, gy = _rotate_point(glyph['pos'][0], glyph['pos'][1],
+                                       centroid[0], centroid[1],
+                                       -angle_degrees)
+                glyph['pos'] = (gx, gy)
+                if 'port_id' in glyph and not glyph.get('angle_pinned'):
+                    continue          # auto-orient re-aims it for free
+                glyph['angle'] = (glyph.get('angle', 0.0)
+                                  - angle_degrees) % 360.0
+            self._update_plot()
+            return
+
         if (self.selected_ports or self.selected_lines) \
                 and not self.selected_nodes:
             self._save_state()
@@ -2016,8 +2062,23 @@ class ExplicitPortsMixin:
         ppdu_y = fig.get_figheight() * 72 / (ylim[1] - ylim[0])
         return min(ppdu_x, ppdu_y)
 
+    @staticmethod
+    def _readable_angle(angle_deg):
+        """Glyph angle folded into the readable half-turn.
+
+        A label rides its glyph so it always sits inside the body, but text
+        that ends up upside down is worse than text that is merely
+        mirrored about the glyph axis — so past a quarter turn it flips,
+        the usual schematic convention (and the one this app's edge labels
+        already follow).
+        """
+        angle = float(angle_deg) % 360.0
+        if 90.0 < angle <= 270.0:
+            angle -= 180.0
+        return angle
+
     def _draw_glyph_label(self, ax, text, x, y, font_size_points,
-                          points_per_data_unit, color='black'):
+                          points_per_data_unit, color='black', rotation=0.0):
         """Draw a glyph label in the SAME style as node labels: bold
         sans-serif mathtext (or sfmath in LaTeX mode) with _/^ handling,
         via the cached vector renderer so it scales with zoom."""
@@ -2053,7 +2114,7 @@ class ExplicitPortsMixin:
             ax, rf"${''.join(formatted)}$", x, y,
             fontsize_points=font_size_points,
             points_per_data_unit=points_per_data_unit,
-            color=color, ha='center', va='center',
+            color=color, ha='center', va='center', rotation=rotation,
             usetex=self.use_latex, zorder=12)
 
     def _draw_ports_and_lines(self, ax=None):
@@ -2132,16 +2193,18 @@ class ExplicitPortsMixin:
                     ax.text(mx, my, '\N{MINUS SIGN}', color='firebrick',
                             fontsize=9, ha='center', va='center', zorder=5)
 
-            # label INSIDE the glyph body, node-style bold sans-serif,
-            # shifted slightly away from the apex
-            cx, cy = rot(x - 0.15 * w, y)
+            # label centered in the STRAIGHT part of the body (the nose
+            # tapers, so text there would clip); this is the same width
+            # budget the autosize above grows the body to satisfy
+            cx, cy = rot(x, y)
             font_pts = self._port_label_font_data(port) * ppdu
             # with autosize OFF the body no longer grows for the label, so
             # a long one shrinks instead of spilling over the outline
             n_chars = max(len(port['label']), 1)
             font_pts = min(font_pts, PORT_LABEL_FILL * w * ppdu
                            / (PORT_LABEL_ADVANCE * n_chars))
-            self._draw_glyph_label(ax, port['label'], cx, cy, font_pts, ppdu)
+            self._draw_glyph_label(ax, port['label'], cx, cy, font_pts, ppdu,
+                                   rotation=self._readable_angle(angle))
 
         for line in self.line_resonators:
             lx, ly, w, h, rx = self._line_geometry(line)
@@ -2245,7 +2308,8 @@ class ExplicitPortsMixin:
             else:
                 tx, ty = _rotate_point(lx, ly + h + 0.45 * r, lx, ly, angle)
                 font_pts = 0.9 * r * ppdu * label_font_scale * 1.6
-            self._draw_glyph_label(ax, line['label'], tx, ty, font_pts, ppdu)
+            self._draw_glyph_label(ax, line['label'], tx, ty, font_pts, ppdu,
+                                   rotation=self._readable_angle(angle))
 
             n_pairs = LineResonator(**line_payload(line)).N
             sub = f"FSR={line['FSR']:g}, N={n_pairs}"
@@ -2256,6 +2320,8 @@ class ExplicitPortsMixin:
             sy_off = max(h, 0.3 * r) + 0.35 * r
             sx, sy = _rotate_point(lx, ly - sy_off, lx, ly, angle)
             ax.text(sx, sy, sub, ha='center', va='top',
+                    rotation=self._readable_angle(angle),
+                    rotation_mode='anchor',
                     fontsize=7, color='dimgray', zorder=12)
 
     # ---- serialization fragments ----

@@ -1191,3 +1191,85 @@ def test_context_menu_rotate_is_selection_independent(para):
     assert win.selected_ports == [] and win.selected_lines == []
     # node positions are never disturbed by a glyph rotation
     assert a['pos'] == (0.0, 0.0)
+
+
+def test_select_all_includes_glyphs(para):
+    """Ctrl+A must take the whole drawing, glyphs included — otherwise a
+    'select everything and rotate' leaves the ports and lines behind."""
+    gp, win, config = para
+    node, line, conn = build_tapped_line_scene(win, config)
+    win._select_all()
+    assert len(win.selected_nodes) == len(win.nodes)
+    assert len(win.selected_ports) == len(win.ports) == 1
+    assert len(win.selected_lines) == len(win.line_resonators) == 1
+    assert win.selected_taps and win.selected_attachments == []
+
+
+def test_whole_graph_rotation_is_rigid(para):
+    """With nodes AND glyphs selected the drawing turns as one body: every
+    pairwise distance is preserved and glyph orientations follow."""
+    gp, win, config = para
+    node, line, conn = build_tapped_line_scene(win, config)
+    port = win.ports[0]
+    port['angle_pinned'] = True          # a pinned port must turn with it
+    port['angle'] = 0.0
+
+    win._select_all()
+
+    def points():
+        return np.array([n['pos'] for n in win.nodes]
+                        + [p['pos'] for p in win.ports]
+                        + [l['pos'] for l in win.line_resonators], dtype=float)
+
+    before = points()
+    d_before = np.linalg.norm(before[:, None] - before, axis=-1)
+
+    win._rotate_selected_nodes(90)
+
+    after = points()
+    d_after = np.linalg.norm(after[:, None] - after, axis=-1)
+    np.testing.assert_allclose(d_after, d_before, atol=1e-9)
+    assert not np.allclose(after, before)          # it really moved
+    assert line['angle'] == pytest.approx(270.0)   # glyph orientation follows
+    assert port['angle'] == pytest.approx(270.0)
+
+    # four quarter turns are the identity
+    for _ in range(3):
+        win._rotate_selected_nodes(90)
+    np.testing.assert_allclose(points(), before, atol=1e-9)
+    assert line['angle'] == pytest.approx(0.0)
+
+
+def test_rigid_rotation_leaves_auto_orient_ports_unpinned(para):
+    """A port that auto-orients must NOT be pinned by a layout rotation:
+    its attachments moved too, so it re-aims itself."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    a = add_node(win, 0, 'A', 0.0)
+    port = win.add_port(label='P1', pos=(4.0, 0.0))
+    win.add_port_attachment(port, 0, rate=0.2)
+    assert win._port_effective_angle(port) == pytest.approx(180.0)
+
+    win._select_all()
+    win._rotate_selected_nodes(90)
+
+    assert port.get('angle_pinned', False) is False
+    # the pair turned together, so the lead still points at the node
+    px, py = port['pos']
+    ax, ay = a['pos']
+    expected = np.degrees(np.arctan2(ay - py, ax - px))
+    assert win._port_effective_angle(port) == pytest.approx(expected)
+
+
+def test_glyph_only_rotation_still_spins_in_place(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    line = win.add_line_resonator(label='TL1', pos=(2.0, -3.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end=None)
+    win.selected_lines = [line]
+    win.selected_nodes = []
+    before = line['pos']
+    win._rotate_selected_nodes(15)
+    assert line['pos'] == before
+    assert line['angle'] == pytest.approx(345.0)

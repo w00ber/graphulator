@@ -80,6 +80,16 @@
     label always fits, and a manual length edit takes over from that.
     Rotation (`Ctrl+U`/`Ctrl+I`) is also on the glyph right-click menu,
     and the shortcut-hint overlay gains a "Port / line selected" context.
+  - **Whole-graph rotation carries the glyphs.** `Ctrl+A` now selects
+    ports and lines as well as nodes and edges, and rotating a selection
+    that contains nodes turns the whole drawing as a rigid body — glyph
+    positions travel with the modes and each glyph's orientation turns by
+    the same angle (an auto-orienting port is deliberately left unpinned,
+    since its attachments moved too and it re-aims itself). Selecting only
+    glyphs still spins each one in place. Glyph labels now ride their
+    body, flipping past a quarter turn so they never read upside down,
+    and a port's label is centered in the straight part of the body — the
+    same width budget its auto-size grows to satisfy.
   - Phase-2 items are explicitly blocked pending derivations (complex /
     mixed-sector hub weights, band-limited combs, two-port lines,
     frequency-dependent weights); attachments enforce real signed weights
