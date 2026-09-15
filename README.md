@@ -116,9 +116,23 @@ results to machine precision (pinned by a golden-file regression suite).
   **Ports & Lines** panel (below the Nodes panel) or the per-link editor
   (double-click a link). Ports auto-orient toward the center of their
   attached group (toggleable per port; manual rotation `Ctrl+U/I` pins).
-  Glyphs stretch with the arrow keys when selected, and stroke width /
-  stroke color / fill are per-glyph properties in the edit dialog. The
-  **File → Test** menu ships canonical scenes for trying all of this.
+  Selecting a glyph fills the **Properties** panel with its editable
+  properties (label, monitored/loss, auto-orient, auto-size, length,
+  height, stroke width, stroke and fill color — plus FSR/Ztx/f_max/Z₀/α
+  and the per-end tap coupling for a line), all live-applied. Glyphs also
+  stretch with the arrow keys when selected and rotate with `Ctrl+U`/`I`
+  (also on the right-click menu). A port's length auto-sizes so its label
+  always fits; stretching it by hand takes over. The **File → Test** menu
+  ships canonical scenes for trying all of this.
+
+**Wires** carry the same per-wire controls as ordinary graph edges — line
+width, color, label text and label size — editable in the Properties panel
+when a wire is selected, alongside its physics (rate, sign, and a tap's
+reference harmonic). Wires are drawn solid: reaching a port glyph is
+already what marks a coupling as dissipative. Defaults still encode the
+role at a glance — gray for a port attachment, firebrick with a `−` mark
+when its sign is inverted, teal for a conservative node tap (labelled with
+its `n=…` reference harmonic until you give it a label of your own).
 - **Loss hub** (Insert menu): hatched port variant, same attachments, no
   scattering channel. Enables a per-channel energy audit
   (`GraphScatteringMatrix.absorption`, `.S_full`).

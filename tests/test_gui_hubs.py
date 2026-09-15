@@ -1044,3 +1044,331 @@ def test_bundled_tap_scene_computes_unitary_S(para):
     S = res['S']
     assert S.shape[1:] == (1, 1)
     assert np.max(np.abs(np.abs(S[:, 0, 0]) - 1.0)) < 1e-12
+
+
+# ---------------------------------------------------------------------------
+# Keyboard routing + glyph properties panel
+# ---------------------------------------------------------------------------
+
+def test_punctuation_shortcuts_bind_shifted_alias(para):
+    """'?' and '+' are TYPED with Shift, so Qt delivers them with
+    ShiftModifier and a bare QKeySequence never matches. Every unmodified
+    punctuation binding gets a companion Shift+<key> shortcut; letters and
+    digits must NOT (Shift+G is its own separate binding)."""
+    gp, win, config = para
+    from PySide6.QtGui import QKeySequence
+    sm = win.shortcut_manager
+
+    for action_id in ('overlay.toggle', 'view.zoom_in'):
+        alias = sm._qt_shift_aliases.get(action_id)
+        assert alias is not None and alias.isEnabled(), action_id
+        primary = sm._qt_shortcuts[action_id].key().toString()
+        assert alias.key() == QKeySequence(f"Shift+{primary}")
+
+    # a letter binding gets no alias (it would collide with Shift+<letter>)
+    letter_alias = sm._qt_shift_aliases.get('node.place_single')
+    assert letter_alias is None or not letter_alias.isEnabled()
+    assert sm._shifted_alias('?') == 'Shift+?'
+    assert sm._shifted_alias('g') == ''
+    assert sm._shifted_alias('Ctrl+U') == ''
+
+
+def test_canvas_click_releases_input_focus(para):
+    """Single-key shortcuts are suppressed while a panel spinbox holds
+    focus (so typing numbers doesn't zoom). Clicking the canvas must hand
+    the keyboard back, or the shortcuts stay dead with no visible cue."""
+    gp, win, config = para
+    from PySide6.QtWidgets import QDoubleSpinBox
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from PySide6.QtWidgets import QApplication
+    build_shared_port_scene(win, config)
+    win._enter_scattering_mode()
+    win.show()
+    QApplication.setActiveWindow(win)      # focus only tracks an active window
+    QApplication.processEvents()
+    spins = win.properties_panel.findChildren(QDoubleSpinBox)
+    assert spins
+    spins[0].setFocus()
+    QApplication.processEvents()
+    if not win._is_input_widget_focused():
+        pytest.skip("platform did not grant keyboard focus (offscreen)")
+
+    QTest.mouseClick(win.canvas, Qt.LeftButton)
+    assert win._is_input_widget_focused() is False
+
+
+def test_auto_enable_notice_does_not_steal_keyboard(para):
+    """The 'Explicit Ports enabled' popup is informational: it must not
+    activate, or it swallows every WindowShortcut-scoped single key."""
+    gp, win, config = para
+    from PySide6.QtCore import Qt
+    config.EXPLICIT_PORTS_MODE = False
+    win._open_graph_file(os.path.join(SCENES_DIR, "PORT_1NODE.pgraph"))
+    assert config.EXPLICIT_PORTS_MODE is True
+    notice = getattr(win, '_explicit_ports_notice', None)
+    if notice is not None:
+        assert notice.testAttribute(Qt.WA_ShowWithoutActivating)
+        assert not notice.isModal()
+
+
+def test_glyph_selection_drives_properties_panel(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    port = win.add_port(label='P1', pos=(0.0, 0.0))
+    line = win.add_line_resonator(label='TL1', pos=(0.0, -5.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end=None)
+    panel = win.properties_panel
+
+    win.selected_ports = [port]
+    win._update_properties_panel()
+    assert panel.current_type == 'port'
+    assert panel.current_object is port
+    assert 'P1' in panel.title_label.text()
+    assert win._shortcut_context() == 'glyph'
+
+    win.selected_ports = []
+    win.selected_lines = [line]
+    win._update_properties_panel()
+    assert panel.current_type == 'line'
+    assert panel.current_object is line
+
+    # a glyph plus a node is a mixed selection: no glyph page
+    win.selected_nodes = [add_node(win, 0, 'A', 3.0)]
+    win._update_properties_panel()
+    assert panel.current_type != 'line'
+
+
+def test_port_label_autosize(para):
+    """The port body grows so the label fits; a manual length edit takes
+    over from autosize instead of fighting it."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    port = win.add_port(label='P1', pos=(0.0, 0.0))
+
+    _, _, w_short, _, _, _ = win._port_geometry(port)
+    port['label'] = 'P_readout_long'
+    _, _, w_long, _, _, _ = win._port_geometry(port)
+    assert w_long > w_short, "long label must widen the body"
+
+    # ... and the drawn label then fits inside it
+    assert win._port_label_w_mult(port) == pytest.approx(
+        w_long / (win.node_radius * 1.5), rel=1e-9)
+
+    # turning autosize off restores the stored width
+    port['autosize'] = False
+    _, _, w_off, _, _, _ = win._port_geometry(port)
+    assert w_off == pytest.approx(w_short)
+
+    # an arrow-key stretch takes over from autosize at the current width
+    port['autosize'] = True
+    win.selected_ports = [port]
+    win._adjust_glyph_size('right')
+    assert port['autosize'] is False
+    assert port['w_mult'] > 1.0
+
+
+def test_context_menu_rotate_is_selection_independent(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    a = add_node(win, 0, 'A', 0.0)
+    port = win.add_port(label='P1', pos=(4.0, 0.0))
+    win.add_port_attachment(port, 0, rate=0.2)
+    line = win.add_line_resonator(label='TL1', pos=(0.0, -6.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end=None)
+
+    # nothing selected: the menu action still rotates its own glyph
+    win.selected_ports, win.selected_lines, win.selected_nodes = [], [], []
+    win._rotate_selected_glyph(port, 15)
+    assert port['angle_pinned'] is True
+    assert port['angle'] == pytest.approx(165.0)   # 180 auto-orient - 15
+    win._rotate_selected_glyph(line, -15)
+    assert line['angle'] == pytest.approx(15.0)
+
+    # the caller's selection is left untouched
+    assert win.selected_ports == [] and win.selected_lines == []
+    # node positions are never disturbed by a glyph rotation
+    assert a['pos'] == (0.0, 0.0)
+
+
+def test_select_all_includes_glyphs(para):
+    """Ctrl+A must take the whole drawing, glyphs included — otherwise a
+    'select everything and rotate' leaves the ports and lines behind."""
+    gp, win, config = para
+    node, line, conn = build_tapped_line_scene(win, config)
+    win._select_all()
+    assert len(win.selected_nodes) == len(win.nodes)
+    assert len(win.selected_ports) == len(win.ports) == 1
+    assert len(win.selected_lines) == len(win.line_resonators) == 1
+    assert win.selected_taps and win.selected_attachments == []
+
+
+def test_whole_graph_rotation_is_rigid(para):
+    """With nodes AND glyphs selected the drawing turns as one body: every
+    pairwise distance is preserved and glyph orientations follow."""
+    gp, win, config = para
+    node, line, conn = build_tapped_line_scene(win, config)
+    port = win.ports[0]
+    port['angle_pinned'] = True          # a pinned port must turn with it
+    port['angle'] = 0.0
+
+    win._select_all()
+
+    def points():
+        return np.array([n['pos'] for n in win.nodes]
+                        + [p['pos'] for p in win.ports]
+                        + [l['pos'] for l in win.line_resonators], dtype=float)
+
+    before = points()
+    d_before = np.linalg.norm(before[:, None] - before, axis=-1)
+
+    win._rotate_selected_nodes(90)
+
+    after = points()
+    d_after = np.linalg.norm(after[:, None] - after, axis=-1)
+    np.testing.assert_allclose(d_after, d_before, atol=1e-9)
+    assert not np.allclose(after, before)          # it really moved
+    assert line['angle'] == pytest.approx(270.0)   # glyph orientation follows
+    assert port['angle'] == pytest.approx(270.0)
+
+    # four quarter turns are the identity
+    for _ in range(3):
+        win._rotate_selected_nodes(90)
+    np.testing.assert_allclose(points(), before, atol=1e-9)
+    assert line['angle'] == pytest.approx(0.0)
+
+
+def test_rigid_rotation_leaves_auto_orient_ports_unpinned(para):
+    """A port that auto-orients must NOT be pinned by a layout rotation:
+    its attachments moved too, so it re-aims itself."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    a = add_node(win, 0, 'A', 0.0)
+    port = win.add_port(label='P1', pos=(4.0, 0.0))
+    win.add_port_attachment(port, 0, rate=0.2)
+    assert win._port_effective_angle(port) == pytest.approx(180.0)
+
+    win._select_all()
+    win._rotate_selected_nodes(90)
+
+    assert port.get('angle_pinned', False) is False
+    # the pair turned together, so the lead still points at the node
+    px, py = port['pos']
+    ax, ay = a['pos']
+    expected = np.degrees(np.arctan2(ay - py, ax - px))
+    assert win._port_effective_angle(port) == pytest.approx(expected)
+
+
+def test_glyph_only_rotation_still_spins_in_place(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    line = win.add_line_resonator(label='TL1', pos=(2.0, -3.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end=None)
+    win.selected_lines = [line]
+    win.selected_nodes = []
+    before = line['pos']
+    win._rotate_selected_nodes(15)
+    assert line['pos'] == before
+    assert line['angle'] == pytest.approx(345.0)
+
+
+# ---------------------------------------------------------------------------
+# Wires: solid, with edge-parity per-wire properties
+# ---------------------------------------------------------------------------
+
+def test_wires_are_solid(para):
+    """The port glyph already says 'dissipative', so no wire is dashed.
+
+    (The one surviving dash is the pending-attachment highlight on a port
+    BODY outline, which is a transient interaction cue, not a wire.)
+    """
+    import inspect
+    from graphulator.para_features import explicit_ports as ep
+    source = inspect.getsource(ep.ExplicitPortsMixin._draw_ports_and_lines)
+    assert '(0, (4, 3))' not in source          # the old wire dash pattern
+    for line in source.splitlines():
+        if '_draw_wire(' in line or 'self._draw_wire' in line:
+            assert 'linestyle' not in line, line
+
+
+def test_wire_style_overrides(para):
+    gp, win, config = para
+    from graphulator.para_features.explicit_ports import (
+        WIRE_COLOR, WIRE_COLOR_INVERTED, WIRE_COLOR_TAP, WIRE_LINEWIDTH)
+    ExplicitPortsMixin = type(win).__mro__[1]
+
+    # defaults follow the wire's role and sign
+    color, lw = win.wire_style({'sign': 1}, WIRE_COLOR)
+    assert color == WIRE_COLOR
+    assert lw == pytest.approx(WIRE_LINEWIDTH * 1.25)
+    assert win.wire_style({}, WIRE_COLOR_INVERTED)[0] == WIRE_COLOR_INVERTED
+    assert win.wire_style({}, WIRE_COLOR_TAP)[0] == WIRE_COLOR_TAP
+
+    # explicit per-wire values win
+    conn = {'color': '#123456', 'linewidth_mult': 2.0}
+    color, lw = win.wire_style(conn, WIRE_COLOR)
+    assert color == '#123456'
+    assert lw == pytest.approx(WIRE_LINEWIDTH * 2.0)
+
+
+def test_wire_properties_panel_and_round_trip(para):
+    gp, win, config = para
+    from PySide6.QtWidgets import QComboBox
+    port = build_shared_port_scene(win, config)
+    att = port['attachments'][0]
+    panel = win.properties_panel
+
+    win.selected_attachments = [(port, att)]
+    win._update_properties_panel()
+    assert panel.current_type == 'attachment'
+    assert panel.current_object is att
+    assert 'P1' in panel.title_label.text()
+
+    # the Line Width combo writes the same multipliers ordinary edges use
+    width_combo = next(c for c in panel.findChildren(QComboBox)
+                       if c.count() and c.itemText(0) == 'Thin')
+    width_combo.setCurrentText('X-Thick')
+    assert att['linewidth_mult'] == pytest.approx(
+        config.EDGE_LINEWIDTH_OPTIONS['X-Thick'])
+
+    att['color'] = '#0055aa'
+    att['label'] = r'\kappa_a'
+    att['label_size_mult'] = 1.4
+
+    data = json.loads(json.dumps(win._serialize_graph()))
+    win._deserialize_graph(data)
+    restored = win.ports[0]['attachments'][0]
+    assert restored['color'] == '#0055aa'
+    assert restored['label'] == r'\kappa_a'
+    assert restored['label_size_mult'] == pytest.approx(1.4)
+    assert restored['linewidth_mult'] == pytest.approx(
+        config.EDGE_LINEWIDTH_OPTIONS['X-Thick'])
+    # the physics is untouched by styling
+    assert restored['rate'] == pytest.approx(att['rate'])
+    assert restored['sign'] == att['sign']
+
+
+def test_tap_properties_panel(para):
+    gp, win, config = para
+    node, line, conn = build_tapped_line_scene(win, config)
+    panel = win.properties_panel
+
+    win.selected_taps = [(line, 'x0', conn)]
+    win._update_properties_panel()
+    assert panel.current_type == 'tap'
+    assert panel.current_object is conn
+    assert 'TL1' in panel.title_label.text()
+
+    # a user label overrides the default n= chip; style round-trips
+    conn['label'] = 'g_tap'
+    conn['color'] = '#884400'
+    data = json.loads(json.dumps(win._serialize_graph()))
+    win._deserialize_graph(data)
+    restored = [c for c in win._end_conns(win.line_resonators[0], 'x0')
+                if c.get('kind') == 'node'][0]
+    assert restored['label'] == 'g_tap'
+    assert restored['color'] == '#884400'
+    assert restored['n_ref'] == conn['n_ref']

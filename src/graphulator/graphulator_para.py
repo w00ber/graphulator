@@ -3423,6 +3423,457 @@ class PropertiesPanel(QWidget):
 
         self.properties_layout.addLayout(form)
 
+    # ---- Explicit Ports: wire (connection) properties ----
+
+    def _add_wire_appearance_rows(self, form, conn, default_color):
+        """Line width / color / label rows — edge-panel parity for wires."""
+        g = self.graphulator
+
+        width_combo = QComboBox()
+        names = list(config.EDGE_LINEWIDTH_OPTIONS.keys())
+        width_combo.addItems(names)
+        current = float(conn.get('linewidth_mult', 1.25))
+        closest = min(config.EDGE_LINEWIDTH_OPTIONS.items(),
+                      key=lambda kv: abs(kv[1] - current))[0]
+        width_combo.setCurrentText(closest)
+        width_combo.currentTextChanged.connect(
+            lambda name: (conn.__setitem__(
+                'linewidth_mult', config.EDGE_LINEWIDTH_OPTIONS[name]),
+                g._update_plot()))
+        form.addRow("Line Width:", width_combo)
+
+        from PySide6.QtWidgets import QColorDialog
+        color_btn = QPushButton()
+        color_btn.setFixedSize(46, 22)
+
+        def paint(name):
+            color_btn.setStyleSheet(
+                f"background-color: {name}; border: 1px solid #888;")
+
+        def pick():
+            col = QColorDialog.getColor(
+                QColor(conn.get('color') or default_color), g)
+            if col.isValid():
+                g._save_state()
+                conn['color'] = col.name()
+                paint(col.name())
+                g._update_plot()
+
+        color_btn.clicked.connect(pick)
+        paint(conn.get('color') or default_color)
+
+        reset = QPushButton("Default")
+        reset.setToolTip("Drop the per-wire color override.")
+
+        def reset_color():
+            g._save_state()
+            conn.pop('color', None)
+            paint(default_color)
+            g._update_plot()
+
+        reset.clicked.connect(reset_color)
+        color_row = QHBoxLayout()
+        color_row.addWidget(color_btn)
+        color_row.addWidget(reset)
+        color_row.addStretch()
+        form.addRow("Color:", color_row)
+
+        label_edit = QLineEdit(conn.get('label', ''))
+        label_edit.setPlaceholderText("(none)")
+        label_edit.textChanged.connect(
+            lambda text: (conn.__setitem__('label', text.strip()),
+                          g._update_plot()))
+        form.addRow("Label:", label_edit)
+
+        label_size = QDoubleSpinBox()
+        label_size.setRange(0.2, 5.0)
+        label_size.setDecimals(2)
+        label_size.setSingleStep(0.1)
+        label_size.setValue(float(conn.get('label_size_mult', 1.0)))
+        label_size.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        label_size.valueChanged.connect(
+            lambda v: (conn.__setitem__('label_size_mult', float(v)),
+                       g._update_plot()))
+        form.addRow("Label Size:", label_size)
+
+    def _wire_rate_row(self, form, conn, key, label, tooltip, scale=1000.0):
+        """Rate spinbox in milli-arb units, writing straight to the wire."""
+        g = self.graphulator
+        box = FineControlSpinBox()
+        box.setRange(config.B_EXT_SPINBOX_MIN, config.B_EXT_SPINBOX_MAX)
+        box.setDecimals(config.B_EXT_SPINBOX_DECIMALS)
+        box.setSingleStep(config.B_EXT_SPINBOX_STEP)
+        box.setValue(float(conn.get(key, 0.0)) * scale)
+        box.setToolTip(tooltip)
+        box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        box.valueChanged.connect(
+            lambda v: (conn.__setitem__(key, float(v) / scale),
+                       g._invalidate_scattering_data(),
+                       g._schedule_scattering_update()
+                       if hasattr(g, '_schedule_scattering_update') else None,
+                       g._update_plot()))
+        form.addRow(label, box)
+        return box
+
+    def _wire_sign_row(self, form, conn):
+        g = self.graphulator
+        combo = QComboBox()
+        combo.addItem("+  (0\N{DEGREE SIGN})", 1)
+        combo.addItem("\N{MINUS SIGN}  (180\N{DEGREE SIGN})", -1)
+        combo.setCurrentIndex(0 if conn.get('sign', 1) >= 0 else 1)
+        combo.setToolTip(
+            "Sign of the coupling amplitude. Phase-1 allows 0\N{DEGREE SIGN} "
+            "/ 180\N{DEGREE SIGN} only; complex weights await the M_pumped "
+            "derivation.")
+        combo.currentIndexChanged.connect(
+            lambda _i: (conn.__setitem__('sign', combo.currentData()),
+                        g._invalidate_scattering_data(),
+                        g._update_plot()))
+        form.addRow("Sign:", combo)
+
+    def show_attachment_properties(self, port, att):
+        """Properties for one port-to-mode wire."""
+        from .para_features.explicit_ports import (WIRE_COLOR,
+                                                   WIRE_COLOR_INVERTED)
+        self.clear_properties()
+        self.current_object = att
+        self.current_type = 'attachment'
+        g = self.graphulator
+        node = next((n for n in g.nodes
+                     if n['node_id'] == att['node_id']), None)
+        node_label = node['label'] if node else str(att['node_id'])
+        self.title_label.setText(
+            f"Wire: {port['label']} \N{RIGHTWARDS ARROW} {node_label}")
+
+        form = QFormLayout()
+        self._wire_rate_row(
+            form, att, 'rate', "Rate [mau]:",
+            "External coupling rate of this mode to the port's channel "
+            "[milli-arb. units].")
+        self._wire_sign_row(form, att)
+        default = WIRE_COLOR if att.get('sign', 1) >= 0 else WIRE_COLOR_INVERTED
+        self._add_wire_appearance_rows(form, att, default)
+        self.properties_layout.addLayout(form)
+
+        info = QLabel(
+            "Dissipative coupling: this mode radiates into the port's "
+            "channel. Rates and signs also appear in the Ports & Lines "
+            "panel.")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666; font-style: italic;")
+        self.properties_layout.addWidget(info)
+        self.properties_layout.addStretch()
+
+    def show_tap_properties(self, line, end, conn):
+        """Properties for one node-tap wire onto a line end."""
+        from .para_features.explicit_ports import (WIRE_COLOR_TAP,
+                                                   LineResonator,
+                                                   line_payload)
+        self.clear_properties()
+        self.current_object = conn
+        self.current_type = 'tap'
+        g = self.graphulator
+        node = next((n for n in g.nodes
+                     if n['node_id'] == conn['node_id']), None)
+        node_label = node['label'] if node else str(conn['node_id'])
+        self.title_label.setText(
+            f"Tap: {node_label} \N{RIGHTWARDS ARROW} {line['label']} @{end}")
+
+        coupling = (line.get('end_coupling')
+                    or {}).get(end, 'capacitive')
+        form = QFormLayout()
+        self._wire_rate_row(
+            form, conn, 'rate', "Rate @ n_ref [mau]:",
+            "Conservative coupling rate AT the reference harmonic "
+            "[milli-arb. units]; the other comb modes follow the verified "
+            f"{coupling} profile.")
+
+        n_ref = FineControlSpinBox()
+        n_ref.setDecimals(0)
+        try:
+            n_max = LineResonator(**line_payload(line)).N
+        except ValueError:
+            n_max = 1
+        n_ref.setRange(1, n_max)
+        n_ref.setSingleStep(1)
+        n_ref.setPrefix("n=")
+        n_ref.setValue(int(conn.get('n_ref', 1)))
+        n_ref.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        n_ref.setToolTip(
+            f"Reference harmonic the rate is defined at (1..{n_max}).")
+        n_ref.valueChanged.connect(
+            lambda v: (conn.__setitem__('n_ref', int(v)),
+                       g._invalidate_scattering_data(),
+                       g._update_plot()))
+        form.addRow("Reference harmonic:", n_ref)
+
+        self._wire_sign_row(form, conn)
+        self._add_wire_appearance_rows(form, conn, WIRE_COLOR_TAP)
+        self.properties_layout.addLayout(form)
+
+        info = QLabel(
+            f"Conservative {coupling} tap: one wire stands for the coupling "
+            "to every comb mode. The coupling type belongs to the line END "
+            "(set it in the line's properties).")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666; font-style: italic;")
+        self.properties_layout.addWidget(info)
+        self.properties_layout.addStretch()
+
+    # ---- Explicit Ports: port / transmission-line glyph properties ----
+
+    def _glyph_color_button(self, glyph, key, default):
+        """Swatch button writing `key` on the glyph, live-applied."""
+        from PySide6.QtWidgets import QColorDialog
+        btn = QPushButton()
+        btn.setFixedSize(46, 22)
+
+        def paint(name):
+            btn.setStyleSheet(
+                f"background-color: {name}; border: 1px solid #888;")
+
+        def pick():
+            col = QColorDialog.getColor(QColor(glyph.get(key, default)),
+                                        self.graphulator)
+            if col.isValid():
+                self.graphulator._save_state()
+                glyph[key] = col.name()
+                paint(col.name())
+                self.graphulator._update_plot()
+
+        btn.clicked.connect(pick)
+        paint(glyph.get(key, default))
+        return btn
+
+    def _glyph_mult_spin(self, glyph, key, tooltip, on_change=None):
+        from .para_features.explicit_ports import (GLYPH_SIZE_MIN,
+                                                   GLYPH_SIZE_MAX)
+        box = QDoubleSpinBox()
+        box.setRange(GLYPH_SIZE_MIN, GLYPH_SIZE_MAX)
+        box.setDecimals(2)
+        box.setSingleStep(0.1)
+        box.setValue(float(glyph.get(key, 1.0)))
+        box.setToolTip(tooltip)
+        box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+        def apply(value):
+            glyph[key] = float(value)
+            if on_change is not None:
+                on_change()
+            self.graphulator._update_plot()
+
+        box.valueChanged.connect(apply)
+        return box
+
+    def _add_glyph_appearance_rows(self, form, glyph, default_lw, default_fill):
+        """Length / height / stroke / colors, shared by both glyph types."""
+        is_port = 'port_id' in glyph
+
+        def drop_autosize():
+            # a manual length edit takes over from label autosizing
+            if is_port:
+                glyph['autosize'] = False
+
+        form.addRow("Length \N{MULTIPLICATION SIGN}:", self._glyph_mult_spin(
+            glyph, 'w_mult',
+            "Stretch the glyph length (\N{LEFTWARDS ARROW}/"
+            "\N{RIGHTWARDS ARROW} when selected)", drop_autosize))
+        form.addRow("Height \N{MULTIPLICATION SIGN}:", self._glyph_mult_spin(
+            glyph, 'h_mult',
+            "Stretch the glyph height (\N{UPWARDS ARROW}/"
+            "\N{DOWNWARDS ARROW} when selected)"))
+
+        lw = QDoubleSpinBox()
+        lw.setRange(0.25, 8.0)
+        lw.setDecimals(2)
+        lw.setSingleStep(0.25)
+        lw.setValue(float(glyph.get('linewidth', default_lw)))
+        lw.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        lw.valueChanged.connect(
+            lambda v: (glyph.__setitem__('linewidth', float(v)),
+                       self.graphulator._update_plot()))
+        form.addRow("Stroke width:", lw)
+        form.addRow("Stroke color:",
+                    self._glyph_color_button(glyph, 'color', 'black'))
+        form.addRow("Fill color:",
+                    self._glyph_color_button(glyph, 'fill', default_fill))
+
+    def show_port_properties(self, port):
+        """Editable properties for a selected port / loss-hub glyph."""
+        from .para_features.explicit_ports import PORT_LINEWIDTH
+        self.clear_properties()
+        self.current_object = port
+        self.current_type = 'port'
+        kind = "Port" if port.get('monitored', True) else "Loss hub"
+        self.title_label.setText(f"{kind}: {port['label']}")
+        g = self.graphulator
+
+        form = QFormLayout()
+        label_edit = QLineEdit(port['label'])
+
+        def set_label(text):
+            port['label'] = text.strip() or port['label']
+            self.title_label.setText(f"{kind}: {port['label']}")
+            g._invalidate_scattering_data()
+            g._update_plot()
+
+        label_edit.textChanged.connect(set_label)
+        form.addRow("Label:", label_edit)
+
+        monitored = QCheckBox("Monitored (scattering port)")
+        monitored.setChecked(bool(port.get('monitored', True)))
+        monitored.setToolTip(
+            "Checked: a port \N{EM DASH} its damping appears in M and it is "
+            "a channel of S.\nUnchecked: a loss hub \N{EM DASH} same "
+            "damping, no channel.")
+
+        def set_monitored(state):
+            g._save_state()
+            port['monitored'] = monitored.isChecked()
+            g._invalidate_scattering_data()
+            g._update_plot()
+
+        monitored.stateChanged.connect(set_monitored)
+        form.addRow(monitored)
+
+        auto = QCheckBox("Auto-orient toward attached group")
+        auto.setChecked(not port.get('angle_pinned', False))
+        auto.setToolTip(
+            "Checked: the lead points at the center of the attached nodes "
+            "and line ends.\nUnchecked: rotation is fixed "
+            "(Ctrl+U / Ctrl+I, or the right-click menu).")
+
+        def set_auto(state):
+            g._save_state()
+            g._apply_port_style(port, {'auto_orient': auto.isChecked()})
+            g._update_plot()
+
+        auto.stateChanged.connect(set_auto)
+        form.addRow(auto)
+
+        autosize = QCheckBox("Auto-size length to label")
+        autosize.setChecked(bool(port.get('autosize', True)))
+        autosize.setToolTip(
+            "Grow the body so the label always fits inside it. Stretching "
+            "the length by hand turns this off.")
+        autosize.stateChanged.connect(
+            lambda _s: (port.__setitem__('autosize', autosize.isChecked()),
+                        g._update_plot()))
+        form.addRow(autosize)
+
+        self._add_glyph_appearance_rows(form, port, PORT_LINEWIDTH, 'white')
+        self.properties_layout.addLayout(form)
+
+        n_att = len(port.get('attachments', []))
+        info = QLabel(
+            f"{n_att} attachment(s). Rates and signs live in the "
+            "Ports & Lines panel (scattering mode); rewire with the edge "
+            "tool (E).")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666; font-style: italic;")
+        self.properties_layout.addWidget(info)
+        self.properties_layout.addStretch()
+
+    def show_line_properties(self, line):
+        """Editable properties for a selected transmission-line glyph."""
+        from .para_features.explicit_ports import (LINE_LINEWIDTH,
+                                                   LineResonator,
+                                                   line_payload, ALPHA_TOOLTIP)
+        self.clear_properties()
+        self.current_object = line
+        self.current_type = 'line'
+        self.title_label.setText(f"Transmission line: {line['label']}")
+        g = self.graphulator
+
+        form = QFormLayout()
+        label_edit = QLineEdit(line['label'])
+
+        def set_label(text):
+            line['label'] = text.strip() or line['label']
+            self.title_label.setText(f"Transmission line: {line['label']}")
+            g._invalidate_scattering_data()
+            g._update_plot()
+
+        label_edit.textChanged.connect(set_label)
+        form.addRow("Label:", label_edit)
+
+        def physics_spin(key, lo, hi, decimals, step, tooltip):
+            box = QDoubleSpinBox()
+            box.setRange(lo, hi)
+            box.setDecimals(decimals)
+            box.setSingleStep(step)
+            box.setValue(float(line.get(key, 0.0)))
+            box.setToolTip(tooltip)
+            box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+            def apply(value):
+                # validate through the numerics schema before committing, so
+                # an invalid combination can never poison the live glyph
+                candidate = dict(line)
+                candidate[key] = float(value)
+                try:
+                    LineResonator(**line_payload(candidate))
+                except ValueError:
+                    return
+                line[key] = float(value)
+                g._invalidate_scattering_data()
+                g._update_plot()
+
+            box.valueChanged.connect(apply)
+            return box
+
+        form.addRow("FSR [au]:", physics_spin(
+            'FSR', 1e-9, 1e9, 4, 0.1,
+            "Free spectral range [a.u.] (comb mode spacing)"))
+        form.addRow("Ztx [\N{GREEK CAPITAL LETTER OMEGA}]:", physics_spin(
+            'Ztx', 1e-6, 1e6, 2, 1.0, "Line characteristic impedance"))
+        form.addRow("f_max [au]:", physics_spin(
+            'f_max', 1e-9, 1e12, 4, 1.0,
+            "Comb extent: N = ceil(f_max/FSR) mode pairs from DC"))
+        form.addRow("Z0 [\N{GREEK CAPITAL LETTER OMEGA}]:", physics_spin(
+            'Z0_port', 1e-6, 1e6, 2, 1.0, "Port termination impedance"))
+        form.addRow("\N{GREEK SMALL LETTER ALPHA} [Np]:", physics_spin(
+            'alpha_uniform', 0.0, 100.0, 6, 0.001, ALPHA_TOOLTIP))
+
+        couplings = (line.get('end_coupling')
+                     or {'x0': 'capacitive', 'xL': 'capacitive'})
+        for end in ('x0', 'xL'):
+            combo = QComboBox()
+            combo.addItem("capacitive  (g_n \N{PROPORTIONAL TO} \N{SQUARE ROOT}n)",
+                          'capacitive')
+            combo.addItem("inductive  (g_n \N{PROPORTIONAL TO} 1/\N{SQUARE ROOT}n)",
+                          'inductive')
+            combo.setCurrentIndex(
+                0 if couplings.get(end, 'capacitive') == 'capacitive' else 1)
+            combo.setToolTip(
+                "Coupling type of a mode tapped at this end \N{EM DASH} a "
+                "property of the physical tap point, shared by everything "
+                "attached there.")
+
+            def set_coupling(_idx, e=end, c=combo):
+                g._save_state()
+                line.setdefault('end_coupling', {})[e] = c.currentData()
+                g._invalidate_scattering_data()
+                g._update_plot()
+
+            combo.currentIndexChanged.connect(set_coupling)
+            form.addRow(f"Tap coupling @ {end}:", combo)
+
+        self._add_glyph_appearance_rows(form, line, LINE_LINEWIDTH, '#cccccc')
+        self.properties_layout.addLayout(form)
+
+        try:
+            n_pairs = LineResonator(**line_payload(line)).N
+            summary = f"{2 * n_pairs + 1} comb modes at extraction (N = {n_pairs})."
+        except ValueError as exc:
+            summary = f"Invalid parameters: {exc}"
+        info = QLabel(summary + " Connect the end leads with the edge tool "
+                      "(E) to a port glyph or a mode.")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666; font-style: italic;")
+        self.properties_layout.addWidget(info)
+        self.properties_layout.addStretch()
+
     def show_no_selection(self):
         """Show message when nothing is selected"""
         self.clear_properties()
@@ -16325,8 +16776,28 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
     def _update_properties_panel(self):
         """Update the properties panel based on current selection"""
+        n_glyphs = len(getattr(self, 'selected_ports', [])) \
+            + len(getattr(self, 'selected_lines', []))
+        n_wires = len(getattr(self, 'selected_attachments', [])) \
+            + len(getattr(self, 'selected_taps', []))
+        # Single wire (port attachment or line tap) selected
+        if n_wires == 1 and not n_glyphs and not self.selected_nodes \
+                and not self.selected_edges:
+            if self.selected_attachments:
+                port, att = self.selected_attachments[0]
+                self.properties_panel.show_attachment_properties(port, att)
+            else:
+                line, end, conn = self.selected_taps[0]
+                self.properties_panel.show_tap_properties(line, end, conn)
+        # Single port / transmission-line glyph selected
+        elif n_glyphs == 1 and not self.selected_nodes and not self.selected_edges:
+            glyph = (self.selected_ports or self.selected_lines)[0]
+            if self.selected_ports:
+                self.properties_panel.show_port_properties(glyph)
+            else:
+                self.properties_panel.show_line_properties(glyph)
         # Single node selected
-        if len(self.selected_nodes) == 1 and len(self.selected_edges) == 0:
+        elif len(self.selected_nodes) == 1 and len(self.selected_edges) == 0:
             self.properties_panel.show_node_properties(self.selected_nodes[0])
         # Single edge selected
         elif len(self.selected_edges) == 1 and len(self.selected_nodes) == 0:
@@ -16384,10 +16855,19 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             (None, 'Right-click', 'Style menu'),
             ('edit.delete', 'Delete'),
         ],
+        'glyph': [
+            ('rotate.ccw', 'Rotate glyph'),
+            (None, '←/→', 'Stretch length'),
+            (None, '↑/↓', 'Stretch height'),
+            (None, 'Double-click', 'Edit / appearance'),
+            (None, 'Right-click', 'Rotate, auto-orient, delete'),
+            ('edit.delete', 'Delete'),
+        ],
     }
 
     # Shortcut categories that make up the full ('all') list per context.
     _SHORTCUT_ALL_CATEGORIES = {
+        'glyph': ['Ports & Lines', 'Graph Rotation', 'Selection & Clipboard'],
         'none': ['Node Placement', 'Edge Operations', 'View',
                  'Canvas Navigation', 'Grid Controls', 'Selection & Clipboard',
                  'Edit', 'Help'],

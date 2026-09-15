@@ -28,7 +28,7 @@
     glyph (`L`) connected by its **end leads** to explicit port glyphs (the
     comb never leaves the macro and a line is never implicitly terminated;
     loading both ends is refused pending a verified ABCD two-port
-    reference), dashed attachment links created with the edge tool, a third
+    reference), attachment wires created with the edge tool, a third
     **Ports & Lines** parameter panel (per-attachment rates + signs; legacy
     `B_ext` shown there as auto-ports while its Nodes-table column hides),
     `.pgraph` format 3.0 with loader migration, hub/macro-aware exported
@@ -71,6 +71,38 @@
     joined only through a shared line) now compute as ONE component — the
     component discovery previously left the extra tap partners in
     separate components.
+  - **Properties panel for glyphs**: selecting a port or transmission
+    line now fills the Properties tab with its live-applied properties
+    (label, monitored/loss, auto-orient, auto-size, length/height, stroke
+    width, stroke and fill color; for a line also FSR, Ztx, f_max, Z0,
+    alpha and the per-end tap coupling, each validated through the
+    numerics schema before it is committed). Port bodies auto-size so the
+    label always fits, and a manual length edit takes over from that.
+    Rotation (`Ctrl+U`/`Ctrl+I`) is also on the glyph right-click menu,
+    and the shortcut-hint overlay gains a "Port / line selected" context.
+  - **Whole-graph rotation carries the glyphs.** `Ctrl+A` now selects
+    ports and lines as well as nodes and edges, and rotating a selection
+    that contains nodes turns the whole drawing as a rigid body — glyph
+    positions travel with the modes and each glyph's orientation turns by
+    the same angle (an auto-orienting port is deliberately left unpinned,
+    since its attachments moved too and it re-aims itself). Selecting only
+    glyphs still spins each one in place. Glyph labels now ride their
+    body, flipping past a quarter turn so they never read upside down,
+    and a port's label is centered in the straight part of the body — the
+    same width budget its auto-size grows to satisfy.
+  - **Wires carry edge-parity properties, and are solid.** The dashed
+    linestyle is gone — a wire reaching a port glyph already says
+    "dissipative", so the dash carried no extra information. Every wire
+    (port attachment, line-end termination, node tap) now takes the same
+    controls an ordinary graph edge has: line width (the shared
+    Thin/Medium/Thick/X-Thick multipliers), color with a "Default" reset,
+    label text and label size. Selecting a wire opens a Properties page
+    holding those alongside its physics — rate and sign, plus the
+    reference harmonic for a tap — and the styling round-trips through
+    `.pgraph` without touching the physics. Role-encoding defaults
+    survive: gray for an attachment, firebrick plus a `−` mark when the
+    sign is inverted, teal for a tap (labelled `n=…` until the user sets
+    a label).
   - Phase-2 items are explicitly blocked pending derivations (complex /
     mixed-sector hub weights, band-limited combs, two-port lines,
     frequency-dependent weights); attachments enforce real signed weights
@@ -78,6 +110,23 @@
     derivation.
 
 ### Fixed
+- Keyboard: shortcuts bound to punctuation typed WITH Shift (`?` for the
+  hint overlay, `+` for zoom in) never fired, because the key arrives with
+  `ShiftModifier` and a bare `QKeySequence("?")` cannot match it. Every
+  unmodified punctuation binding now also registers a companion
+  `Shift+<key>` shortcut (letters and digits are excluded, so `G` and
+  `Shift+G` stay distinct), kept in sync when a binding is remapped.
+- Keyboard: single-key shortcuts are suppressed while an input widget has
+  focus (so typing in a spinbox doesn't zoom or place nodes), but clicking
+  back onto the canvas did not release that focus — leaving every
+  single-key shortcut silently dead after any panel edit, with no visible
+  cue. A canvas click now clears input focus (the canvas itself still
+  stays out of the Tab chain).
+- Keyboard: the "Explicit Ports enabled" auto-enable notice was a
+  non-modal popup that took keyboard activation, swallowing every
+  window-scoped single-key shortcut until it was dismissed — so `+`/`-`
+  and `?` appeared broken for any file containing ports or lines. It now
+  shows without activating and hands focus straight back to the canvas.
 - Scattering: S-matrix port labels were wrong for graphs whose ports are not in
   ascending node-id order. The K columns are built by walking the nodes in
   basis order, but every label path (S-parameter checkboxes, plot legends,

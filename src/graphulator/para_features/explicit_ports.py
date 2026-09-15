@@ -95,6 +95,17 @@ LINE_LEAD_LEN = 0.55  # terminal stubs at both ends
 PORT_LINEWIDTH = 2.0  # default stroke (uniform across body + lead)
 LINE_LINEWIDTH = 1.6
 GLYPH_SIZE_MIN, GLYPH_SIZE_MAX = 0.3, 4.0
+PORT_LABEL_FILL = 0.90      # fraction of the body width a label may occupy
+PORT_LABEL_ADVANCE = 0.60   # mean glyph advance / font size (bold sans)
+
+# Wire (connection) appearance. Wires are SOLID: a wire reaching a port
+# glyph already says "dissipative", so a dashed variant carried no extra
+# information. Per-wire overrides ('color', 'linewidth_mult', 'label',
+# 'label_size_mult') mirror the controls ordinary graph edges have.
+WIRE_COLOR = 'dimgray'
+WIRE_COLOR_INVERTED = 'firebrick'   # default for a sign = -1 attachment
+WIRE_COLOR_TAP = 'teal'             # conservative node tap
+WIRE_LINEWIDTH = 1.4                # data-unit base, scaled by linewidth_mult
 
 
 def _line_extractor_id(line):
@@ -806,13 +817,26 @@ class ExplicitPortsMixin:
                "You can toggle it in Settings \N{RIGHTWARDS ARROW} Interface.")
         self._status_message("Explicit Ports mode auto-enabled", 8000)
         try:
+            from PySide6.QtCore import Qt as _Qt
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Information)
             box.setWindowTitle("Explicit Ports enabled")
             box.setText(msg)
             box.setModal(False)
+            # The notice must never take the keyboard: it is informational,
+            # and the app's single-key shortcuts ('+', '-', '?', 'a', ...)
+            # are WindowShortcut-scoped to the main window, so an activated
+            # popup silently swallows every one of them until it is
+            # dismissed. Show it without activating and hand focus straight
+            # back to the canvas.
+            box.setAttribute(_Qt.WA_ShowWithoutActivating, True)
+            box.setWindowFlag(_Qt.Tool, True)
             box.show()
             self._explicit_ports_notice = box
+            self.activateWindow()
+            self.raise_()
+            if getattr(self, 'canvas', None) is not None:
+                self.canvas.setFocus()
         except Exception:  # headless/exotic platforms: statusbar is enough
             logger.info(msg)
 
@@ -1212,6 +1236,11 @@ class ExplicitPortsMixin:
             menu = QMenu(self)
             menu.addAction("Edit\N{HORIZONTAL ELLIPSIS}",
                            lambda: self._edit_port(port))
+            menu.addAction("Rotate 15\N{DEGREE SIGN} CCW  (Ctrl+U)",
+                           lambda: self._rotate_selected_glyph(port, 15))
+            menu.addAction("Rotate 15\N{DEGREE SIGN} CW  (Ctrl+I)",
+                           lambda: self._rotate_selected_glyph(port, -15))
+            menu.addSeparator()
             auto = menu.addAction("Auto-orient")
             auto.setCheckable(True)
             auto.setChecked(not port.get('angle_pinned', False))
@@ -1236,6 +1265,11 @@ class ExplicitPortsMixin:
             menu = QMenu(self)
             menu.addAction("Edit\N{HORIZONTAL ELLIPSIS}",
                            lambda: self._edit_line(line))
+            menu.addAction("Rotate 15\N{DEGREE SIGN} CCW  (Ctrl+U)",
+                           lambda: self._rotate_selected_glyph(line, 15))
+            menu.addAction("Rotate 15\N{DEGREE SIGN} CW  (Ctrl+I)",
+                           lambda: self._rotate_selected_glyph(line, -15))
+            menu.addSeparator()
             def explode():
                 self._save_state()
                 self.explode_line_resonator(line)
@@ -1265,6 +1299,28 @@ class ExplicitPortsMixin:
             menu.exec(QCursor.pos())
             return True
         return False
+
+    def _shortcut_context(self):
+        """Add a 'glyph' context for selected ports / lines."""
+        if (self.selected_ports or self.selected_lines) \
+                and not self.selected_nodes and not self.selected_edges:
+            return 'glyph'
+        return super()._shortcut_context()
+
+    def _rotate_selected_glyph(self, glyph, angle_degrees):
+        """Rotate one glyph from the context menu (selection-independent,
+        so it works even when the keyboard shortcut is unavailable)."""
+        saved = (self.selected_ports, self.selected_lines,
+                 self.selected_nodes)
+        is_port = 'port_id' in glyph
+        self.selected_ports = [glyph] if is_port else []
+        self.selected_lines = [] if is_port else [glyph]
+        self.selected_nodes = []
+        try:
+            self._rotate_selected_nodes(angle_degrees)
+        finally:
+            (self.selected_ports, self.selected_lines,
+             self.selected_nodes) = saved
 
     def _apply_port_style(self, port, result):
         """Apply a PortInputDialog result's appearance + orientation."""
@@ -1424,15 +1480,61 @@ class ExplicitPortsMixin:
             return True
         return False
 
+    def _select_all(self):
+        """Select everything, glyphs included.
+
+        Ctrl+A previously took only nodes and edges, so a "whole graph"
+        selection silently left ports and lines behind — most visibly when
+        rotating, where the modes turned and the glyphs stayed put.
+        """
+        super()._select_all()
+        self.selected_ports = list(self.ports)
+        self.selected_lines = list(self.line_resonators)
+        self.selected_attachments = [
+            (port, att) for port in self.ports
+            for att in port['attachments']]
+        self.selected_taps = [
+            (line, end, conn)
+            for line in self.line_resonators
+            for end in ('x0', 'xL')
+            for conn in self._end_conns(line, end)
+            if conn.get('kind') == 'node']
+        self._update_plot()
+
     def _rotate_selected_nodes(self, angle_degrees):
-        """Rotate selection. With only port/line glyphs selected, rotate the
-        glyphs' own orientation in place; otherwise defer to the node
-        behavior (rotation of node positions about the selection centroid).
+        """Rotate selection.
+
+        With ONLY port/line glyphs selected, spin each glyph's own
+        orientation in place (the useful primitive for aiming a lead).
+        When nodes are selected too, the selection is a layout: everything
+        rotates rigidly about the node centroid — glyph positions travel
+        with the modes and each glyph's orientation turns by the same
+        angle, so the drawing keeps its shape.
 
         Manually rotating an attached port pins its angle (turns off the
         auto-orient toward its attachments), starting from the current
-        auto-orientation so the first step is a small visible nudge.
+        auto-orientation so the first step is a small visible nudge. In a
+        rigid-body rotation an auto-orienting port is left UNpinned: its
+        attachments moved too, so it re-aims itself correctly.
         """
+        glyphs = list(self.selected_ports) + list(self.selected_lines)
+        if glyphs and self.selected_nodes:
+            # rigid-body: nodes exactly as before, glyphs carried along
+            positions = np.array([n['pos'] for n in self.selected_nodes])
+            centroid = positions.mean(axis=0)
+            super()._rotate_selected_nodes(angle_degrees)
+            for glyph in glyphs:
+                gx, gy = _rotate_point(glyph['pos'][0], glyph['pos'][1],
+                                       centroid[0], centroid[1],
+                                       -angle_degrees)
+                glyph['pos'] = (gx, gy)
+                if 'port_id' in glyph and not glyph.get('angle_pinned'):
+                    continue          # auto-orient re-aims it for free
+                glyph['angle'] = (glyph.get('angle', 0.0)
+                                  - angle_degrees) % 360.0
+            self._update_plot()
+            return
+
         if (self.selected_ports or self.selected_lines) \
                 and not self.selected_nodes:
             self._save_state()
@@ -1489,11 +1591,29 @@ class ExplicitPortsMixin:
         """
         r = self.node_radius
         x, y = port['pos']
-        w = PORT_BODY_W * r * port.get('w_mult', 1.0)
+        w_mult = port.get('w_mult', 1.0)
+        if port.get('autosize', True):
+            # grow (never shrink) the body so the label fits inside it
+            w_mult = max(w_mult, self._port_label_w_mult(port))
+        w = PORT_BODY_W * r * w_mult
         h = PORT_BODY_H * r * port.get('h_mult', 1.0)
-        apex_x = x + w / 2 + PORT_APEX_W * r * port.get('w_mult', 1.0)
+        apex_x = x + w / 2 + PORT_APEX_W * r * w_mult
         lead_tip_x = apex_x + PORT_LEAD_LEN * r
         return x, y, w, h, apex_x, lead_tip_x
+
+    def _port_label_font_data(self, port):
+        """Label font height in DATA units (shared by draw + autosize, so
+        the two can never drift apart)."""
+        scale = getattr(self.APP_CONFIG, 'PLOT_NODE_LABEL_FONT_SCALE', 0.35)
+        h = PORT_BODY_H * self.node_radius * port.get('h_mult', 1.0)
+        return h * scale * 1.45
+
+    def _port_label_w_mult(self, port):
+        """Smallest length multiplier whose body holds the port's label."""
+        n_chars = max(len(str(port.get('label', ''))), 1)
+        label_w = PORT_LABEL_ADVANCE * n_chars * self._port_label_font_data(port)
+        needed = label_w / PORT_LABEL_FILL
+        return needed / (PORT_BODY_W * self.node_radius)
 
     def _port_effective_angle(self, port):
         """Drawing/hit-test angle of a port glyph.
@@ -1906,17 +2026,43 @@ class ExplicitPortsMixin:
         proj = a + t[:, None] * seg
         return float(np.min(np.hypot(*(p - proj).T)))
 
+    @staticmethod
+    def wire_style(conn, default_color=WIRE_COLOR):
+        """(color, linewidth) of one wire, honoring per-wire overrides."""
+        color = conn.get('color') or default_color
+        mult = float(conn.get('linewidth_mult', 1.25))
+        return color, WIRE_LINEWIDTH * mult
+
     def _draw_wire(self, ax, pts, color, linewidth, linestyle='-',
                    selected=False, zorder=4, alpha=0.9):
         """Draw one routed wire (with the salmon selection underlay)."""
         if selected:
             ax.add_line(mlines.Line2D(
-                pts[:, 0], pts[:, 1], color='salmon', linewidth=4.0,
+                pts[:, 0], pts[:, 1], color='salmon',
+                linewidth=max(4.0, linewidth + 2.6),
                 zorder=zorder - 0.5, alpha=0.9, solid_capstyle='round'))
         ax.add_line(mlines.Line2D(
             pts[:, 0], pts[:, 1], color=color, linewidth=linewidth,
             linestyle=linestyle, zorder=zorder, alpha=alpha,
             solid_capstyle='round'))
+
+    def _draw_wire_label(self, ax, pts, conn, ppdu, color, fallback=None):
+        """Label a wire at its midpoint, node-style (edge-label parity).
+
+        A user-set 'label' wins; otherwise `fallback` (the tap's reference
+        harmonic) is drawn, and a wire with neither stays bare.
+        """
+        text = conn.get('label') or fallback
+        if not text:
+            return
+        mx, my = pts[len(pts) // 2]
+        scale = float(conn.get('label_size_mult', 1.0))
+        font_pts = 0.55 * self.node_radius * ppdu * scale * getattr(
+            self.APP_CONFIG, 'PLOT_NODE_LABEL_FONT_SCALE', 0.35) * 1.45
+        ax.text(mx, my, text, fontsize=max(font_pts, 1.0), color=color,
+                ha='center', va='center', zorder=5,
+                bbox=dict(boxstyle='round,pad=0.18', fc='white',
+                          ec=color, lw=0.6))
 
     def _adjust_glyph_size(self, direction):
         """Arrow-key stretch for selected ports/lines (node-key parity):
@@ -1929,6 +2075,13 @@ class ExplicitPortsMixin:
                      else ('w_mult', 0.1))
         sign = 1 if direction in ('up', 'right') else -1
         for g in glyphs:
+            if key == 'w_mult' and g.get('autosize', True) \
+                    and 'port_id' in g:
+                # take over from autosize starting at its current width, so
+                # the first keystroke is a small visible nudge
+                g['w_mult'] = max(g.get('w_mult', 1.0),
+                                  self._port_label_w_mult(g))
+                g['autosize'] = False
             g[key] = float(np.clip(g.get(key, 1.0) + sign * step,
                                    GLYPH_SIZE_MIN, GLYPH_SIZE_MAX))
         self._update_plot()
@@ -1944,8 +2097,23 @@ class ExplicitPortsMixin:
         ppdu_y = fig.get_figheight() * 72 / (ylim[1] - ylim[0])
         return min(ppdu_x, ppdu_y)
 
+    @staticmethod
+    def _readable_angle(angle_deg):
+        """Glyph angle folded into the readable half-turn.
+
+        A label rides its glyph so it always sits inside the body, but text
+        that ends up upside down is worse than text that is merely
+        mirrored about the glyph axis — so past a quarter turn it flips,
+        the usual schematic convention (and the one this app's edge labels
+        already follow).
+        """
+        angle = float(angle_deg) % 360.0
+        if 90.0 < angle <= 270.0:
+            angle -= 180.0
+        return angle
+
     def _draw_glyph_label(self, ax, text, x, y, font_size_points,
-                          points_per_data_unit, color='black'):
+                          points_per_data_unit, color='black', rotation=0.0):
         """Draw a glyph label in the SAME style as node labels: bold
         sans-serif mathtext (or sfmath in LaTeX mode) with _/^ handling,
         via the cached vector renderer so it scales with zoom."""
@@ -1981,7 +2149,7 @@ class ExplicitPortsMixin:
             ax, rf"${''.join(formatted)}$", x, y,
             fontsize_points=font_size_points,
             points_per_data_unit=points_per_data_unit,
-            color=color, ha='center', va='center',
+            color=color, ha='center', va='center', rotation=rotation,
             usetex=self.use_latex, zorder=12)
 
     def _draw_ports_and_lines(self, ax=None):
@@ -2046,29 +2214,34 @@ class ExplicitPortsMixin:
                 if pts is None:
                     continue
                 att_selected = (port, att) in self.selected_attachments
-                link_color = 'gray' if att['sign'] >= 0 else 'firebrick'
-                self._draw_wire(ax, pts, link_color, 1.2,
-                                linestyle=(0, (4, 3)),
+                default = (WIRE_COLOR if att['sign'] >= 0
+                           else WIRE_COLOR_INVERTED)
+                link_color, lw = self.wire_style(att, default)
+                self._draw_wire(ax, pts, link_color, lw,
                                 selected=att_selected, zorder=4)
                 mx, my = pts[len(pts) // 2]
                 if att_selected:
                     ax.add_patch(mpatches.Circle(
                         (mx, my), 0.3, facecolor='lightcoral',
                         edgecolor='red', linewidth=2, zorder=20))
-                if att['sign'] < 0:
-                    # mark inverted-sign links near the midpoint
-                    ax.text(mx, my, '\N{MINUS SIGN}', color='firebrick',
-                            fontsize=9, ha='center', va='center', zorder=5)
+                # an inverted-sign wire is marked at the midpoint unless the
+                # user gave the wire a label of its own
+                self._draw_wire_label(
+                    ax, pts, att, ppdu, link_color,
+                    fallback=('\N{MINUS SIGN}' if att['sign'] < 0 else None))
 
-            # label INSIDE the glyph body, node-style bold sans-serif,
-            # shifted slightly away from the apex
-            cx, cy = rot(x - 0.15 * w, y)
-            font_pts = h * ppdu * label_font_scale * 1.45
-            # long labels shrink to stay inside the body (~0.6 pt of
-            # glyph width per point of font size per character)
+            # label centered in the STRAIGHT part of the body (the nose
+            # tapers, so text there would clip); this is the same width
+            # budget the autosize above grows the body to satisfy
+            cx, cy = rot(x, y)
+            font_pts = self._port_label_font_data(port) * ppdu
+            # with autosize OFF the body no longer grows for the label, so
+            # a long one shrinks instead of spilling over the outline
             n_chars = max(len(port['label']), 1)
-            font_pts = min(font_pts, 0.92 * w * ppdu / (0.62 * n_chars))
-            self._draw_glyph_label(ax, port['label'], cx, cy, font_pts, ppdu)
+            font_pts = min(font_pts, PORT_LABEL_FILL * w * ppdu
+                           / (PORT_LABEL_ADVANCE * n_chars))
+            self._draw_glyph_label(ax, port['label'], cx, cy, font_pts, ppdu,
+                                   rotation=self._readable_angle(angle))
 
         for line in self.line_resonators:
             lx, ly, w, h, rx = self._line_geometry(line)
@@ -2136,8 +2309,13 @@ class ExplicitPortsMixin:
                                   and pend[1] == end_name)
                 for conn_port in conn_ports:
                     pts = self._line_end_port_wire(line, end_name, conn_port)
-                    self._draw_wire(ax, pts, 'dimgray', 1.4,
-                                    linestyle=(0, (4, 3)), zorder=4)
+                    conn = next(
+                        (c for c in self._end_conns(line, end_name)
+                         if c.get('kind') == 'port'
+                         and c.get('port_id') == conn_port['port_id']), {})
+                    wire_color, lw = self.wire_style(conn)
+                    self._draw_wire(ax, pts, wire_color, lw, zorder=4)
+                    self._draw_wire_label(ax, pts, conn, ppdu, wire_color)
                 # node taps at this end: thin solid wires with an n_ref tag
                 tap_conns = [cn for cn in self._end_conns(line, end_name)
                              if cn.get('kind') == 'node']
@@ -2147,14 +2325,12 @@ class ExplicitPortsMixin:
                         continue
                     tap_selected = ((line, end_name, conn)
                                     in self.selected_taps)
-                    self._draw_wire(ax, pts, 'teal', 1.3,
+                    tap_color, lw = self.wire_style(conn, WIRE_COLOR_TAP)
+                    self._draw_wire(ax, pts, tap_color, lw,
                                     selected=tap_selected, zorder=4)
-                    mx, my = pts[len(pts) // 2]
-                    ax.text(mx, my, f"n={conn.get('n_ref', 1)}",
-                            fontsize=7, color='teal', ha='center',
-                            va='center', zorder=5,
-                            bbox=dict(boxstyle='round,pad=0.15',
-                                      fc='white', ec='teal', lw=0.6))
+                    self._draw_wire_label(
+                        ax, pts, conn, ppdu, tap_color,
+                        fallback=f"n={conn.get('n_ref', 1)}")
 
                 connected = bool(conn_ports or tap_conns)
                 mark = ('dodgerblue' if is_pending
@@ -2172,7 +2348,8 @@ class ExplicitPortsMixin:
             else:
                 tx, ty = _rotate_point(lx, ly + h + 0.45 * r, lx, ly, angle)
                 font_pts = 0.9 * r * ppdu * label_font_scale * 1.6
-            self._draw_glyph_label(ax, line['label'], tx, ty, font_pts, ppdu)
+            self._draw_glyph_label(ax, line['label'], tx, ty, font_pts, ppdu,
+                                   rotation=self._readable_angle(angle))
 
             n_pairs = LineResonator(**line_payload(line)).N
             sub = f"FSR={line['FSR']:g}, N={n_pairs}"
@@ -2183,6 +2360,8 @@ class ExplicitPortsMixin:
             sy_off = max(h, 0.3 * r) + 0.35 * r
             sx, sy = _rotate_point(lx, ly - sy_off, lx, ly, angle)
             ax.text(sx, sy, sub, ha='center', va='top',
+                    rotation=self._readable_angle(angle),
+                    rotation_mode='anchor',
                     fontsize=7, color='dimgray', zorder=12)
 
     # ---- serialization fragments ----
@@ -2204,8 +2383,10 @@ class ExplicitPortsMixin:
                     'color': p.get('color', 'black'),
                     'fill': p.get('fill', 'white'),
                     'attachments': [
-                        {'node_id': a['node_id'], 'rate': a['rate'],
-                         'sign': a['sign']}
+                        {k: v for k, v in a.items()
+                         if k in ('node_id', 'rate', 'sign', 'color',
+                                  'linewidth_mult', 'label',
+                                  'label_size_mult')}
                         for a in p['attachments']
                     ],
                 }
@@ -2264,9 +2445,16 @@ class ExplicitPortsMixin:
                         "Dropping attachment of port %r to unknown node %r",
                         pdata.get('label'), a['node_id'])
                     continue
-                attachments.append({'node_id': a['node_id'],
-                                    'rate': float(a.get('rate', 0.1)),
-                                    'sign': 1 if a.get('sign', 1) >= 0 else -1})
+                att = {'node_id': a['node_id'],
+                       'rate': float(a.get('rate', 0.1)),
+                       'sign': 1 if a.get('sign', 1) >= 0 else -1}
+                for key in ('color', 'label'):
+                    if a.get(key):
+                        att[key] = a[key]
+                for key in ('linewidth_mult', 'label_size_mult'):
+                    if a.get(key) is not None:
+                        att[key] = float(a[key])
+                attachments.append(att)
             port = {
                 'port_id': int(pdata['port_id']),
                 'label': pdata.get('label', f"P{pdata['port_id']}"),
