@@ -39,6 +39,18 @@
   steps; angle persists in .pgraph).
 - [ ] GUI conveniences still deferred: ghost placement previews for
   ports/lines, port glyphs in clipboard copy/paste.
+- [ ] **Pumped line termination (gain)** — derivation note in
+  `docs/pumped_line_termination.md` (numbers reproduced by
+  `misc/pumped_termination_checks.py`): the modulated inductor is a rank-one
+  parametric block g g^T between the comb and its conjugate twin (the twin of
+  the rank-one port damper); one pump drives amplification AND conversion
+  pairs through the same block; Manley-Rowe verified to 3e-14 on the oracle;
+  an inductive termination DISPERSES the comb (cot(kl) = wL/Ztx), so the macro
+  needs loaded-line roots, not n*FSR. Plan: macro emission (signal comb +
+  hollow conjugate twin + one double-line pump bus + per-sector ports; the
+  attached mockup), then pin the a-basis normalization of g g^T against
+  build_galvanic + hb_signal_idler in the overlapping regime; det-M stability
+  is a prerequisite.
 - [ ] **Pumped taps** (conversion-type pumping of a line-end tap):
   mechanically the pipeline already computes it — the tap fan-out edges are
   ordinary edges, and a probe with f_p injected on them ran frame-consistent
