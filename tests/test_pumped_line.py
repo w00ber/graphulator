@@ -405,38 +405,66 @@ def test_pump_rate_normalization_matches_oracle(para):
 # Pump-bus stroke count (PRXQ visual language, docs sec. 7.6)
 # ---------------------------------------------------------------------------
 
-def test_pump_bus_families_and_stroke_count(para):
-    """A single line is conversion, a double amplification; a pump bus draws
-    their union, so the stroke count IS the diagnosis. Comb here: FSR = 1.5,
-    N = 4, so harmonics 1.5 .. 6.0."""
+def test_pump_bus_always_draws_three_strokes(para):
+    """The bus draws the UNION of the families, always.
+
+    Computing the count instead would claim selectivity the device does not
+    have (on a harmonic comb both families are satisfied together) and would
+    in fact be measuring f_max: the test below shows the same line and pump
+    changing "reachability" purely because the comb was truncated shorter.
+    """
     from graphulator.para_features.explicit_ports import PUMP_BUS_STROKES
+    assert PUMP_BUS_STROKES == 3
+
     gp, win, config = para
     line = win.add_line_resonator(label='TL1', pos=(0.0, 2.0), FSR=1.5,
                                   Ztx=65.0, f_max=6.0, port_end='xL')
     win.set_line_pump(line, 'x0', f_p=9.0, rate=0.05, n_ref=3,
                       twin_pos=(0.0, -2.0))
-
-    cases = {
-        # f_p below twice the fundamental: nothing sums into the band, but
-        # f_p + f_m does land there -> conversion only
-        1.5: ({'conversion'}, 1),
-        # 1.5+3 = 4.5 sums in AND 6-1.5 = 4.5 differs in -> both
-        4.5: ({'amplification', 'conversion'}, 3),
-        # 9-3 = 6 and 9-4.5 = 4.5 sum in; 9+f_m is always above 6 -> amp only
-        9.0: ({'amplification'}, 2),
-        # beyond everything reachable
-        20.0: (set(), 1),
-    }
-    for f_p, (expected_fams, expected_strokes) in cases.items():
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    for f_p in (1.5, 4.5, 9.0, 20.0):
         line['pump']['f_p'] = f_p
-        fams = win.pump_bus_families(line)
-        assert fams == expected_fams, (f_p, fams)
-        assert PUMP_BUS_STROKES[frozenset(fams)] == expected_strokes, f_p
+        fig, ax = plt.subplots()
+        win._draw_ports_and_lines(ax=ax)
+        buses = [ln for ln in ax.lines
+                 if len(ln.get_xdata()) == len(win._pump_bus_wire(line))]
+        assert len(buses) >= 3, (f_p, len(buses))
+        plt.close(fig)
 
-    # an unpumped line has no bus at all
+
+def test_pump_truncation_gaps_flag_f_max_not_the_device(para):
+    """The reachability test measures the TRUNCATION, so it is reported as a
+    'raise f_max' warning rather than driving the glyph."""
+    gp, win, config = para
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 2.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL')
+    win.set_line_pump(line, 'x0', f_p=9.0, rate=0.05, n_ref=3,
+                      twin_pos=(0.0, -2.0))
+    # comb reaches 6.0; the nearest conversion partner is 9 + 1.5 = 10.5,
+    # outside it, so the model has NO conversion pair at all
+    assert win.pump_truncation_gaps(line) == {'conversion'}
+
+    # the SAME device modelled with a longer comb has no gap: 10.5 = 7 x FSR
+    # is a real mode the short comb merely omitted
+    line['f_max'] = 18.0
+    win._sync_all_twins()
+    assert win.pump_truncation_gaps(line) == set()
+
+    # a pump beyond twice the last harmonic loses amplification too
+    line['f_max'] = 6.0
+    line['pump']['f_p'] = 40.0
+    assert win.pump_truncation_gaps(line) == {'amplification', 'conversion'}
+    # ... but a pump below twice the FUNDAMENTAL has no amplification pair in
+    # the line either, so that is a real absence and not flagged
+    line['pump']['f_p'] = 1.0
+    assert 'amplification' not in win.pump_truncation_gaps(line)
+
+    # an unpumped line has nothing to report
     other = win.add_line_resonator(label='TL2', pos=(9.0, 0.0), FSR=1.0,
                                    Ztx=65.0, f_max=4.0, port_end=None)
-    assert win.pump_bus_families(other) == set()
+    assert win.pump_truncation_gaps(other) == set()
     assert win._pump_bus_wire(other) is None
 
 

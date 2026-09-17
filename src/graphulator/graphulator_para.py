@@ -3741,11 +3741,20 @@ class PropertiesPanel(QWidget):
         self._add_wire_appearance_rows(form, pump, PUMP_BUS_COLOR)
         self.properties_layout.addLayout(form)
 
-        info = QLabel(
-            "One rank-one parametric block between the comb and its "
-            "conjugate twin (docs/pumped_line_termination.md): amplification "
-            "AND conversion pairs, all from this pump. The DC comb mode is "
-            "excluded, as for taps.")
+        text = ("One rank-one parametric block between the comb and its "
+                "conjugate twin (docs/pumped_line_termination.md): "
+                "amplification AND conversion pairs, all from this pump \u2014 "
+                "on a harmonic comb they come together, which is why the bus "
+                "draws three strokes rather than claiming one or the other. "
+                "The DC comb mode is excluded, as for taps.")
+        gaps = g.pump_truncation_gaps(line)
+        if gaps:
+            text += ("\n\nf_max is too small for this pump: the "
+                     + " and ".join(sorted(gaps))
+                     + " partners fall beyond the last comb harmonic, so "
+                       "they are missing from the model though not from the "
+                       "line. Raise f_max on " + line['label'] + ".")
+        info = QLabel(text)
         info.setWordWrap(True)
         info.setStyleSheet("color: #666; font-style: italic;")
         self.properties_layout.addWidget(info)
@@ -4729,8 +4738,15 @@ class PropertiesPanel(QWidget):
                     f"f_p={pump['f_p']:g}, rate={pump['rate']*1000:.3g} mau "
                     f"@ ({n_ref},{m_ref})")
                 lab.setStyleSheet("color: dimgray;")
-                lab.setToolTip("Pumped termination (select the double-line "
-                               "bus on the canvas to edit).")
+                tip = ("Pumped termination (select the triple-line bus on "
+                       "the canvas to edit).")
+                gaps = g.pump_truncation_gaps(line)
+                if gaps:
+                    lab.setText(lab.text() + "  \u26a0 f_max low")
+                    tip += ("\nf_max is too small for this pump: "
+                            + " and ".join(sorted(gaps))
+                            + " partners fall outside the modelled comb.")
+                lab.setToolTip(tip)
                 self.ports_param_layout.addWidget(lab, row, 0, 1, 4)
                 row += 1
             for end in ('x0', 'xL'):

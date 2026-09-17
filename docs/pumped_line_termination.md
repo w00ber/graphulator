@@ -464,29 +464,43 @@ convergence test above as its gate; expose the "solve FSR for a target loaded
 resonance" helper from §7.3 in the line and pump dialogs; leave the capacitive
 load refused with a message pointing here until its direct term is understood.
 
-### 7.6 Visual language: how many strokes?
+### 7.6 Visual language: the bus is always three strokes
 
 The PRXQ graph language reserves a **single line** for conversion
 (beam-splitter) coupling and a **double line** for amplification (two-mode
-squeezing). A pump bus is ambiguous under that scheme because one pump on a comb
-can drive either or both — and silently getting conversion when you meant only
-to amplify is a common and costly surprise.
+squeezing). A pump bus is neither: one pump on a comb drives both families at
+once through the same rank-one block (§2), and silently getting conversion when
+you only meant to amplify is a common and costly surprise. So the bus draws the
+**union — three strokes, always**.
 
-Resolution: the bus draws the **union**, so the stroke count *is* the diagnosis.
+It is tempting to *compute* the count instead, showing one or two strokes when
+only one family is "reachable". That was the first design here and it is wrong,
+for two reasons:
 
-| families reachable in band | strokes |
-|---|---|
-| conversion only | 1 |
-| amplification only | 2 |
-| both | 3 |
-| neither (no resonant partner) | 1, labelled *no resonant pair* |
+1. **On a harmonic comb the families come together.** $\omega_n + \omega_m = \omega_p$
+   and $|\omega_n - \omega_m| = \omega_p$ are satisfied by many pairs
+   simultaneously (§4). Separating them takes deliberate dispersion engineering
+   — a stepped-impedance resonator, or the loaded-line dispersion of this
+   section — and at $\kappa \sim \mathrm{FSR}$ a near-resonant partner is
+   within a linewidth regardless. A glyph that reports selectivity the device
+   does not have is exactly the error the triple line exists to prevent.
+2. **A band-edge reachability test measures $f_\mathrm{max}$, not the device.**
+   Worse than imprecise: it is not about the physical line at all. With
+   $\mathrm{FSR} = 1.5$ and $f_p = 9$, the same line and pump report
 
-This keeps every existing meaning — one stroke still reads "conversion", two
-still reads "amplification" — and makes three mean exactly "both at once",
-rather than introducing an unrelated symbol. It is computed, not declared: a
-signal at $\omega$ pairs with the twin's $+m$ member at $\omega = \omega_p - \omega_m$
-(amplification) and with its $-m$ member at $\omega = \omega_p + \omega_m$
-(conversion), and a family counts when some partner lands the signal inside the
-comb band. So a pump below twice the fundamental cannot amplify at all (one
-stroke), and the bus label carries the same verdict in words
-(`amp`, `conv`, `amp+conv`). See `pump_bus_families`.
+   | $f_\mathrm{max}$ | 6.0 ($N{=}4$) | 9.0 ($N{=}6$) | 12.0 ($N{=}8$) | 18.0 ($N{=}12$) |
+   |---|---|---|---|---|
+   | families "reachable" | amp | amp | amp + conv | amp + conv |
+
+   because the conversion partners at $f_p + f_m = 10.5, 12, \dots$ are *real
+   modes of the line* ($10.5 = 7\times\mathrm{FSR}$) that a short comb merely
+   omits. Nothing about the device changed between those columns.
+
+What that test *is* good for is the question it actually answers: **is
+$f_\mathrm{max}$ big enough for this pump?** `pump_truncation_gaps` reports a
+family when the truncated comb holds **no** partner for it while the line does
+— conversion when $f_p + \mathrm{FSR} > N\,\mathrm{FSR}$, amplification when
+$f_p > 2N\,\mathrm{FSR}$ (a pump below $2\,\mathrm{FSR}$ has no amplification
+pair in the line either, so that is a real absence and is not flagged). It
+surfaces as a "raise f_max" warning on the bus's Properties page and in the
+Ports & Lines row, never as a change to the glyph.

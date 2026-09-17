@@ -109,18 +109,24 @@ WIRE_COLOR_TAP = 'teal'             # conservative node tap
 WIRE_LINEWIDTH = 1.4                # data-unit base, scaled by linewidth_mult
 PUMP_BUS_COLOR = 'black'            # the pump bus (crosses sectors)
 
-# Stroke count of a pump bus, in the PRXQ visual language: a SINGLE line is
-# conversion (beam-splitter) coupling and a DOUBLE line is amplification
-# (two-mode squeezing). One pump on a comb can reach either or both, so the
-# bus draws their union -- three strokes when it carries both, which is the
-# case that is easy to miss when you only meant to amplify. An empty set
-# (no resonant partner in band) still draws one stroke.
-PUMP_BUS_STROKES = {
-    frozenset(): 1,
-    frozenset({'conversion'}): 1,
-    frozenset({'amplification'}): 2,
-    frozenset({'amplification', 'conversion'}): 3,
-}
+# Stroke count of a pump bus. The PRXQ visual language reserves a SINGLE line
+# for conversion (beam-splitter) coupling and a DOUBLE line for amplification
+# (two-mode squeezing); a pump bus is neither, because ONE pump on a comb
+# drives both families at once through the same rank-one block (sec. 2 of
+# docs/pumped_line_termination.md). It therefore draws three strokes -- the
+# union -- ALWAYS.
+#
+# It is tempting to compute the count instead, showing 1 or 2 when only one
+# family is "reachable". Don't: on a harmonic comb the two families are
+# satisfied together (the self-phase-matching of sec. 4), so separating them
+# takes deliberate dispersion engineering -- a stepped-impedance resonator,
+# or the loaded-line dispersion of sec. 7 -- and claiming selectivity the
+# device does not have is exactly the error the triple line exists to
+# prevent. Worse, a reachability test keyed on the comb's band edge measures
+# f_max (a modelling choice) rather than the device: the same line and pump
+# flip from "amplification only" to "both" when f_max is raised, because the
+# conversion partners were real modes the short comb simply omitted.
+PUMP_BUS_STROKES = 3
 
 
 def _line_extractor_id(line):
@@ -1606,34 +1612,38 @@ class ExplicitPortsMixin:
         return bool(primary and primary.get('pump')
                     and primary['pump'].get('end') == end)
 
-    def pump_bus_families(self, line):
-        """Which parametric families this pump actually reaches in-band.
+    def pump_truncation_gaps(self, line):
+        """Families whose partners fall OUTSIDE the truncated comb.
 
-        Returns a set from {'amplification', 'conversion'}. In the two-cluster
-        picture a signal at omega pairs with the twin's +m member at
-        omega = f_p - f_m (sum-frequency: amplification) and with its -m
-        member at omega = f_p + f_m (difference-frequency: conversion). A
-        family is present when some partner puts the signal inside the comb
-        band -- so a pump below twice the fundamental has no amplification
-        pair at all, and a pump beyond the comb's span has no conversion one.
+        Returns a subset of {'amplification', 'conversion'}: a warning that
+        f_max is too small for this pump, NOT a statement about the device.
+        In the two-cluster picture a signal at omega pairs with the twin's
+        +m member at omega = f_p - f_m (amplification) and with its -m member
+        at omega = f_p + f_m (conversion); when those land beyond the comb's
+        last harmonic the process is missing from the MODEL while remaining
+        perfectly real in the line.
 
-        This is what the bus's stroke count draws (see the PRXQ visual
-        language note in docs/pumped_line_termination.md).
+        This is deliberately not wired to the bus glyph -- see
+        PUMP_BUS_STROKES for why the stroke count must not be computed.
         """
         pump = line.get('pump')
         if not pump:
             return set()
         res = self.line_resonator_for(line)
         f_p = float(pump['f_p'])
-        harmonics = [n * res.FSR for n in range(1, res.N + 1)]
-        lo, hi = res.FSR, res.N * res.FSR
-        families = set()
-        for f_m in harmonics:
-            if lo <= f_p - f_m <= hi:
-                families.add('amplification')
-            if lo <= f_p + f_m <= hi:
-                families.add('conversion')
-        return families
+        lo, hi = res.FSR, res.N * res.FSR          # first and last harmonic
+        gaps = set()
+        # Amplification needs a pair summing to f_p with BOTH members in the
+        # comb: f_m in [f_p - hi, f_p - lo] must meet [lo, hi]. Below 2*lo no
+        # such pair exists in the line either, so that is a real absence, not
+        # a truncation gap.
+        if f_p >= 2 * lo and f_p > 2 * hi:
+            gaps.add('amplification')
+        # Conversion needs f_p + f_m <= hi for some m; the line always has
+        # such a mode, so failing here is purely the truncation.
+        if f_p + lo > hi:
+            gaps.add('conversion')
+        return gaps
 
     def _pump_bus_wire(self, line):
         """Sampled wire of the pump bus from `line`'s pumped end into its
@@ -2919,17 +2929,12 @@ class ExplicitPortsMixin:
             pump = line['pump']
             selected = line in getattr(self, 'selected_pump_buses', [])
             color, lw = self.wire_style(pump, PUMP_BUS_COLOR)
-            n_strokes = PUMP_BUS_STROKES[
-                frozenset(self.pump_bus_families(line))]
-            self._draw_multi_wire(ax, pts, n_strokes, color, lw,
+            self._draw_multi_wire(ax, pts, PUMP_BUS_STROKES, color, lw,
                                   selected=selected, zorder=4)
             n_ref, m_ref = self._pump_reference_pair(line)
-            tag = {1: 'conv', 2: 'amp', 3: 'amp+conv'}.get(n_strokes, '')
-            if not self.pump_bus_families(line):
-                tag = 'no resonant pair'
             self._draw_wire_label(
                 ax, pts, pump, ppdu, color,
-                fallback=f"f_p={pump['f_p']:g}  ({n_ref},{m_ref})  {tag}")
+                fallback=f"f_p={pump['f_p']:g}  ({n_ref},{m_ref})")
 
     # ---- serialization fragments ----
 

@@ -153,16 +153,20 @@
   use it, hand-drawn edges keep the heuristic.
 
 ### Added (continued)
-  - **Pump bus stroke count.** In the PRXQ visual language a single line is
-    conversion (beam-splitter) coupling and a double line is amplification
-    (two-mode squeezing); one pump on a comb can drive either or both, so the
-    bus now draws their union and the stroke count is the diagnosis:
-    1 = conversion only, 2 = amplification only, 3 = both (label: `conv`,
-    `amp`, `amp+conv`). It is computed, not declared — a family counts when
-    some partner lands the signal inside the comb band — so a pump below
-    twice the fundamental cannot amplify and says so, and silently getting
-    conversion when you only meant to amplify is now visible. See
-    `pump_bus_families` and `docs/pumped_line_termination.md` §7.6.
+  - **Pump bus: three strokes.** In the PRXQ visual language a single line
+    is conversion (beam-splitter) coupling and a double line is amplification
+    (two-mode squeezing). A pump bus is neither — one pump on a comb drives
+    both families at once through the same rank-one block — so it draws their
+    union, three strokes, always. Deliberately NOT computed per graph: on a
+    harmonic comb the two families are satisfied together (separating them
+    needs real dispersion engineering), and a band-edge reachability test
+    measures `f_max` rather than the device — the same line and pump flip
+    from "amplification only" to "both" when `f_max` is raised, because the
+    conversion partners were real modes the short comb omitted. That test is
+    kept for the question it does answer: `pump_truncation_gaps` warns when
+    the comb holds no partner for a family the line has, surfaced as a "raise
+    f_max" note in the bus Properties page and the Ports & Lines row. See
+    `docs/pumped_line_termination.md` §7.6.
   - Phase-2 items are explicitly blocked pending derivations (complex /
     mixed-sector hub weights, band-limited combs, two-port lines,
     frequency-dependent weights); attachments enforce real signed weights
