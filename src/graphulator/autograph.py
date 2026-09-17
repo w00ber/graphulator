@@ -112,6 +112,7 @@ def pgraph_line_to_resonator(line_data) -> "LineResonator":
         port_end=line_data.get('port_end'),
         Z0_port=float(line_data.get('Z0_port', 50.0)),
         alpha_uniform=float(line_data.get('alpha_uniform', 0.0)),
+        conj=bool(line_data.get('conj', False)),
     )
 
 # ---------------------------------------------------------------------------
@@ -365,6 +366,12 @@ class LineResonator:
     port_end: Optional[str] = None
     Z0_port: float = 50.0
     alpha_uniform: float = 0.0
+    #: Emit the comb in the CONJUGATE sector (the idler twin of a pumped
+    #: line). Same frequencies and couplings; every expanded node carries
+    #: conj=True, so pump edges from a normal comb land cross-sector and a
+    #: hub on this comb stays single-sector (a resistor does not convert
+    #: frequency: one hub column per sector).
+    conj: bool = False
 
     def __post_init__(self):
         if self.port_end not in _LINE_PORT_ENDS:
@@ -533,7 +540,7 @@ class LineResonator:
                 'node_id': self.mode_node_id(k),
                 'label': f"{self.label}:n{k}",
                 'pos': (float(i), -2.0),
-                'conj': False,
+                'conj': bool(self.conj),
                 'freq': float(freqs[i]),
                 'B_int': float(B_int),
                 'B_ext': None,
@@ -558,6 +565,7 @@ class LineResonator:
         return {
             'line_id': self.line_id,
             'label': self.label,
+            'conj': bool(self.conj),
             'FSR': self.FSR,
             'Ztx': self.Ztx,
             'f_max': self.f_max,
@@ -572,7 +580,7 @@ def _normalize_line(line) -> "LineResonator":
     if isinstance(line, LineResonator):
         return line
     kwargs = {k: line[k] for k in ('line_id', 'FSR', 'Ztx', 'f_max')}
-    for k in ('label', 'port_end', 'Z0_port', 'alpha_uniform'):
+    for k in ('label', 'port_end', 'Z0_port', 'alpha_uniform', 'conj'):
         if k in line and line[k] is not None:
             kwargs[k] = line[k]
     return LineResonator(**kwargs)
@@ -894,6 +902,11 @@ class GraphExtractor:
         self._unique_labels = True  # Flag indicating if all node labels are unique
         self._duplicate_labels = {}  # Dict mapping duplicate labels to list of node_ids
         self._hub_link_pairs = set()  # zero-offset tree links across shared hubs
+        # Optional per-edge frame rule ('sector': crossing INTO the conjugate
+        # sector is -f_p, out of it +f_p), keyed by _edge_key. Macro-emitted
+        # pump buses set it; hand-drawn edges keep the frequency-ordering
+        # heuristic in _compute_accumulated_frequencies.
+        self._edge_frame_rules = {}
         self.label_to_node_id = None  # Mapping from label to node_id (only if labels are unique)
         self.node_id_to_label = {}  # Mapping from node_id to label (always available)
 
@@ -1130,6 +1143,10 @@ class GraphExtractor:
                 edge_data['f_p'] = params.get('f_p', None)
                 edge_data['rate'] = params.get('rate', None)
                 edge_data['phase'] = params.get('phase', None)
+                rule = params.get('frame_rule')
+                if rule is not None:
+                    edge_data['frame_rule'] = rule
+                    self._edge_frame_rules[_edge_key(from_id, to_id)] = rule
 
             extracted_edges.append(edge_data)
 
@@ -1142,6 +1159,9 @@ class GraphExtractor:
         # frames are never rerouted.
         real_pairs = [(e['from_node_id'], e['to_node_id'])
                       for e in extracted_edges if not e['is_self_loop']]
+        self._edge_frame_rules = {
+            _edge_key(e['from_node_id'], e['to_node_id']): e['frame_rule']
+            for e in extracted_edges if e.get('frame_rule') is not None}
         self._hub_link_pairs = set(compute_hub_bridge_links(
             node_id_set, real_pairs,
             [[a[0] for a in h['attachments']] for h in normalized_hubs]))
@@ -1462,9 +1482,15 @@ class GraphExtractor:
             adjacency[from_id].add((to_id, edge_key))
             adjacency[to_id].add((from_id, edge_key))
 
-        # DFS to build spanning tree, grouped by branches
+        # DFS to build spanning tree, grouped by branches.
+        # Branch entries are ORIENTED (parent, child) pairs in traversal
+        # order: _compute_accumulated_frequencies credits each hop's pump
+        # offset to the child, so the stored orientation must be the
+        # traversal, not the canonical (sorted) edge key. Edge keys are kept
+        # alongside only for the chord bookkeeping.
         visited = set()
-        tree_branches = []  # List of branches, each branch is a list of edges
+        tree_branches = []  # List of branches, each branch is a list of (parent, child)
+        tree_edge_keys = set()
         chord_edge_keys = []
 
         def dfs_branch(node_id, current_branch):
@@ -1486,9 +1512,8 @@ class GraphExtractor:
             # Mark chord edges (edges to already-visited nodes)
             for neighbor_id, edge_key in adjacency[node_id]:
                 if neighbor_id in visited and edge_key not in chord_edge_keys:
-                    # Check if this edge is not already in any branch
-                    edge_in_tree = any(edge_key in branch for branch in tree_branches)
-                    if not edge_in_tree and edge_key not in [e for edges in [current_branch] for e in edges]:
+                    # Check if this edge is not already in the tree
+                    if edge_key not in tree_edge_keys:
                         chord_edge_keys.append(edge_key)
 
             if len(unvisited_neighbors) == 0:
@@ -1500,7 +1525,8 @@ class GraphExtractor:
             elif len(unvisited_neighbors) == 1:
                 # Linear continuation - add to current branch
                 neighbor_id, edge_key = unvisited_neighbors[0]
-                current_branch.append(edge_key)
+                current_branch.append((node_id, neighbor_id))
+                tree_edge_keys.add(edge_key)
                 dfs_branch(neighbor_id, current_branch)
 
             else:
@@ -1513,7 +1539,8 @@ class GraphExtractor:
                 # BUT: check if still unvisited (might have been visited by previous neighbor's DFS)
                 for neighbor_id, edge_key in unvisited_neighbors:
                     if neighbor_id not in visited:  # Re-check: might have been visited by earlier neighbor
-                        new_branch = [edge_key]
+                        new_branch = [(node_id, neighbor_id)]
+                        tree_edge_keys.add(edge_key)
                         dfs_branch(neighbor_id, new_branch)
 
         # Start DFS from root with empty branch
@@ -1526,8 +1553,8 @@ class GraphExtractor:
             unreached = [node['node_id'] for node in nodes if node['node_id'] not in visited]
             logger.warning("Graph is disconnected. Unreached nodes: %s", unreached)
 
-        # Convert edge keys back to [from_id, to_id] lists, nested by branch
-        tree_edges = [[list(key) for key in branch] for branch in tree_branches]
+        # Oriented [parent, child] lists, nested by branch; chords by key
+        tree_edges = [[list(pair) for pair in branch] for branch in tree_branches]
         chord_edges = [list(key) for key in chord_edge_keys]
 
         return tree_edges, chord_edges, is_connected
@@ -1786,9 +1813,24 @@ class GraphExtractor:
 
             # Accumulate along the branch
             for from_id, to_id, f_p in branch:
+                rule = self._edge_frame_rules.get(_edge_key(from_id, to_id))
                 if self.sign_override:
                     # User provided signed f_p, use as-is
                     signed_f_p = f_p if f_p is not None else 0.0
+                elif rule == 'sector' and f_p is not None:
+                    # Explicit sector rule (pump buses): a sum-frequency
+                    # process puts the whole conjugate cluster in the frame
+                    # f_p - omega, i.e. -f_p going INTO the conjugate sector
+                    # and +f_p coming out, whatever the members' natural
+                    # frequencies (a +-n comb defeats the ordering heuristic)
+                    from_conj = node_info[from_id]['conj']
+                    to_conj = node_info[to_id]['conj']
+                    if to_conj and not from_conj:
+                        signed_f_p = -f_p
+                    elif from_conj and not to_conj:
+                        signed_f_p = +f_p
+                    else:
+                        signed_f_p = _determine_fp_sign(from_id, to_id, f_p)
                 else:
                     # Automatically compute sign based on effective frequency
                     signed_f_p = _determine_fp_sign(from_id, to_id, f_p)
@@ -2445,6 +2487,11 @@ class GraphScatteringMatrix:
 
             # drive_signals holds the (N,) array f_root_s + f_offset per node;
             # single-node case: node absent from drive_signals uses f_root_s directly
+            if node_id not in self.drive_signals and self.num_modes > 1:
+                logger.warning(
+                    "Node %r has no drive frame (unreached by the spanning "
+                    "tree); using the root drive. Check graph connectivity.",
+                    node_id)
             f_drive = self.drive_signals.get(node_id, self.f_root_s)
 
             sign = 1.0 if conj_state else -1.0

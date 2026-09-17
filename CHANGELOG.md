@@ -103,6 +103,41 @@
     survive: gray for an attachment, firebrick plus a `−` mark when the
     sign is inverted, teal for a tap (labelled `n=…` until the user sets
     a label).
+  - **Pumped line termination (gain).** A line end can carry a modulated
+    element pumped at f_p (right-click → *Add pumped termination…*): the app
+    creates a linked **conjugate twin** glyph (the same line in the idler
+    sector — own layout, mirrored physics, its own port glyphs) and one
+    **double-line pump bus** between the pumped ends, which expands at
+    extraction into the rank-one parametric block g gᵀ of the end profile
+    (`docs/pumped_line_termination.md`). The rate is defined at a reference
+    pair (n_ref, its idler partner), with the inductive (or capacitive)
+    envelope for every other pair; the bus is selectable, editable in the
+    Properties panel, serialized, exported, and deleting the twin un-pumps
+    the line. Verified: the block is rank one; the pumped graph is
+    pseudo-unitary (|S_ss|² − |S_is|² = 1 to 1e-15) with real gain; and the
+    normalization rate = 2·FSR·g/π (g from the circuit model) reproduces
+    the oracle's gain and idler lineshapes to 3e-3 in the isolated-mode
+    regime and 3e-2 at a matched port, the residuals being the excluded DC
+    mode and the missing comb tail closure. Node taps on a pumped line are
+    refused for now. `LineResonator` gained `conj`.
+
+### Fixed
+- Core: spanning-tree edges were stored as the canonically *sorted* pair
+  while the frame accumulation read them as parent→child, so any hop
+  traversed toward a smaller (or lexically earlier) id credited its pump
+  offset to the parent and left the child with no frame — silently
+  falling back to the root drive. Static graphs were unaffected (every
+  offset is zero) and graphs rooted at their lowest id were as well, which
+  is why it went unnoticed; a pumped comb of string ids exposed it. Tree
+  edges are now oriented by traversal, and a node left without a frame is
+  logged instead of defaulted.
+- Core: pumped edges are oriented by comparing the endpoints' natural
+  frequencies, which cannot handle a conjugate comb's negative-frequency
+  members. Edges may now carry an explicit `frame_rule='sector'`
+  (crossing into the conjugate sector is −f_p); macro-emitted pump buses
+  use it, hand-drawn edges keep the heuristic.
+
+### Added (continued)
   - Phase-2 items are explicitly blocked pending derivations (complex /
     mixed-sector hub weights, band-limited combs, two-port lines,
     frequency-dependent weights); attachments enforce real signed weights

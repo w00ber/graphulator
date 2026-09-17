@@ -39,18 +39,19 @@
   steps; angle persists in .pgraph).
 - [ ] GUI conveniences still deferred: ghost placement previews for
   ports/lines, port glyphs in clipboard copy/paste.
-- [ ] **Pumped line termination (gain)** — derivation note in
-  `docs/pumped_line_termination.md` (numbers reproduced by
-  `misc/pumped_termination_checks.py`): the modulated inductor is a rank-one
-  parametric block g g^T between the comb and its conjugate twin (the twin of
-  the rank-one port damper); one pump drives amplification AND conversion
-  pairs through the same block; Manley-Rowe verified to 3e-14 on the oracle;
-  an inductive termination DISPERSES the comb (cot(kl) = wL/Ztx), so the macro
-  needs loaded-line roots, not n*FSR. Plan: macro emission (signal comb +
-  hollow conjugate twin + one double-line pump bus + per-sector ports; the
-  attached mockup), then pin the a-basis normalization of g g^T against
-  build_galvanic + hb_signal_idler in the overlapping regime; det-M stability
-  is a prerequisite.
+- [x] **Pumped line termination (gain)** SHIPPED as a macro: linked
+  conjugate twin + one double-line pump bus = the rank-one block g g^T
+  (`docs/pumped_line_termination.md`). Normalization pinned against
+  build_galvanic + hb_signal_idler: rate = 2 FSR g / pi. Two core bugs fixed
+  on the way (sorted-vs-traversal tree orientation; explicit 'sector' frame
+  rule for pump edges onto a +-n comb).
+  - Remaining: loaded-line roots (the inductive termination disperses the
+    comb, sec. 4 of the note); the DC mode's pumped coupling (needs the
+    loaded omega_0; today it is the 2e-3 residual floor vs the oracle);
+    tail closure (the 3e-2 residual at a matched port); taps on a pumped
+    line (the tapped mode needs its own idler copy — same open question as
+    "is the same port connected to signal and conjugate?"); the det-M
+    stability flag (the near-threshold row in the note's table).
 - [ ] **Pumped taps** (conversion-type pumping of a line-end tap):
   mechanically the pipeline already computes it — the tap fan-out edges are
   ordinary edges, and a probe with f_p injected on them ran frame-consistent

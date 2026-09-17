@@ -130,6 +130,18 @@ def scene_node_2lines_tap():
     save(win, "NODE_2LINES_TAP")
 
 
+def scene_line_pumped():
+    # a line terminated in a modulated inductor at x0, port at xL: the
+    # conjugate twin, its own port and the rank-one pump bus are all
+    # created by set_line_pump (docs/pumped_line_termination.md)
+    win = fresh_window()
+    tl = win.add_line_resonator(label='TL1', pos=(0.0, 2.0), FSR=1.5,
+                                Ztx=65.0, f_max=6.0, port_end='xL')
+    win.set_line_pump(tl, 'x0', f_p=9.0, rate=0.05, n_ref=3,
+                      twin_pos=(0.0, -2.0))
+    save(win, "LINE_PUMPED_TERMINATION")
+
+
 if __name__ == '__main__':
     os.makedirs(OUT_DIR, exist_ok=True)
     print("Generating test scenes:")
@@ -140,4 +152,5 @@ if __name__ == '__main__':
     scene_port_shared_2lines()
     scene_line_tap_2nodes()
     scene_node_2lines_tap()
+    scene_line_pumped()
     print("done.")

@@ -68,7 +68,8 @@ import matplotlib.transforms as mtransforms
 
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QVBoxLayout,
                                QFormLayout, QLabel, QLineEdit, QCheckBox,
-                               QComboBox, QMessageBox, QDoubleSpinBox)
+                               QComboBox, QMessageBox, QDoubleSpinBox,
+                               QSpinBox, QHBoxLayout)
 
 from ..autograph import LineResonator
 
@@ -106,6 +107,7 @@ WIRE_COLOR = 'dimgray'
 WIRE_COLOR_INVERTED = 'firebrick'   # default for a sign = -1 attachment
 WIRE_COLOR_TAP = 'teal'             # conservative node tap
 WIRE_LINEWIDTH = 1.4                # data-unit base, scaled by linewidth_mult
+PUMP_BUS_COLOR = 'black'            # the double-line pump bus (crosses sectors)
 
 
 def _line_extractor_id(line):
@@ -168,7 +170,15 @@ def line_payload(line):
         'port_end': None,
         'Z0_port': float(line.get('Z0_port', 50.0)),
         'alpha_uniform': float(line.get('alpha_uniform', 0.0)),
+        'conj': bool(line.get('conj', False)),
     }
+
+
+# Physics fields a pumped line's conjugate twin mirrors from its primary.
+# The twin is the SAME physical line seen in the idler sector, so it owns
+# only its layout (pos, angle, style) and its own end connections.
+TWIN_MIRRORED_KEYS = ('FSR', 'Ztx', 'f_max', 'Z0_port', 'alpha_uniform')
+PUMP_COUPLINGS = ('inductive', 'capacitive')
 
 
 def _color_button(initial, parent=None):
@@ -468,6 +478,116 @@ class TapInputDialog(QDialog):
                 'sign': self.sign_combo.currentData()}
 
 
+class PumpInputDialog(QDialog):
+    """Pumped termination of a line: which end, pump frequency, coupling
+    rate at the reference pair, pump phase, and the element type."""
+
+    def __init__(self, line_label, N, FSR, end='x0', f_p=None, rate_mau=50.0,
+                 phase=0.0, n_ref=None, coupling='inductive', parent=None,
+                 editing=False):
+        super().__init__(parent)
+        self.setWindowTitle(("Edit" if editing else "Add")
+                            + f" pumped termination of {line_label}")
+        self.N, self.FSR = int(N), float(FSR)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        self.end_combo = QComboBox()
+        self.end_combo.addItem("x = 0 (all-plus signs)", 'x0')
+        self.end_combo.addItem("x = L (alternating signs)", 'xL')
+        self.end_combo.setCurrentIndex(0 if end == 'x0' else 1)
+        self.end_combo.setToolTip(
+            "The end carrying the modulated element. Its mode profile "
+            "u_n(end) sets the sign pattern of the rank-one pump block.")
+        form.addRow("Pumped end:", self.end_combo)
+
+        self.fp_spin = QDoubleSpinBox()
+        self.fp_spin.setRange(1e-9, 1e9)
+        self.fp_spin.setDecimals(4)
+        self.fp_spin.setSingleStep(0.1)
+        self.fp_spin.setValue(float(f_p) if f_p is not None
+                              else 2.0 * self.FSR * max(1, self.N // 2))
+        self.fp_spin.setToolTip(
+            "Pump frequency [a.u.]. Every harmonic pair with "
+            "f_n + f_m = f_p is amplified and every pair with "
+            "|f_n - f_m| = f_p is converted, all through one rank-one block.")
+        form.addRow("Pump frequency f_p:", self.fp_spin)
+
+        self.nref_spin = QSpinBox()
+        self.nref_spin.setRange(1, max(1, self.N))
+        self.nref_spin.setPrefix("n = ")
+        self.partner_label = QLabel()
+        self.partner_label.setStyleSheet("color: #666; font-style: italic;")
+        if n_ref is None:
+            n_ref = int(round(0.5 * self.fp_spin.value() / self.FSR))
+        self.nref_spin.setValue(int(min(max(int(n_ref), 1), max(1, self.N))))
+        self.nref_spin.setToolTip(
+            "Signal harmonic the rate is defined at. Its idler partner is "
+            "the harmonic nearest f_p - n*FSR (shown beside).")
+        nref_row = QHBoxLayout()
+        nref_row.addWidget(self.nref_spin)
+        nref_row.addWidget(self.partner_label)
+        form.addRow("Reference harmonic:", nref_row)
+
+        self.rate_spin = QDoubleSpinBox()
+        self.rate_spin.setRange(0.0, 1e6)
+        self.rate_spin.setDecimals(3)
+        self.rate_spin.setSingleStep(1.0)
+        self.rate_spin.setValue(float(rate_mau))
+        self.rate_spin.setToolTip(
+            "Parametric coupling rate between harmonic n of the line and "
+            "its idler partner m in the twin [milli-arb. units]; every other "
+            "pair follows the verified profile (n m / n_ref m_ref)^(-1/2) "
+            "for an inductive element.")
+        form.addRow("Rate @ (n, m) [mau]:", self.rate_spin)
+
+        self.phase_spin = QDoubleSpinBox()
+        self.phase_spin.setRange(-360.0, 360.0)
+        self.phase_spin.setDecimals(1)
+        self.phase_spin.setSingleStep(15.0)
+        self.phase_spin.setValue(float(phase))
+        self.phase_spin.setSuffix("\N{DEGREE SIGN}")
+        form.addRow("Pump phase:", self.phase_spin)
+
+        self.coupling_combo = QComboBox()
+        self.coupling_combo.addItem(
+            "modulated inductor  (g_n \N{PROPORTIONAL TO} 1/\N{SQUARE ROOT}n)",
+            'inductive')
+        self.coupling_combo.addItem(
+            "modulated capacitor  (g_n \N{PROPORTIONAL TO} \N{SQUARE ROOT}n)",
+            'capacitive')
+        self.coupling_combo.setCurrentIndex(0 if coupling == 'inductive' else 1)
+        form.addRow("Element:", self.coupling_combo)
+
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.fp_spin.valueChanged.connect(lambda _v: self._refresh_partner())
+        self.nref_spin.valueChanged.connect(lambda _v: self._refresh_partner())
+        self._refresh_partner()
+
+    def _refresh_partner(self):
+        n = self.nref_spin.value()
+        f_partner = self.fp_spin.value() - n * self.FSR
+        m = int(min(max(int(round(f_partner / self.FSR)), 1), max(1, self.N)))
+        mismatch = f_partner - m * self.FSR
+        tag = "degenerate" if m == n else f"idler partner m = {m}"
+        self.partner_label.setText(
+            f"{tag}  (f_p \N{MINUS SIGN} f_n = {f_partner:g}; "
+            f"off harmonic by {mismatch:+g})")
+
+    def get_result(self):
+        return {'end': self.end_combo.currentData(),
+                'f_p': self.fp_spin.value(),
+                'rate': self.rate_spin.value() / 1000.0,
+                'phase': self.phase_spin.value(),
+                'n_ref': self.nref_spin.value(),
+                'coupling': self.coupling_combo.currentData()}
+
+
 class AttachmentEditDialog(QDialog):
     """Per-link editor: coupling rate magnitude + sign; phase locked (Phase 2)."""
 
@@ -533,6 +653,7 @@ class ExplicitPortsMixin:
         self.selected_lines = []
         self.selected_attachments = []     # [(port, attachment), ...]
         self.selected_taps = []            # [(line, end, conn), ...]
+        self.selected_pump_buses = []   # lines whose pump bus is selected
         self._attach_pending_port = None   # port awaiting a node click (edge mode)
         self._attach_pending_line_end = None  # (line, end) awaiting a port
         self._place_loss_hub_next = False  # next port placement is a loss hub
@@ -579,13 +700,21 @@ class ExplicitPortsMixin:
                            Ztx=65.0, f_max=10.0, port_end='xL',
                            Z0_port=50.0, alpha_uniform=0.0, angle=0.0,
                            end_coupling=None, w_mult=1.0, h_mult=1.0,
-                           linewidth=None, color='black', fill='#cccccc'):
+                           linewidth=None, color='black', fill='#cccccc',
+                           conj=False, twin_of=None):
         """Create a transmission-line macro glyph."""
         if label is None:
             label = f"TL{self.line_id_counter + 1}"
         line = {
             'line_id': self.line_id_counter,
             'label': label,
+            # pumped termination: {'end', 'f_p', 'rate', 'phase', 'n_ref',
+            # 'coupling', 'twin_id'} or None (see set_line_pump)
+            'pump': None,
+            # the idler-sector twin of a pumped line: conj=True and
+            # twin_of=<primary line_id>; physics mirrored from the primary
+            'conj': bool(conj),
+            'twin_of': twin_of,
             'pos': (float(pos[0]), float(pos[1])),
             'angle': float(angle),
             'w_mult': float(w_mult),
@@ -667,10 +796,20 @@ class ExplicitPortsMixin:
         self._invalidate_scattering_data()
 
     def remove_line_resonator(self, line):
-        if line in self.line_resonators:
-            self.line_resonators.remove(line)
-        if line in self.selected_lines:
-            self.selected_lines.remove(line)
+        # a pumped line takes its twin along; deleting a twin un-pumps its
+        # primary (the twin only exists because of the pump)
+        primary = self.line_primary(line)
+        if primary is not None:
+            primary['pump'] = None
+            self._remove_twin_glyph(line)      # its ports go with it
+        else:
+            twin = self.line_twin(line)
+            if twin is not None:
+                self._remove_twin_glyph(twin)
+            if line in self.line_resonators:
+                self.line_resonators.remove(line)
+            if line in self.selected_lines:
+                self.selected_lines.remove(line)
         self._invalidate_scattering_data()
 
     def _drop_attachments_for_node(self, node_id):
@@ -771,6 +910,7 @@ class ExplicitPortsMixin:
         return payload
 
     def _gui_lines_payload(self, line_ids=None):
+        self._sync_all_twins()
         payload = []
         for line in self.line_resonators:
             if line_ids is not None and line['line_id'] not in line_ids:
@@ -1150,6 +1290,29 @@ class ExplicitPortsMixin:
             self._update_plot()
             return True
 
+        bus_line = self._find_pump_bus_at_position(event.xdata, event.ydata)
+        if bus_line is not None:
+            if is_double:
+                self._edit_pump(bus_line)
+            elif shift_pressed:
+                if bus_line in self.selected_pump_buses:
+                    self.selected_pump_buses.remove(bus_line)
+                else:
+                    self.selected_pump_buses.append(bus_line)
+            else:
+                self.selected_pump_buses = [bus_line]
+                self.selected_ports = []
+                self.selected_lines = []
+                self.selected_attachments = []
+                self.selected_taps = []
+                self.selected_nodes.clear()
+                self.selected_edges.clear()
+                self._status_message(
+                    f"Selected pump bus of '{bus_line['label']}' "
+                    "\N{EM DASH} double-click to edit, D to remove", 6000)
+            self._update_plot()
+            return True
+
         tap_hit = self._find_tap_at_position(event.xdata, event.ydata)
         if tap_hit is not None:
             line, end, conn = tap_hit
@@ -1221,6 +1384,7 @@ class ExplicitPortsMixin:
             self.selected_lines = []
             self.selected_attachments = []
             self.selected_taps = []
+        self.selected_pump_buses = []
         return False
 
     def _maybe_show_glyph_context_menu(self, event):
@@ -1270,6 +1434,18 @@ class ExplicitPortsMixin:
             menu.addAction("Rotate 15\N{DEGREE SIGN} CW  (Ctrl+I)",
                            lambda: self._rotate_selected_glyph(line, -15))
             menu.addSeparator()
+            if line.get('twin_of') is None:
+                menu.addAction(
+                    ("Edit" if line.get('pump') else "Add")
+                    + " pumped termination\N{HORIZONTAL ELLIPSIS}",
+                    lambda: self._edit_pump(line))
+                if line.get('pump'):
+                    menu.addAction("Remove pumped termination",
+                                   lambda: self._remove_pump(line))
+            else:
+                menu.addAction("Edit pump bus\N{HORIZONTAL ELLIPSIS}",
+                               lambda: self._edit_pump(line))
+            menu.addSeparator()
             def explode():
                 self._save_state()
                 self.explode_line_resonator(line)
@@ -1280,6 +1456,16 @@ class ExplicitPortsMixin:
                 self.remove_line_resonator(line)
                 self._update_plot()
             menu.addAction("Delete", delete_line)
+            menu.exec(QCursor.pos())
+            return True
+
+        bus_line = self._find_pump_bus_at_position(event.xdata, event.ydata)
+        if bus_line is not None:
+            menu = QMenu(self)
+            menu.addAction("Edit pump bus\N{HORIZONTAL ELLIPSIS}",
+                           lambda: self._edit_pump(bus_line))
+            menu.addAction("Remove pumped termination",
+                           lambda: self._remove_pump(bus_line))
             menu.exec(QCursor.pos())
             return True
 
@@ -1350,6 +1536,84 @@ class ExplicitPortsMixin:
             if hasattr(self, 'properties_panel'):
                 self.properties_panel._update_scattering_ports_table()
             self._update_plot()
+
+    def _prompt_pump_params(self, line, editing=False):
+        """Seam for tests: returns a PumpInputDialog result dict or None."""
+        pump = line.get('pump') or {}
+        resonator = self.line_resonator_for(line)
+        dialog = PumpInputDialog(
+            line['label'], resonator.N, resonator.FSR,
+            end=pump.get('end', 'x0'), f_p=pump.get('f_p'),
+            rate_mau=pump.get('rate', 0.05) * 1000.0,
+            phase=pump.get('phase', 0.0), n_ref=pump.get('n_ref'),
+            coupling=pump.get('coupling', 'inductive'), parent=self,
+            editing=editing)
+        if dialog.exec() == QDialog.Accepted:
+            return dialog.get_result()
+        return None
+
+    def _edit_pump(self, line):
+        """Add or edit the pumped termination of `line` interactively."""
+        if line.get('twin_of') is not None:
+            line = self.line_primary(line) or line
+        editing = bool(line.get('pump'))
+        result = self._prompt_pump_params(line, editing=editing)
+        if result is None:
+            return
+        self._save_state()
+        try:
+            self.set_line_pump(line, **result)
+        except ValueError as exc:
+            if self.undo_stack:
+                self.undo_stack.pop()
+            QMessageBox.warning(self, "Cannot pump this line", str(exc))
+            return
+        if hasattr(self, 'properties_panel'):
+            self.properties_panel._update_scattering_ports_table()
+        self._update_plot()
+
+    def _remove_pump(self, line):
+        if line.get('twin_of') is not None:
+            line = self.line_primary(line) or line
+        if not line.get('pump'):
+            return
+        self._save_state()
+        self.clear_line_pump(line)
+        self.selected_pump_buses = [l for l in self.selected_pump_buses
+                                    if l is not line]
+        if hasattr(self, 'properties_panel'):
+            self.properties_panel._update_scattering_ports_table()
+        self._update_plot()
+
+    def _end_is_pumped(self, line, end):
+        pump = line.get('pump')
+        if pump and pump.get('end') == end:
+            return True
+        primary = self.line_primary(line)
+        return bool(primary and primary.get('pump')
+                    and primary['pump'].get('end') == end)
+
+    def _pump_bus_wire(self, line):
+        """Sampled wire of the pump bus from `line`'s pumped end into its
+        twin's, or None."""
+        pump = line.get('pump')
+        twin = self.line_twin(line) if pump else None
+        if twin is None:
+            return None
+        end = pump['end']
+        p0, t0 = self._line_end_wire_start(line, end)
+        p1, t1 = self._line_end_wire_start(twin, end)
+        return self._wire_points(p0, t0, p1, -t1)
+
+    def _find_pump_bus_at_position(self, x, y, tol=None):
+        if x is None or y is None:
+            return None
+        tol = tol if tol is not None else 0.45 * self.node_radius
+        for line in self.line_resonators:
+            pts = self._pump_bus_wire(line)
+            if pts is not None and self._dist_to_polyline(x, y, pts) <= tol:
+                return line
+        return None
 
     def _edit_line(self, line):
         dialog = LineInputDialog(line=line, parent=self)
@@ -1499,6 +1763,8 @@ class ExplicitPortsMixin:
             for end in ('x0', 'xL')
             for conn in self._end_conns(line, end)
             if conn.get('kind') == 'node']
+        self.selected_pump_buses = [l for l in self.line_resonators
+                                    if l.get('pump')]
         self._update_plot()
 
     def _rotate_selected_nodes(self, angle_degrees):
@@ -1568,6 +1834,11 @@ class ExplicitPortsMixin:
                 self._invalidate_scattering_data()
                 count += 1
         self.selected_taps = []
+        for line in list(self.selected_pump_buses):
+            if line.get('pump'):
+                self.clear_line_pump(line)
+                count += 1
+        self.selected_pump_buses = []
         for port, att in list(self.selected_attachments):
             if att in port['attachments']:
                 self.remove_port_attachment(port, att['node_id'])
@@ -1761,6 +2032,11 @@ class ExplicitPortsMixin:
         harmonic nearest that mode's assigned frequency.
         """
         node_id = node['node_id'] if isinstance(node, dict) else node
+        if line.get('pump') or line.get('twin_of') is not None:
+            raise ValueError(
+                "Node taps on a pumped line (or its conjugate twin) are not "
+                "supported yet: the tapped mode would need its own conjugate "
+                "copy in the idler sector.")
         line.setdefault('ends', {'x0': [], 'xL': []})
         for e in ('x0', 'xL'):
             line['ends'][e] = self._end_conns(line, e)
@@ -1784,6 +2060,193 @@ class ExplicitPortsMixin:
         line['ends'][end].append(conn)
         self._invalidate_scattering_data()
         return conn
+
+    # ---- pumped termination: linked conjugate twin + rank-one pump bus ----
+
+    def line_twin(self, line):
+        """The conjugate twin of a pumped line (None if unpumped)."""
+        pump = line.get('pump')
+        if not pump:
+            return None
+        return next((l for l in self.line_resonators
+                     if l['line_id'] == pump.get('twin_id')), None)
+
+    def line_primary(self, line):
+        """The primary of a twin line (None if `line` is not a twin)."""
+        if line.get('twin_of') is None:
+            return None
+        return next((l for l in self.line_resonators
+                     if l['line_id'] == line['twin_of']), None)
+
+    def _pump_reference_pair(self, line):
+        """(n_ref, m_ref): the signal harmonic the rate is defined at and
+        its idler partner, the harmonic nearest f_p - n_ref*FSR."""
+        pump = line['pump']
+        resonator = self.line_resonator_for(line)
+        n_ref = int(pump.get('n_ref', 1))
+        f_partner = float(pump['f_p']) - n_ref * resonator.FSR
+        return n_ref, resonator.nearest_harmonic(f_partner)
+
+    def set_line_pump(self, line, end, f_p, rate, phase=0.0, n_ref=None,
+                      coupling='inductive', twin_pos=None):
+        """Terminate `end` of `line` in a modulated element pumped at f_p.
+
+        Physics (docs/pumped_line_termination.md): one element at one
+        point couples through the single scalar Phi(end), so the parametric
+        block between the comb and its conjugate twin is the RANK-ONE outer
+        product g g^T of the end profile, with the inductive envelope
+        g_n ~ u_n(end)/sqrt(n) for a modulated inductor (capacitive for a
+        modulated capacitor). `rate` is the coupling between harmonic n_ref
+        of the line and harmonic m_ref of its twin, m_ref being the harmonic
+        nearest f_p - n_ref*FSR (the idler partner); every other pair
+        follows the verified profile. The DC mode is excluded, as for taps.
+
+        The twin is a real, linked glyph (own position/angle/style, mirrored
+        physics) with its own port glyphs mirroring the primary's
+        terminations: one hub column per sector, since a resistor does not
+        convert frequency.
+        """
+        if line.get('twin_of') is not None:
+            raise ValueError("Pump the primary line, not its conjugate twin.")
+        if end not in ('x0', 'xL'):
+            raise ValueError("end must be 'x0' or 'xL'")
+        if coupling not in PUMP_COUPLINGS:
+            raise ValueError(f"coupling must be one of {PUMP_COUPLINGS!r}")
+        if self._line_tap_node_ids(line):
+            raise ValueError(
+                "A pumped line cannot carry node taps yet: a tapped mode "
+                "would need its own conjugate copy in the idler sector "
+                "(open item: how a shared port drives signal AND conjugate).")
+        resonator = self.line_resonator_for(line)
+        if n_ref is None:
+            n_ref = resonator.nearest_harmonic(0.5 * float(f_p))
+        n_ref = int(min(max(int(n_ref), 1), resonator.N))
+
+        twin = self.line_twin(line)
+        if twin is None:
+            r = self.node_radius
+            if twin_pos is None:
+                lx, ly = line['pos']
+                twin_pos = (lx, ly - 5.0 * r)
+            twin = self.add_line_resonator(
+                label=f"{line['label']}*", pos=twin_pos,
+                angle=line.get('angle', 0.0),
+                FSR=line['FSR'], Ztx=line['Ztx'], f_max=line['f_max'],
+                port_end=None, Z0_port=line.get('Z0_port', 50.0),
+                alpha_uniform=line.get('alpha_uniform', 0.0),
+                end_coupling=dict(line.get('end_coupling') or {}),
+                w_mult=line.get('w_mult', 1.0), h_mult=line.get('h_mult', 1.0),
+                linewidth=line.get('linewidth'), color=line.get('color', 'black'),
+                fill='white', conj=True, twin_of=line['line_id'])
+            # mirror the primary's port terminations: same resistor, one
+            # hub column per sector
+            for e in ('x0', 'xL'):
+                for port in self._line_end_ports(line, e):
+                    offset = self._default_port_offset_for_line(twin)
+                    tx, ty = twin['pos']
+                    theta = np.radians(twin.get('angle', 0.0))
+                    sgn = 1.0 if e == 'xL' else -1.0
+                    ppos = (tx + sgn * offset * np.cos(theta),
+                            ty + sgn * offset * np.sin(theta))
+                    tport = self.add_port(label=f"{port['label']}*",
+                                          pos=ppos,
+                                          monitored=port.get('monitored', True))
+                    self.connect_line_end_to_port(twin, e, tport)
+        line['pump'] = {
+            'end': end, 'f_p': float(f_p), 'rate': float(rate),
+            'phase': float(phase), 'n_ref': n_ref, 'coupling': coupling,
+            'twin_id': twin['line_id'],
+        }
+        self._sync_twin(line)
+        self._invalidate_scattering_data()
+        return twin
+
+    def clear_line_pump(self, line):
+        """Remove the pumped termination and its twin glyph."""
+        twin = self.line_twin(line)
+        line['pump'] = None
+        if twin is not None:
+            self._remove_twin_glyph(twin)
+        self._invalidate_scattering_data()
+
+    def _remove_twin_glyph(self, twin):
+        # the twin's own ports go with it when nothing else uses them
+        for e in ('x0', 'xL'):
+            for port in list(self._line_end_ports(twin, e)):
+                other_users = any(
+                    conn.get('kind') == 'port'
+                    and conn.get('port_id') == port['port_id']
+                    for l in self.line_resonators if l is not twin
+                    for ee in ('x0', 'xL')
+                    for conn in self._end_conns(l, ee))
+                if not port['attachments'] and not other_users:
+                    self.remove_port(port)
+        if twin in self.line_resonators:
+            self.line_resonators.remove(twin)
+        if twin in self.selected_lines:
+            self.selected_lines.remove(twin)
+
+    def _sync_twin(self, line):
+        """Mirror the primary's physics onto its twin (same physical line)."""
+        twin = self.line_twin(line)
+        if twin is None:
+            return
+        for key in TWIN_MIRRORED_KEYS:
+            twin[key] = line[key]
+        twin['end_coupling'] = dict(line.get('end_coupling')
+                                    or {'x0': 'capacitive', 'xL': 'capacitive'})
+        twin['label'] = f"{line['label']}*"
+        twin['conj'] = True
+        twin['twin_of'] = line['line_id']
+
+    def _sync_all_twins(self):
+        for line in self.line_resonators:
+            if line.get('pump'):
+                self._sync_twin(line)
+
+    def _gui_pump_edges(self, line_ids=None):
+        """Synthesized (edge_dict, params) pairs for every pump bus.
+
+        One drawn bus stands for the rank-one block: rate_nm = rate * w_n *
+        w_m with w the end profile relative to the reference pair, phase =
+        pump phase + the sign pattern u_n(end) u_m(end). The extractor sees
+        ordinary pumped edges from the signal comb into the conjugate comb.
+        """
+        out = []
+        for line in self.line_resonators:
+            pump = line.get('pump')
+            if not pump:
+                continue
+            if line_ids is not None and line['line_id'] not in line_ids:
+                continue
+            twin = self.line_twin(line)
+            if twin is None:
+                continue
+            self._sync_twin(line)
+            end = pump['end']
+            n_ref, m_ref = self._pump_reference_pair(line)
+            coupling = pump.get('coupling', 'inductive')
+            res = self.line_resonator_for(line)
+            tres = self.line_resonator_for(twin)
+            sig = res.tap_couplings(end, n_ref, coupling)
+            idl = tres.tap_couplings(end, m_ref, coupling)
+            rate = float(pump['rate'])
+            phase0 = float(pump.get('phase', 0.0))
+            f_p = float(pump['f_p'])
+            for sid, wn, phn in sig:
+                for tid, wm, phm in idl:
+                    edge = {'from_node_id': sid, 'to_node_id': tid,
+                            'is_self_loop': False}
+                    out.append((edge, {'f_p': f_p,
+                                       'rate': rate * wn * wm,
+                                       'phase': (phase0 + phn + phm) % 360.0,
+                                       'frame_rule': 'sector'}))
+        return out
+
+    def _gui_synth_edges(self, line_ids=None, node_ids=None):
+        """All macro-synthesized edges: node taps + pump buses."""
+        return (self._gui_tap_edges(line_ids=line_ids, node_ids=node_ids)
+                + self._gui_pump_edges(line_ids=line_ids))
 
     def _gui_tap_edges(self, line_ids=None, node_ids=None):
         """Synthesized (edge_dict, params) pairs for every node tap.
@@ -2332,7 +2795,8 @@ class ExplicitPortsMixin:
                         ax, pts, conn, ppdu, tap_color,
                         fallback=f"n={conn.get('n_ref', 1)}")
 
-                connected = bool(conn_ports or tap_conns)
+                connected = bool(conn_ports or tap_conns
+                                 or self._end_is_pumped(line, end_name))
                 mark = ('dodgerblue' if is_pending
                         else 'black' if connected else 'darkgray')
                 ax.add_patch(mpatches.Circle(
@@ -2357,12 +2821,39 @@ class ExplicitPortsMixin:
                           if self._line_end_ports(line, e)]
             if terminated:
                 sub += ", port@" + "+".join(terminated)
+            if line.get('pump'):
+                sub += f", pump@{line['pump']['end']}"
+            primary = self.line_primary(line)
+            if primary is not None:
+                sub = f"conjugate twin of {primary['label']}  (" + sub + ")"
             sy_off = max(h, 0.3 * r) + 0.35 * r
             sx, sy = _rotate_point(lx, ly - sy_off, lx, ly, angle)
             ax.text(sx, sy, sub, ha='center', va='top',
                     rotation=self._readable_angle(angle),
                     rotation_mode='anchor',
                     fontsize=7, color='dimgray', zorder=12)
+
+        # pump buses: ONE double-line wire per rank-one parametric block,
+        # from the pumped end of a line into the same end of its conjugate
+        # twin (the edge crosses sectors, which is what the double line has
+        # always meant for ordinary edges)
+        for line in self.line_resonators:
+            pts = self._pump_bus_wire(line)
+            if pts is None:
+                continue
+            pump = line['pump']
+            selected = line in getattr(self, 'selected_pump_buses', [])
+            color, lw = self.wire_style(pump, PUMP_BUS_COLOR)
+            outer = max(3.0 * lw, lw + 2.4)
+            self._draw_wire(ax, pts, color, outer, selected=selected,
+                            zorder=4)
+            ax.add_line(mlines.Line2D(
+                pts[:, 0], pts[:, 1], color='white', linewidth=outer - 2.0 * lw,
+                zorder=4.1, solid_capstyle='butt'))
+            n_ref, m_ref = self._pump_reference_pair(line)
+            self._draw_wire_label(
+                ax, pts, pump, ppdu, color,
+                fallback=f"f_p={pump['f_p']:g}  ({n_ref},{m_ref})")
 
     # ---- serialization fragments ----
 
@@ -2416,6 +2907,9 @@ class ExplicitPortsMixin:
                     'port_end': l.get('port_end'),   # legacy, read on load
                     'Z0_port': l.get('Z0_port', 50.0),
                     'alpha_uniform': l.get('alpha_uniform', 0.0),
+                    'pump': (dict(l['pump']) if l.get('pump') else None),
+                    'conj': bool(l.get('conj', False)),
+                    'twin_of': l.get('twin_of'),
                 }
                 for l in self.line_resonators
             ]
@@ -2433,6 +2927,7 @@ class ExplicitPortsMixin:
         self.selected_lines = []
         self.selected_attachments = []
         self.selected_taps = []
+        self.selected_pump_buses = []
         self._attach_pending_port = None
 
         known_node_ids = {n['node_id'] for n in self.nodes}
@@ -2497,10 +2992,28 @@ class ExplicitPortsMixin:
                 'port_end': ldata.get('port_end'),
                 'Z0_port': float(ldata.get('Z0_port', 50.0)),
                 'alpha_uniform': float(ldata.get('alpha_uniform', 0.0)),
+                'pump': (dict(ldata['pump']) if ldata.get('pump') else None),
+                'conj': bool(ldata.get('conj', False)),
+                'twin_of': ldata.get('twin_of'),
             }
             self.line_resonators.append(line)
             max_line_id = max(max_line_id, line['line_id'])
         self.line_id_counter = max_line_id + 1
+
+        # pump/twin invariants: a pump needs its twin and a twin its
+        # primary; anything dangling is dropped rather than half-restored
+        known_line_ids = {l['line_id'] for l in self.line_resonators}
+        for line in list(self.line_resonators):
+            pump = line.get('pump')
+            if pump and pump.get('twin_id') not in known_line_ids:
+                logger.warning("Dropping pump of line %r: twin missing",
+                               line['label'])
+                line['pump'] = None
+            if line.get('twin_of') is not None \
+                    and line['twin_of'] not in known_line_ids:
+                logger.warning("Dropping orphan twin %r", line['label'])
+                self.line_resonators.remove(line)
+        self._sync_all_twins()
 
         # Migration: files written before explicit line-end connections
         # carry only 'port_end'. Materialize the implied port as a real,

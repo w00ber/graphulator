@@ -3620,6 +3620,137 @@ class PropertiesPanel(QWidget):
         self.properties_layout.addWidget(info)
         self.properties_layout.addStretch()
 
+    def show_pump_properties(self, line):
+        """Properties of a line's pumped termination (the pump bus)."""
+        from .para_features.explicit_ports import (PUMP_BUS_COLOR,
+                                                   PUMP_COUPLINGS)
+        self.clear_properties()
+        pump = line['pump']
+        self.current_object = pump
+        self.current_type = 'pump'
+        g = self.graphulator
+        twin = g.line_twin(line)
+        twin_label = twin['label'] if twin else '?'
+        self.title_label.setText(
+            f"Pump bus: {line['label']} \N{LEFT RIGHT ARROW} {twin_label}")
+        resonator = g.line_resonator_for(line)
+
+        form = QFormLayout()
+        end_combo = QComboBox()
+        end_combo.addItem("x0", 'x0')
+        end_combo.addItem("xL", 'xL')
+        end_combo.setCurrentIndex(0 if pump.get('end') == 'x0' else 1)
+
+        def set_end(_i):
+            g._save_state()
+            pump['end'] = end_combo.currentData()
+            g._invalidate_scattering_data()
+            g._update_plot()
+
+        end_combo.currentIndexChanged.connect(set_end)
+        form.addRow("Pumped end:", end_combo)
+
+        def spin(key, lo, hi, decimals, step, tooltip, scale=1.0,
+                 suffix=None, refresh=None):
+            box = QDoubleSpinBox()
+            box.setRange(lo, hi)
+            box.setDecimals(decimals)
+            box.setSingleStep(step)
+            box.setValue(float(pump.get(key, 0.0)) * scale)
+            box.setToolTip(tooltip)
+            if suffix:
+                box.setSuffix(suffix)
+            box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+            def apply(value):
+                pump[key] = float(value) / scale
+                if refresh:
+                    refresh()
+                g._invalidate_scattering_data()
+                g._update_plot()
+
+            box.valueChanged.connect(apply)
+            return box
+
+        partner = QLabel()
+        partner.setStyleSheet("color: #666; font-style: italic;")
+
+        def refresh_partner():
+            n_ref, m_ref = g._pump_reference_pair(line)
+            f_partner = float(pump['f_p']) - n_ref * resonator.FSR
+            mismatch = f_partner - m_ref * resonator.FSR
+            partner.setText(
+                ("degenerate" if m_ref == n_ref else f"idler partner m = {m_ref}")
+                + f"  (off harmonic by {mismatch:+g})")
+
+        form.addRow("Pump frequency f_p:", spin(
+            'f_p', 1e-9, 1e9, 4, 0.1,
+            "Pump frequency [a.u.]: amplifies every pair with f_n + f_m = f_p "
+            "and converts every pair with |f_n - f_m| = f_p.",
+            refresh=refresh_partner))
+
+        nref = FineControlSpinBox()
+        nref.setDecimals(0)
+        nref.setRange(1, resonator.N)
+        nref.setSingleStep(1)
+        nref.setPrefix("n=")
+        nref.setValue(int(pump.get('n_ref', 1)))
+        nref.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        nref.setToolTip("Signal harmonic the rate is defined at; its idler "
+                        "partner is the harmonic nearest f_p - n*FSR.")
+
+        def set_nref(v):
+            pump['n_ref'] = int(v)
+            refresh_partner()
+            g._invalidate_scattering_data()
+            g._update_plot()
+
+        nref.valueChanged.connect(set_nref)
+        nref_row = QHBoxLayout()
+        nref_row.addWidget(nref)
+        nref_row.addWidget(partner)
+        form.addRow("Reference harmonic:", nref_row)
+        refresh_partner()
+
+        form.addRow("Rate @ (n, m) [mau]:", spin(
+            'rate', 0.0, 1e6, 3, 1.0,
+            "Parametric coupling between harmonic n of the line and its "
+            "idler partner m in the twin [milli-arb. units]; other pairs "
+            "follow the verified profile.", scale=1000.0))
+        form.addRow("Pump phase:", spin(
+            'phase', -360.0, 360.0, 1, 15.0, "Pump phase [degrees].",
+            suffix="\N{DEGREE SIGN}"))
+
+        coupling = QComboBox()
+        coupling.addItem("modulated inductor (g_n \N{PROPORTIONAL TO} 1/\N{SQUARE ROOT}n)",
+                         'inductive')
+        coupling.addItem("modulated capacitor (g_n \N{PROPORTIONAL TO} \N{SQUARE ROOT}n)",
+                         'capacitive')
+        coupling.setCurrentIndex(
+            0 if pump.get('coupling', 'inductive') == 'inductive' else 1)
+
+        def set_coupling(_i):
+            g._save_state()
+            pump['coupling'] = coupling.currentData()
+            g._invalidate_scattering_data()
+            g._update_plot()
+
+        coupling.currentIndexChanged.connect(set_coupling)
+        form.addRow("Element:", coupling)
+
+        self._add_wire_appearance_rows(form, pump, PUMP_BUS_COLOR)
+        self.properties_layout.addLayout(form)
+
+        info = QLabel(
+            "One rank-one parametric block between the comb and its "
+            "conjugate twin (docs/pumped_line_termination.md): amplification "
+            "AND conversion pairs, all from this pump. The DC comb mode is "
+            "excluded, as for taps.")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666; font-style: italic;")
+        self.properties_layout.addWidget(info)
+        self.properties_layout.addStretch()
+
     # ---- Explicit Ports: port / transmission-line glyph properties ----
 
     def _glyph_color_button(self, glyph, key, default):
@@ -3786,11 +3917,30 @@ class PropertiesPanel(QWidget):
         g = self.graphulator
 
         form = QFormLayout()
+        primary = g.line_primary(line)
+        if primary is not None:
+            # a conjugate twin is the SAME physical line seen in the idler
+            # sector: label and physics come from the primary
+            self.title_label.setText(f"Conjugate twin: {line['label']}")
+            note = QLabel(
+                f"Linked to {primary['label']}: label and physics "
+                "(FSR, Ztx, f_max, Z0, \N{GREEK SMALL LETTER ALPHA}, tap "
+                "coupling) are mirrored from it \N{EM DASH} edit them there. "
+                "Position, rotation and appearance are this glyph's own.")
+            note.setWordWrap(True)
+            note.setStyleSheet("color: #666; font-style: italic;")
+            form.addRow(note)
+            self._add_glyph_appearance_rows(form, line, LINE_LINEWIDTH, 'white')
+            self.properties_layout.addLayout(form)
+            self.properties_layout.addStretch()
+            return
+
         label_edit = QLineEdit(line['label'])
 
         def set_label(text):
             line['label'] = text.strip() or line['label']
             self.title_label.setText(f"Transmission line: {line['label']}")
+            g._sync_all_twins()
             g._invalidate_scattering_data()
             g._update_plot()
 
@@ -3816,6 +3966,7 @@ class PropertiesPanel(QWidget):
                 except ValueError:
                     return
                 line[key] = float(value)
+                g._sync_all_twins()
                 g._invalidate_scattering_data()
                 g._update_plot()
 
@@ -4570,6 +4721,18 @@ class PropertiesPanel(QWidget):
             resonator = g.line_resonator_for(line)
             couplings = (line.get('end_coupling')
                          or {'x0': 'capacitive', 'xL': 'capacitive'})
+            if line.get('pump'):
+                pump = line['pump']
+                n_ref, m_ref = g._pump_reference_pair(line)
+                lab = QLabel(
+                    f"pump@{pump['end']} \N{RIGHTWARDS ARROW} twin: "
+                    f"f_p={pump['f_p']:g}, rate={pump['rate']*1000:.3g} mau "
+                    f"@ ({n_ref},{m_ref})")
+                lab.setStyleSheet("color: dimgray;")
+                lab.setToolTip("Pumped termination (select the double-line "
+                               "bus on the canvas to edit).")
+                self.ports_param_layout.addWidget(lab, row, 0, 1, 4)
+                row += 1
             for end in ('x0', 'xL'):
                 for conn in g._end_conns(line, end):
                     if conn.get('kind') == 'port':
@@ -5814,17 +5977,20 @@ class PropertiesPanel(QWidget):
             # script reproduces the live model
             e_code, a_code = [], []
             for k, (tap_edge, tap_params) in enumerate(
-                    self.graphulator._gui_tap_edges(line_ids=line_ids,
+                    self.graphulator._gui_synth_edges(line_ids=line_ids,
                                                     node_ids=node_ids)):
                 idx = n_existing + k
                 e_code.append(
                     f"    {{'from_node_id': {tap_edge['from_node_id']!r}, "
                     f"'to_node_id': {tap_edge['to_node_id']!r}, "
                     f"'is_self_loop': False}}")
+                extra = (f", 'frame_rule': {tap_params['frame_rule']!r}"
+                         if tap_params.get('frame_rule') else "")
                 a_code.append(
-                    f"    id({edge_var}[{idx}]): {{'f_p': 0.0, "
+                    f"    id({edge_var}[{idx}]): {{'f_p': {tap_params['f_p']!r}, "
                     f"'rate': {tap_params['rate']!r}, "
-                    f"'phase': {tap_params['phase']!r}}},  # line tap")
+                    f"'phase': {tap_params['phase']!r}{extra}}},"
+                    "  # line tap / pump bus")
             return e_code, a_code
 
         def _emit_hubs(node_ids=None, line_ids=None):
@@ -5847,7 +6013,8 @@ class PropertiesPanel(QWidget):
                     f"label={line['label']!r}, FSR={line['FSR']!r}, "
                     f"Ztx={line['Ztx']!r}, f_max={line['f_max']!r}, "
                     f"port_end={line['port_end']!r}, Z0_port={line['Z0_port']!r}, "
-                    f"alpha_uniform={line['alpha_uniform']!r})")
+                    f"alpha_uniform={line['alpha_uniform']!r}, "
+                    f"conj={line.get('conj', False)!r})")
             return _join_list(entries)
 
         # Full-graph literals for the single-component template
@@ -10105,11 +10272,21 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         # line's comb and those nodes share one hub column, so they are one
         # component. A line whose port serves nothing else stands alone.
         for line in self.line_resonators:
-            partner_node_ids = set(self._line_tap_node_ids(line))
-            for end in ('x0', 'xL'):
-                for port in self._line_end_ports(line, end):
-                    partner_node_ids.update(a['node_id']
-                                            for a in port['attachments'])
+            if line.get('twin_of') is not None:
+                continue            # handled with its primary below
+            # a pumped line and its conjugate twin are one physical object
+            # joined by the pump bus: they always compute together
+            unit = [line]
+            twin = self.line_twin(line)
+            if twin is not None:
+                unit.append(twin)
+            partner_node_ids = set()
+            for member in unit:
+                partner_node_ids |= set(self._line_tap_node_ids(member))
+                for end in ('x0', 'xL'):
+                    for port in self._line_end_ports(member, end):
+                        partner_node_ids.update(a['node_id']
+                                                for a in port['attachments'])
 
             host = None
             if partner_node_ids:
@@ -10129,7 +10306,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                             other.get('line_ids', []))
                         result.remove(other)
             if host is not None:
-                host.setdefault('line_ids', []).append(line['line_id'])
+                host.setdefault('line_ids', []).extend(
+                    m['line_id'] for m in unit)
             else:
                 result.append({
                     'node_ids': set(),
@@ -10137,7 +10315,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     'edges': [],
                     'port_node_ids': set(),
                     'index': len(result),
-                    'line_ids': [line['line_id']],
+                    'line_ids': [m['line_id'] for m in unit],
                     'line_label': line['label'],
                 })
 
@@ -10683,7 +10861,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 hubs=self._gui_hubs_payload(),
                 line_resonators=self._gui_lines_payload()
             )
-            for tap_edge, tap_params in self._gui_tap_edges():
+            for tap_edge, tap_params in self._gui_synth_edges():
                 edges.append(tap_edge)
                 scattering_assignments[id(tap_edge)] = tap_params
 
@@ -10976,7 +11154,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
         # One drawn node-tap fans out here into its conservative couplings to
         # each comb mode; the extractor sees ordinary static (f_p = 0) edges
-        for tap_edge, tap_params in self._gui_tap_edges(
+        for tap_edge, tap_params in self._gui_synth_edges(
                 line_ids=comp_line_ids, node_ids=comp_node_ids):
             edges.append(tap_edge)
             scattering_assignments[id(tap_edge)] = tap_params
@@ -16780,8 +16958,14 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             + len(getattr(self, 'selected_lines', []))
         n_wires = len(getattr(self, 'selected_attachments', [])) \
             + len(getattr(self, 'selected_taps', []))
+        n_buses = len(getattr(self, 'selected_pump_buses', []))
+        # Single pump bus selected
+        if n_buses == 1 and not n_wires and not n_glyphs \
+                and not self.selected_nodes and not self.selected_edges:
+            self.properties_panel.show_pump_properties(
+                self.selected_pump_buses[0])
         # Single wire (port attachment or line tap) selected
-        if n_wires == 1 and not n_glyphs and not self.selected_nodes \
+        elif n_wires == 1 and not n_glyphs and not self.selected_nodes \
                 and not self.selected_edges:
             if self.selected_attachments:
                 port, att = self.selected_attachments[0]
