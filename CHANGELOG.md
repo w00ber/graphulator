@@ -153,6 +153,20 @@
   use it, hand-drawn edges keep the heuristic.
 
 ### Added (continued)
+  - **Worked transmission-line examples** under File → Examples (`TL_1` …
+    `TL_5`), each with a Notes tab explaining the drawing, what to look at
+    in S and which knob does what: an open line on a port; a mode tapped
+    onto a line; the pumped-termination amplifier; the same with the
+    inductor's reactance as an end load and the loaded fundamental solved
+    onto 4.0; two lines on one port (series). `misc/make_line_examples.py`.
+  - In-app help gained a *Ports, Loss Hubs & Transmission Lines* section
+    (shortcuts, connection rules, glyph meanings, end load, truncation,
+    where to tune); the `?` overlay shows *Add port* / *Add transmission
+    line* when the mode is on; README shortcut list updated.
+### Changed
+  - The Explicit Ports & Lines toggle moved from Settings → Interface to its
+    own **Experimental** tab, labelled "EXPERIMENTAL!!! Use at your own
+    risk".
   - **Comb tail closure.** A line macro keeps N pole pairs, but the modes
     beyond f_max still load the port: a reactive tail ~ 2γf/(FSR²N) that
     shifts every in-band resonance and converges only as 1/N (measured law

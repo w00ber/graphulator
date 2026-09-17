@@ -158,3 +158,20 @@ def test_truncation_check_is_small_for_a_terminated_line_with_closure(para):
     panel.tail_closure_check.setChecked(False)
     panel._check_truncation()
     assert panel._truncation_result > 1e-2, panel._truncation_result
+
+
+def test_glyph_only_graph_saves_its_sweep_window(para, tmp_path):
+    """A pumped line has no GUI edges, so its spanning tree is empty; the
+    scattering section (sweep window, injection choice) must still be saved
+    -- it used to be gated on a non-empty tree and was silently dropped."""
+    import json
+    win, line = _pumped_scene(para)
+    panel = win.properties_panel
+    panel.freq_center_spin.setValue(4.25)
+    panel.freq_span_spin.setValue(2.5)
+    panel.freq_points_spin.setValue(333)
+    path = tmp_path / "amp.pgraph"
+    assert win._save_graph_to_file(str(path))
+    data = json.loads(path.read_text())
+    assert data['scattering']['frequency'] == {'center': 4.25, 'span': 2.5,
+                                               'points': 333}

@@ -51,6 +51,7 @@ It's important to note that, despite the author's affiliation with NIST, this pr
 - **Editing**: Arrow keys for pan, `Shift+Arrow` for label nudge, `Ctrl+Arrow` for parameter adjustment
 - **File operations**: `Ctrl+N` (new), `Ctrl+O` (open), `Ctrl+S` (save)
 - **View**: `A` (auto-fit), `+/-` (zoom), `R` (rotate grid)
+- **Ports & lines** (Paragraphulator, with *Explicit Ports & Lines* enabled under Settings → Experimental): `P` (place port), `Shift+P` (continuous), `L` (place transmission line); connect with the edge tool `E` — port → node attaches, line end lead → port terminates, line end lead → node taps; right-click a line for its pumped termination; `Ctrl+U`/`Ctrl+I` rotate a glyph (or a whole multi-object selection rigidly); `?` toggles the on-screen hints, `Help → Help` has the full guide
 
 ---
 
@@ -88,6 +89,11 @@ It's important to note that, despite the author's affiliation with NIST, this pr
 - **Fine control on all spinboxes**: `Shift` for 1/10 step, `Alt` for 10x step
 
 ### Explicit Ports, Loss Hubs & Transmission Lines (hub-based dissipation)
+
+> **Experimental** — enable under *Settings → Experimental*. The model is
+> gated against exact microwave references (see `tests/`), but the design
+> language is still moving; use at your own risk and expect file-format
+> additions. Worked examples with notes: *File → Examples → TL_…*.
 
 Enable **Explicit Ports & Lines** in Settings → Interface to work with shared
 ports and transmission-line mode combs. With the switch off, everything looks
