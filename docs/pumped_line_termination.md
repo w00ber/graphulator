@@ -533,6 +533,11 @@ Ports & Lines row, never as a change to the glyph.
 
 ## 8. Truncating the comb — and closing what you cut off
 
+*The full, self-contained derivation of the closure — equations of motion,
+the Schur step written out, the Sherman–Morrison identity check, the
+multi-channel form, and what is dropped — is `docs/comb_tail_closure.md`.
+This section keeps the measurements and the result.*
+
 Every macro in this note keeps $N$ pole pairs. §6 and §7 measured the cost of
 that in the whole-band maximum; this section asks the question a user actually
 has — *how wrong is the plot I am looking at, near the modes I care about?* —

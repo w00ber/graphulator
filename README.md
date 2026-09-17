@@ -184,7 +184,8 @@ its `n=…` reference harmonic until you give it a label of your own).
   pump/tap couplings onto modes beyond it, which are second order. Use
   *Check truncation (2× f_max)* in the Ports & Lines panel to measure that for
   your graph, and the panel's checkbox to see the raw truncated comb
-  (`docs/pumped_line_termination.md` §8).
+  (`docs/pumped_line_termination.md` §8; full derivation in
+  `docs/comb_tail_closure.md`).
 
   **The comb stays inside the macro.** A line is connected by its **end
   leads**: click a lead with the edge tool (`E`), then a port glyph, and

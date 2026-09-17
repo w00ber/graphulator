@@ -183,7 +183,8 @@
     on the §6 pumped line the closed residual sits on the 2e-3 DC-mode
     floor from N = 4. Toggle in the Ports & Lines panel ("close comb tail
     analytically", default on); `GraphScatteringMatrix(..., tail_closure=)`;
-    exported code carries hub `tails`. Docs §8; gate `tests/test_tail_closure.py`.
+    exported code carries hub `tails`. Docs §8, full derivation in
+    `docs/comb_tail_closure.md`; gate `tests/test_tail_closure.py`.
   - **Check truncation (2× f_max)** button in Ports & Lines: re-solves every
     component with all combs doubled and reports the largest change of each
     displayed trace over the window — the honest way to size N for THIS
