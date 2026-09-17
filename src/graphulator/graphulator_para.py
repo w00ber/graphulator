@@ -4561,6 +4561,13 @@ class PropertiesPanel(QWidget):
     def _update_scattering_node_table(self):
         """Update the node parameter table in the Scattering tab based on current graph"""
 
+        # Keep the Ports & Lines panel in sync FIRST. It has its own gating,
+        # and a glyph-only graph (a pumped line, no nodes) takes this
+        # function's "no nodes" early return below -- when the sync sat at
+        # the end, entering scattering mode on such a graph never built the
+        # panel and the pane stayed hidden at zero height.
+        self._update_scattering_ports_table()
+
         # Clear existing widgets
         while self.nodes_param_layout.count():
             item = self.nodes_param_layout.takeAt(0)
@@ -4574,8 +4581,9 @@ class PropertiesPanel(QWidget):
             elif getattr(self.graphulator, 'line_resonators', None):
                 # a glyph-only graph (e.g. a pumped line): everything
                 # tunable lives in the Ports & Lines panel below
+                # (a QLabel shows '&&' literally; only buttons/menus eat one)
                 text = ("No graph nodes \u2014 line, port and pump "
-                        "parameters are in Ports && Lines below")
+                        "parameters are in Ports & Lines below")
             else:
                 text = "No graph nodes"
             placeholder = QLabel(text)
@@ -4749,9 +4757,6 @@ class PropertiesPanel(QWidget):
 
         # Reapply constraint group styling after table rebuild
         self._apply_constraint_styling()
-
-        # Keep the Ports & Lines panel in sync (third parameter set)
-        self._update_scattering_ports_table()
 
     def _update_scattering_ports_table(self):
         """Update the Ports & Lines panel (external port coupling rates).
