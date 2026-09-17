@@ -11960,12 +11960,25 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 # Map from tuple(drive_signals) -> list of (port_id, port_label)
                 freq_groups = defaultdict(list)
 
+                port_dict = self.sparams_data.get('port_dict') or {}
                 for port_idx in displayed_ports:
                     port_id = port_ids_all[port_idx]
+                    # A channel is a legacy port NODE (port_id = node_id) or
+                    # an explicit hub (port_id = hub_id, no node behind it);
+                    # the enriched port_dict labels both, and autograph gives
+                    # both a drive frame. Looking the channel up in
+                    # self.nodes alone skipped every hub port, which hid the
+                    # tick labels and drew nothing in their place.
                     port_node = next((n for n in self.nodes if n['node_id'] == port_id), None)
-
-                    if port_node and port_id in drive_signals:
+                    entry = port_dict.get(port_id)
+                    if isinstance(entry, dict) and entry.get('label'):
+                        port_label = entry['label']
+                    elif port_node:
                         port_label = port_node['label']
+                    else:
+                        port_label = str(port_id)
+
+                    if port_id in drive_signals:
                         driven_freqs = drive_signals[port_id]
                         # Apply conjugate transformation if active
                         if conjugate_mode:

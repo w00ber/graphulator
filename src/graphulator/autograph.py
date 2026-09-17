@@ -2893,6 +2893,22 @@ class GraphScatteringMatrix:
                 self.port_ids.append(hub['legacy_node_id'])
             else:
                 self.port_ids.append(hub['hub_id'])
+                # An explicit hub is a channel with a frequency axis of its
+                # own, like a legacy port node: it inherits the drive frame
+                # of the modes it damps. Those all share one frame -- the
+                # zero-offset bridge links (compute_hub_bridge_links) put a
+                # shared hub's attachments in the same frame by construction
+                # -- so the first attachment's is the hub's; a mismatch is a
+                # bug upstream, not a choice to make here.
+                frames = [self.drive_signals[a[0]] for a in hub['attachments']
+                          if a[0] in self.drive_signals]
+                if frames:
+                    if any(not np.allclose(f, frames[0]) for f in frames[1:]):
+                        logger.warning(
+                            "Hub %r spans attachments in different drive "
+                            "frames; using the first attachment's for its "
+                            "channel axis.", hub['hub_id'])
+                    self.drive_signals[hub['hub_id']] = frames[0]
             self.port_labels.append(hub['label'])
             if self.verbose:
                 logger.debug("  Port channel %d: %s", len(self.port_ids) - 1, hub)
