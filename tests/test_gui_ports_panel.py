@@ -113,14 +113,20 @@ def test_tail_closure_toggle_reaches_the_job(para):
     panel.tail_closure_check.setChecked(False)
     assert win.line_tail_closure is False
     assert win._build_sparams_job(None, f, 3.0, 9.0, 11)['tail_closure'] is False
-    # and the comb note says so
+    # and the comb note says so (flush deleteLater()'d labels from table
+    # rebuilds first, so only the live notes are inspected)
     from PySide6.QtWidgets import QLabel
-    notes = [w.text() for w in panel.ports_param_widget.findChildren(QLabel)
-             if 'N = ' in w.text()]
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    def live_notes():
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        return [w.text() for w in panel.ports_param_widget.findChildren(QLabel)
+                if 'N = ' in w.text()]
+
+    notes = live_notes()
     assert notes and all('raw truncated comb' in n for n in notes), notes
     panel.tail_closure_check.setChecked(True)
-    notes = [w.text() for w in panel.ports_param_widget.findChildren(QLabel)
-             if 'N = ' in w.text()]
+    notes = live_notes()
     assert notes and all('closed analytically' in n for n in notes), notes
 
 
@@ -175,3 +181,31 @@ def test_glyph_only_graph_saves_its_sweep_window(para, tmp_path):
     data = json.loads(path.read_text())
     assert data['scattering']['frequency'] == {'center': 4.25, 'span': 2.5,
                                                'points': 333}
+
+
+def test_ports_panel_appears_on_entering_scattering_mode(para, monkeypatch):
+    """The REAL flow: open a glyph-only scene, press Ctrl+R. Nothing else.
+    The Nodes table's early 'no nodes' return used to skip the Ports & Lines
+    sync entirely, so the pane stayed hidden and empty (splitter [h, 0])."""
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    gp, win, config = para
+    monkeypatch.setattr(QMessageBox, 'warning',
+                        staticmethod(lambda *a, **k: pytest.fail(str(a[1:]))))
+    monkeypatch.setattr(QMessageBox, 'information',
+                        staticmethod(lambda *a, **k: None))
+    win.resize(1600, 1100)
+    win.show()
+    QApplication.processEvents()
+    win._load_example(SCENES / "LINE_PUMPED_AMP_AND_CONV.pgraph")
+    QApplication.processEvents()
+    win._enter_scattering_mode()                 # Ctrl+R, and nothing more
+    QApplication.processEvents()
+
+    panel = win.properties_panel
+    assert panel.ports_param_layout.count() > 0, "Ports & Lines never built"
+    assert panel.ports_frame.isVisibleTo(panel)
+    splitter = panel.ports_frame.parent()
+    assert splitter.sizes()[-1] > 0, splitter.sizes()
+    # and the pump controls are there without any node in the graph
+    assert not win.nodes
+    assert any('Pump frequency' in s.toolTip() for s in _spins(panel))
