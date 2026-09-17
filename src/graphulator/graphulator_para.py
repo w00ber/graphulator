@@ -3676,12 +3676,15 @@ class PropertiesPanel(QWidget):
         partner.setStyleSheet("color: #666; font-style: italic;")
 
         def refresh_partner():
+            # re-read the resonator: an end load (edited on the line's own
+            # page) moves every mode frequency this line depends on
+            res = g.line_resonator_for(line)
             n_ref, m_ref = g._pump_reference_pair(line)
-            f_partner = float(pump['f_p']) - n_ref * resonator.FSR
-            mismatch = f_partner - m_ref * resonator.FSR
+            f_partner = float(pump['f_p']) - res.mode_freq(n_ref)
+            mismatch = f_partner - res.mode_freq(m_ref)
             partner.setText(
                 ("degenerate" if m_ref == n_ref else f"idler partner m = {m_ref}")
-                + f"  (off harmonic by {mismatch:+g})")
+                + f"  (off mode by {mismatch:+g})")
 
         form.addRow("Pump frequency f_p:", spin(
             'f_p', 1e-9, 1e9, 4, 0.1,
@@ -3696,8 +3699,9 @@ class PropertiesPanel(QWidget):
         nref.setPrefix("n=")
         nref.setValue(int(pump.get('n_ref', 1)))
         nref.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        nref.setToolTip("Signal harmonic the rate is defined at; its idler "
-                        "partner is the harmonic nearest f_p - n*FSR.")
+        nref.setToolTip("Signal mode the rate is defined at; its idler "
+                        "partner is the mode nearest f_p - f_n (the LOADED "
+                        "f_n when an end is loaded).")
 
         def set_nref(v):
             pump['n_ref'] = int(v)
@@ -3741,11 +3745,32 @@ class PropertiesPanel(QWidget):
         self._add_wire_appearance_rows(form, pump, PUMP_BUS_COLOR)
         self.properties_layout.addLayout(form)
 
-        info = QLabel(
-            "One rank-one parametric block between the comb and its "
-            "conjugate twin (docs/pumped_line_termination.md): amplification "
-            "AND conversion pairs, all from this pump. The DC comb mode is "
-            "excluded, as for taps.")
+        text = ("One rank-one parametric block between the comb and its "
+                "conjugate twin (docs/pumped_line_termination.md): "
+                "amplification AND conversion pairs, all from this pump \u2014 "
+                "on a harmonic comb they come together, which is why the bus "
+                "draws three strokes rather than claiming one or the other. "
+                "The DC comb mode is excluded, as for taps.")
+        load = line.get('load')
+        if load:
+            text += (f"\n\nThis element is also the line's end load "
+                     f"({load['type']}, f_Z = {load['f_Z']:g}), so the comb "
+                     f"above is the dispersed one: modes at "
+                     + ", ".join(f"{f:g}" for f in resonator.mode_freqs()[:5])
+                     + ("\u2026" if resonator.N > 5 else "") + ".")
+        else:
+            text += ("\n\nThe line has no end load, so the comb is still "
+                     "open\u2013open: the termination's own dispersion is "
+                     "ignored. Set one on " + line['label'] + "'s page (or "
+                     "in the pump dialog) to use the loaded basis.")
+        gaps = g.pump_truncation_gaps(line)
+        if gaps:
+            text += ("\n\nf_max is too small for this pump: the "
+                     + " and ".join(sorted(gaps))
+                     + " partners fall beyond the last comb harmonic, so "
+                       "they are missing from the model though not from the "
+                       "line. Raise f_max on " + line['label'] + ".")
+        info = QLabel(text)
         info.setWordWrap(True)
         info.setStyleSheet("color: #666; font-style: italic;")
         self.properties_layout.addWidget(info)
@@ -3909,7 +3934,9 @@ class PropertiesPanel(QWidget):
         """Editable properties for a selected transmission-line glyph."""
         from .para_features.explicit_ports import (LINE_LINEWIDTH,
                                                    LineResonator,
-                                                   line_payload, ALPHA_TOOLTIP)
+                                                   line_payload, ALPHA_TOOLTIP,
+                                                   LineInputDialog)
+        from .autograph import line_fsr_for_target
         self.clear_properties()
         self.current_object = line
         self.current_type = 'line'
@@ -4010,12 +4037,134 @@ class PropertiesPanel(QWidget):
             combo.currentIndexChanged.connect(set_coupling)
             form.addRow(f"Tap coupling @ {end}:", combo)
 
+        # ---- end load: a shunt reactance at ONE end (docs sec. 7) ----
+        load = line.get('load')
+        load_combo = QComboBox()
+        for i, (text, value) in enumerate(LineInputDialog.LOAD_CHOICES):
+            load_combo.addItem(text, value)
+            if value is not None and value[1] != 'inductive':
+                item = load_combo.model().item(i)
+                item.setEnabled(False)
+                item.setToolTip(
+                    "Refused: the capacitive comb's S11 plateaus with mode "
+                    "count instead of converging, so a direct non-resonant "
+                    "term is missing. See docs sec. 7.5.")
+        if load:
+            want = (load.get('end'), load.get('type'))
+            load_combo.setCurrentIndex(next(
+                (i for i, (_, v) in enumerate(LineInputDialog.LOAD_CHOICES)
+                 if v == want), 0))
+        load_combo.setToolTip(LineInputDialog.LOAD_TOOLTIP)
+        load_combo.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        form.addRow("End load:", load_combo)
+
+        fz_spin = QDoubleSpinBox()
+        fz_spin.setRange(1e-9, 1e12)
+        fz_spin.setDecimals(6)
+        fz_spin.setSingleStep(0.1)
+        fz_spin.setValue(float((load or {}).get('f_Z', 1.0)))
+        fz_spin.setToolTip(LineInputDialog.FZ_TOOLTIP)
+        fz_spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        fz_label = QLabel("f_Z [au]:")
+        fz_label.setToolTip(LineInputDialog.FZ_TOOLTIP)
+        form.addRow(fz_label, fz_spin)
+
+        target_spin = QDoubleSpinBox()
+        target_spin.setRange(1e-9, 1e12)
+        target_spin.setDecimals(4)
+        target_spin.setSingleStep(0.1)
+        target_spin.setValue(float(line.get('FSR', 1.0)))
+        target_spin.setToolTip("Where the chosen LOADED mode should land.")
+        target_spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        target_mode = QSpinBox()
+        target_mode.setRange(1, 999)
+        target_mode.setValue(1)
+        target_mode.setPrefix("mode ")
+        target_mode.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        solve_btn = QPushButton("Set FSR")
+        solve_btn.setToolTip(
+            "FSR = \u03c0 f / (arccot(x(f)) + (n\u22121)\u03c0) \u2014 the "
+            "resonance condition evaluated AT the target, so the loaded mode "
+            "lands where you asked without iterating on FSR.")
+        solve_row = QHBoxLayout()
+        for w in (target_spin, target_mode, solve_btn):
+            solve_row.addWidget(w)
+        form.addRow("Target resonance:", solve_row)
+
+        load_info = QLabel("")
+        load_info.setWordWrap(True)
+        load_info.setStyleSheet("color: #666; font-style: italic;")
+        form.addRow("", load_info)
+
+        def current_load():
+            value = load_combo.currentData()
+            if value is None:
+                return None
+            end, kind = value
+            return {'end': end, 'type': kind, 'f_Z': float(fz_spin.value())}
+
+        def refresh_load(*_a):
+            chosen = current_load()
+            for w in (fz_spin, target_spin, target_mode, solve_btn):
+                w.setEnabled(chosen is not None)
+            if chosen is None:
+                load_info.setText(
+                    "Open\u2013open comb: modes at n\u00b7FSR, \u03b3 the "
+                    "same for every mode.")
+                return
+            try:
+                res = LineResonator(**line_payload(line))
+            except ValueError as exc:
+                load_info.setText(str(exc))
+                return
+            shown = ", ".join(f"{f:g}" for f in res.mode_freqs()[:6])
+            more = " \u2026" if res.N > 6 else ""
+            load_info.setText(
+                f"Loaded modes: {shown}{more}   (N = {res.N}; the DC mode is "
+                f"shorted away). FSR is v/2\u2113 here, not the spacing.")
+
+        def apply_load(*_a):
+            chosen = current_load()
+            if (line.get('load') or None) == chosen:
+                refresh_load()
+                return
+            g._save_state()
+            try:
+                g.set_line_load(line, chosen)
+            except ValueError as exc:
+                if g.undo_stack:
+                    g.undo_stack.pop()
+                load_info.setText(str(exc))
+                return
+            refresh_load()
+            g._update_plot()
+
+        def solve_fsr():
+            chosen = current_load()
+            if chosen is None:
+                return
+            line['FSR'] = line_fsr_for_target(
+                float(target_spin.value()), int(target_mode.value()),
+                chosen['f_Z'], chosen['type'])
+            g._sync_all_twins()
+            g._invalidate_scattering_data()
+            g._update_plot()
+            self.show_line_properties(line)      # redraw with the new FSR
+
+        load_combo.currentIndexChanged.connect(apply_load)
+        fz_spin.valueChanged.connect(apply_load)
+        solve_btn.clicked.connect(solve_fsr)
+        refresh_load()
+
         self._add_glyph_appearance_rows(form, line, LINE_LINEWIDTH, '#cccccc')
         self.properties_layout.addLayout(form)
 
         try:
-            n_pairs = LineResonator(**line_payload(line)).N
-            summary = f"{2 * n_pairs + 1} comb modes at extraction (N = {n_pairs})."
+            res = LineResonator(**line_payload(line))
+            n_modes = len(res.comb_mode_ids())
+            summary = (f"{n_modes} comb modes at extraction (N = {res.N}"
+                       + (", DC shorted by the load)." if res.loaded
+                          else ")."))
         except ValueError as exc:
             summary = f"Invalid parameters: {exc}"
         info = QLabel(summary + " Connect the end leads with the edge tool "
@@ -4703,13 +4852,22 @@ class PropertiesPanel(QWidget):
 
         for line in g.line_resonators:
             header(f"{line['label']}  (transmission line)")
+            load = line.get('load')
+            load_text = (
+                f", load: {load['type']} @ {load['end']}, f_Z={load['f_Z']:g}"
+                if load else "")
             summary = QLabel(
                 f"FSR={line['FSR']:g}, Ztx={line['Ztx']:g}, "
                 f"f_max={line['f_max']:g}, port@{line.get('port_end')}, "
                 f"Z0={line.get('Z0_port', 50):g}, "
-                f"\N{GREEK SMALL LETTER ALPHA}={line.get('alpha_uniform', 0):g}")
+                f"\N{GREEK SMALL LETTER ALPHA}={line.get('alpha_uniform', 0):g}"
+                + load_text)
             summary.setStyleSheet("color: dimgray;")
-            summary.setToolTip(ALPHA_TOOLTIP)
+            summary.setToolTip(
+                ALPHA_TOOLTIP + ("\n\nAn end load disperses the comb: the "
+                                 "modes leave n\u00b7FSR, so FSR here is the "
+                                 "geometric parameter v/2\u2113, not the mode "
+                                 "spacing (docs sec. 7)." if load else ""))
             self.ports_param_layout.addWidget(summary, row, 0, 1, 3)
             edit_btn = QPushButton("Edit\N{HORIZONTAL ELLIPSIS}")
             edit_btn.setMaximumWidth(60)
@@ -4729,8 +4887,15 @@ class PropertiesPanel(QWidget):
                     f"f_p={pump['f_p']:g}, rate={pump['rate']*1000:.3g} mau "
                     f"@ ({n_ref},{m_ref})")
                 lab.setStyleSheet("color: dimgray;")
-                lab.setToolTip("Pumped termination (select the double-line "
-                               "bus on the canvas to edit).")
+                tip = ("Pumped termination (select the triple-line bus on "
+                       "the canvas to edit).")
+                gaps = g.pump_truncation_gaps(line)
+                if gaps:
+                    lab.setText(lab.text() + "  \u26a0 f_max low")
+                    tip += ("\nf_max is too small for this pump: "
+                            + " and ".join(sorted(gaps))
+                            + " partners fall outside the modelled comb.")
+                lab.setToolTip(tip)
                 self.ports_param_layout.addWidget(lab, row, 0, 1, 4)
                 row += 1
             for end in ('x0', 'xL'):
@@ -6014,7 +6179,8 @@ class PropertiesPanel(QWidget):
                     f"Ztx={line['Ztx']!r}, f_max={line['f_max']!r}, "
                     f"port_end={line['port_end']!r}, Z0_port={line['Z0_port']!r}, "
                     f"alpha_uniform={line['alpha_uniform']!r}, "
-                    f"conj={line.get('conj', False)!r})")
+                    f"conj={line.get('conj', False)!r}, "
+                    f"load={line.get('load')!r})")
             return _join_list(entries)
 
         # Full-graph literals for the single-component template
@@ -7122,7 +7288,12 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         sparams_selection_widget = QWidget()
         sparams_selection_layout = QVBoxLayout()
         sparams_selection_widget.setLayout(sparams_selection_layout)
-        sparams_selection_widget.setMaximumWidth(120)
+        # width is sized to the widest trace name after the checkboxes are
+        # built (_fit_sparams_selection_width); a hard cap used to clip long
+        # port labels, and horizontal scrolling is off by design
+        self.sparams_selection_widget = sparams_selection_widget
+        sparams_selection_widget.setMinimumWidth(self.SPARAMS_SELECTION_MIN_W)
+        sparams_selection_widget.setMaximumWidth(self.SPARAMS_SELECTION_MIN_W)
 
         sparams_selection_label = QLabel("S-parameters:")
         sparams_selection_label.setStyleSheet("font-weight: bold;")
@@ -8788,8 +8959,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 self.edges = self.kron_graph['edges']
 
         try:
-            if not self.nodes:
-                print("No nodes to export")
+            if not self._has_drawable_content():
+                print("Nothing to export")
                 return
 
             filepath, _ = QFileDialog.getSaveFileName(
@@ -8832,6 +9003,47 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 self.edges = saved_edges
 
 
+    # S-parameter selection panel: sized to content between these bounds
+    # (long port labels like 'TL1*' used to be clipped by a hard 120 px cap)
+    SPARAMS_SELECTION_MIN_W = 120
+    SPARAMS_SELECTION_MAX_W = 340
+
+    def _fit_sparams_selection_width(self):
+        """Size the S-parameter selection column to its widest entry."""
+        widget = getattr(self, 'sparams_selection_widget', None)
+        boxes = getattr(self, 'sparams_checkboxes', None)
+        if widget is None:
+            return
+        texts = [cb.text() for cb in (boxes or {}).values()]
+        layout = getattr(self, 'sparams_checkbox_layout', None)
+        if layout is not None:                      # component header rows
+            for i in range(layout.count()):
+                w = layout.itemAt(i).widget()
+                if isinstance(w, QLabel):
+                    texts.append(w.text())
+        if not texts:
+            widget.setMaximumWidth(self.SPARAMS_SELECTION_MIN_W)
+            return
+        metrics = widget.fontMetrics()
+        text_w = max(metrics.horizontalAdvance(t) for t in texts)
+        # checkbox indicator + spacing + scrollbar + margins
+        needed = text_w + 60
+        widget.setMaximumWidth(int(min(max(needed,
+                                           self.SPARAMS_SELECTION_MIN_W),
+                                       self.SPARAMS_SELECTION_MAX_W)))
+
+    def _has_drawable_content(self):
+        """True when the canvas has something worth exporting.
+
+        Image exports capture the FIGURE, so a graph made only of port or
+        transmission-line glyphs (a terminated line, say) is perfectly
+        exportable even though it has no nodes at all. The old `not
+        self.nodes` guard silently refused those.
+        """
+        return bool(self.nodes
+                    or getattr(self, 'ports', None)
+                    or getattr(self, 'line_resonators', None))
+
     def _copy_graph_to_clipboard(self, include_png=True):
         """Copy the whole graph to the clipboard as vector PDF/SVG (+ PNG).
 
@@ -8862,8 +9074,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 self.edges = self.kron_graph['edges']
 
         try:
-            if not self.nodes:
-                print("No nodes to copy")
+            if not self._has_drawable_content():
+                print("Nothing to copy")
                 self.statusBar().showMessage("No graph to copy", 3000)
                 return
 
@@ -8917,8 +9129,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 self.edges = self.kron_graph['edges']
 
         try:
-            if not self.nodes:
-                print("No nodes to export")
+            if not self._has_drawable_content():
+                print("Nothing to export")
                 return
 
             filepath, _ = QFileDialog.getSaveFileName(
@@ -8980,7 +9192,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         str
             The SVG content as a string, or empty string if generation fails.
         """
-        if not self.nodes:
+        if not self._has_drawable_content():
             return ""
 
         # Determine which canvas to use
@@ -9047,8 +9259,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 self.edges = self.kron_graph['edges']
 
         try:
-            if not self.nodes:
-                print("No nodes to export")
+            if not self._has_drawable_content():
+                print("Nothing to export")
                 return
 
             filepath, _ = QFileDialog.getSaveFileName(
@@ -11252,6 +11464,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                         item.widget().deleteLater()
             if hasattr(self, 'sparams_checkboxes'):
                 self.sparams_checkboxes = {}
+            self._fit_sparams_selection_width()
             return
 
         # Get components list (or create single-element list for backward compatibility)
@@ -11285,15 +11498,14 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         # Port configuration changed - save this for future comparisons
         self._last_all_ports_sig = all_ports_sig
 
-        # Save current checkbox states by full S-parameter name (including component label)
+        # Save current checkbox states by (component, out label, in label) —
+        # a stable key, unlike the rendered text
         saved_states = {}
         if hasattr(self, 'sparams_checkboxes') and self.sparams_checkboxes:
             for key, checkbox in self.sparams_checkboxes.items():
-                try:
-                    sparam_name = checkbox.text()
-                    saved_states[sparam_name] = checkbox.isChecked()
-                except (IndexError, StopIteration):
-                    continue
+                state_key = checkbox.property('state_key')
+                if state_key is not None:
+                    saved_states[tuple(state_key)] = checkbox.isChecked()
 
         # Clear existing checkboxes
         while self.sparams_checkbox_layout.count():
@@ -11335,17 +11547,27 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     if k_info.get('conj', False):
                         k_label += '*'
 
-                    # Create checkbox with optional component prefix
+                    # "S_" is redundant under the "S-parameters:" header, and
+                    # bare concatenation is ambiguous once labels are longer
+                    # than one character ("TL1TL1*"), so name the trace by its
+                    # out <- in pair: S_jk is the response at j to a drive at k
+                    pair = f"{j_label} \N{LEFTWARDS ARROW} {k_label}"
                     if num_components > 1 and comp_label:
-                        sparam_name = f"{comp_label}: S_{j_label}{k_label}"
+                        sparam_name = f"{comp_label}: {pair}"
                     else:
-                        sparam_name = f"S_{j_label}{k_label}"
+                        sparam_name = pair
 
                     checkbox = QCheckBox(sparam_name)
 
-                    # Restore saved state if available, otherwise default to checked
-                    if sparam_name in saved_states:
-                        checkbox.setChecked(saved_states[sparam_name])
+                    # Restore saved state if available, otherwise default to
+                    # checked. The key is the LABEL tuple rather than the
+                    # rendered text, so selections survive a change to how the
+                    # trace name is formatted (and index shifts when a
+                    # component is added). Renaming a port does change the
+                    # key — the labels ARE the identity here.
+                    state_key = (comp_label, j_label, k_label)
+                    if state_key in saved_states:
+                        checkbox.setChecked(saved_states[state_key])
                     else:
                         checkbox.setChecked(True)  # All checked initially
 
@@ -11353,10 +11575,14 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     # Store component index and port indices as properties
                     checkbox.setProperty('component_index', comp_data.get('component_index', comp_idx))
                     checkbox.setProperty('port_indices', (j_idx, k_idx))
+                    checkbox.setProperty('state_key', state_key)
 
                     self.sparams_checkbox_layout.addWidget(checkbox)
                     # Use compound key: (component_index, j_idx, k_idx)
                     self.sparams_checkboxes[(comp_data.get('component_index', comp_idx), j_idx, k_idx)] = checkbox
+
+        # Size the column to the widest trace name now that they all exist
+        self._fit_sparams_selection_width()
 
         # Apply pending S-parameter settings from loaded file
         if hasattr(self, '_pending_sparams_settings') and self._pending_sparams_settings:
@@ -16571,7 +16797,10 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
         try:
             if not self.nodes:
-                print("No nodes to export")
+                # this export regenerates matplotlib code from nodes/edges;
+                # port and line glyphs have no representation in it
+                print("No nodes to export (port/line glyphs are not part of "
+                      "the drawing-code export)")
                 return
 
             # Calculate full graph extents including all objects first

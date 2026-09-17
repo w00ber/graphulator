@@ -23,6 +23,7 @@ app = QApplication.instance() or QApplication([])
 
 import graphulator.graphulator_para as gp                    # noqa: E402
 from graphulator import graphulator_para_config as config    # noqa: E402
+from graphulator.autograph import line_fsr_for_target         # noqa: E402
 
 
 def fresh_window():
@@ -142,6 +143,34 @@ def scene_line_pumped():
     save(win, "LINE_PUMPED_TERMINATION")
 
 
+def scene_line_pumped_both():
+    # f_p = 4.5 on an FSR=1.5, N=4 comb reaches BOTH families (sum pairs
+    # 1.5+3 and difference pairs 6-1.5), so the bus draws three strokes
+    win = fresh_window()
+    tl = win.add_line_resonator(label='TL1', pos=(0.0, 2.0), FSR=1.5,
+                                Ztx=65.0, f_max=6.0, port_end='xL')
+    win.set_line_pump(tl, 'x0', f_p=4.5, rate=0.05, n_ref=2,
+                      twin_pos=(0.0, -2.0))
+    save(win, "LINE_PUMPED_AMP_AND_CONV")
+
+
+def scene_line_pumped_loaded():
+    # the self-consistent version of scene_line_pumped: the modulated
+    # inductor is ALSO the line's end load, so the comb is the dispersed
+    # one (docs sec. 7). FSR comes from the closed-form inversion, so the
+    # loaded fundamental lands exactly on 4.0 -- no guessing.
+    win = fresh_window()
+    f_Z = 3.0
+    fsr = line_fsr_for_target(4.0, 1, f_Z, 'inductive')
+    tl = win.add_line_resonator(label='TL1', pos=(0.0, 2.0), FSR=fsr,
+                                Ztx=65.0, f_max=14.0, port_end='xL',
+                                load={'end': 'x0', 'type': 'inductive',
+                                      'f_Z': f_Z})
+    win.set_line_pump(tl, 'x0', f_p=9.0, rate=0.05, n_ref=1,
+                      twin_pos=(0.0, -2.0))
+    save(win, "LINE_PUMPED_LOADED")
+
+
 if __name__ == '__main__':
     os.makedirs(OUT_DIR, exist_ok=True)
     print("Generating test scenes:")
@@ -153,4 +182,6 @@ if __name__ == '__main__':
     scene_line_tap_2nodes()
     scene_node_2lines_tap()
     scene_line_pumped()
+    scene_line_pumped_both()
+    scene_line_pumped_loaded()
     print("done.")

@@ -32,6 +32,11 @@ Data shapes (GUI-side; the extractor schema lives in autograph.py):
         'pos': (x, y),
         'FSR': float, 'Ztx': float, 'f_max': float,
         'Z0_port': float, 'alpha_uniform': float,
+        'load': None | {'end': 'x0'|'xL', 'type': 'inductive', 'f_Z': float},
+                                      # shunt reactance at ONE end; None =
+                                      # both open. Disperses the comb, so
+                                      # f_n, u_n(end), C_n and gamma_n all
+                                      # move (see docs sec. 7)
         'ends': {                     # explicit terminations, never implied
             'x0': None | {'kind': 'port', 'port_id': int},
             'xL': None | {'kind': 'port', 'port_id': int},
@@ -71,7 +76,8 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QVBoxLayout,
                                QComboBox, QMessageBox, QDoubleSpinBox,
                                QSpinBox, QHBoxLayout)
 
-from ..autograph import LineResonator
+from ..autograph import (LineResonator, LINE_LOAD_TYPES,
+                        line_fsr_for_target)
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +113,26 @@ WIRE_COLOR = 'dimgray'
 WIRE_COLOR_INVERTED = 'firebrick'   # default for a sign = -1 attachment
 WIRE_COLOR_TAP = 'teal'             # conservative node tap
 WIRE_LINEWIDTH = 1.4                # data-unit base, scaled by linewidth_mult
-PUMP_BUS_COLOR = 'black'            # the double-line pump bus (crosses sectors)
+PUMP_BUS_COLOR = 'black'            # the pump bus (crosses sectors)
+
+# Stroke count of a pump bus. The PRXQ visual language reserves a SINGLE line
+# for conversion (beam-splitter) coupling and a DOUBLE line for amplification
+# (two-mode squeezing); a pump bus is neither, because ONE pump on a comb
+# drives both families at once through the same rank-one block (sec. 2 of
+# docs/pumped_line_termination.md). It therefore draws three strokes -- the
+# union -- ALWAYS.
+#
+# It is tempting to compute the count instead, showing 1 or 2 when only one
+# family is "reachable". Don't: on a harmonic comb the two families are
+# satisfied together (the self-phase-matching of sec. 4), so separating them
+# takes deliberate dispersion engineering -- a stepped-impedance resonator,
+# or the loaded-line dispersion of sec. 7 -- and claiming selectivity the
+# device does not have is exactly the error the triple line exists to
+# prevent. Worse, a reachability test keyed on the comb's band edge measures
+# f_max (a modelling choice) rather than the device: the same line and pump
+# flip from "amplification only" to "both" when f_max is raised, because the
+# conversion partners were real modes the short comb simply omitted.
+PUMP_BUS_STROKES = 3
 
 
 def _line_extractor_id(line):
@@ -171,6 +196,8 @@ def line_payload(line):
         'Z0_port': float(line.get('Z0_port', 50.0)),
         'alpha_uniform': float(line.get('alpha_uniform', 0.0)),
         'conj': bool(line.get('conj', False)),
+        # a shunt reactance at one end; None keeps the open-open comb
+        'load': (dict(line['load']) if line.get('load') else None),
     }
 
 
@@ -393,6 +420,8 @@ class LineInputDialog(QDialog):
         alpha_label.setToolTip(ALPHA_TOOLTIP)
         form.addRow(alpha_label, self.alpha_spin)
 
+        self._add_load_rows(form, line, spin)
+
         self.appearance = _add_appearance_rows(form, line, LINE_LINEWIDTH,
                                                '#cccccc')
 
@@ -402,12 +431,149 @@ class LineInputDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    # ---- end load (docs/pumped_line_termination.md sec. 7) ----
+
+    #: (combo text, (end, type) or None). Capacitive entries are listed but
+    #: DISABLED: their comb S11 does not converge with mode count (sec. 7.5),
+    #: so they are visible-but-refused rather than silently absent.
+    LOAD_CHOICES = [
+        ("none \u2014 both ends open", None),
+        ("inductive @ x = L", ('xL', 'inductive')),
+        ("inductive @ x = 0", ('x0', 'inductive')),
+        ("capacitive @ x = L  (not yet derived)", ('xL', 'capacitive')),
+        ("capacitive @ x = 0  (not yet derived)", ('x0', 'capacitive')),
+    ]
+
+    LOAD_TOOLTIP = (
+        "A shunt reactance terminating ONE end. It DISPERSES the comb: the "
+        "modes leave n\u00b7FSR and u_n(end), C_n and \u03b3_n move with "
+        "them, so FSR below becomes the geometric parameter v/2\u2113, not "
+        "the mode spacing. 'none' is the open\u2013open comb.\n\n"
+        "The TYPE is explicit, not read off a sign: this project uses "
+        "Z_ind = \u2212i\u03c9L, so an inductor's reactance is negative "
+        "here \u2014 the opposite of the textbook.")
+
+    FZ_TOOLTIP = (
+        "f_Z: the frequency at which |X_elem| = Ztx "
+        "(= Ztx/2\u03c0L inductive). One number, in absolute frequency, "
+        "with no reference frequency to agree on \u2014 an inductor looks "
+        "like a short below f_Z and an open above it.")
+
+    def _add_load_rows(self, form, line, spin):
+        from PySide6.QtWidgets import QPushButton
+        load = line.get('load') or None
+
+        self.load_combo = QComboBox()
+        for i, (text, value) in enumerate(self.LOAD_CHOICES):
+            self.load_combo.addItem(text, value)
+            if value is not None and value[1] not in ('inductive',):
+                item = self.load_combo.model().item(i)
+                item.setEnabled(False)
+                item.setToolTip(
+                    "Refused: the capacitive comb's S11 plateaus instead of "
+                    "converging with mode count, so a direct non-resonant "
+                    "term is missing. See docs sec. 7.5.")
+        self.load_combo.setToolTip(self.LOAD_TOOLTIP)
+        if load:
+            want = (load.get('end'), load.get('type'))
+            idx = next((i for i, (_, v) in enumerate(self.LOAD_CHOICES)
+                        if v == want), 0)
+            self.load_combo.setCurrentIndex(idx)
+        form.addRow("End load:", self.load_combo)
+
+        self.fz_spin = spin(float((load or {}).get('f_Z', 1.0)),
+                            1e-9, 1e12, 6, 0.1, self.FZ_TOOLTIP)
+        fz_label = QLabel("f_Z [au]:")
+        fz_label.setToolTip(self.FZ_TOOLTIP)
+        form.addRow(fz_label, self.fz_spin)
+
+        # "solve FSR for a TARGET loaded resonance" (sec. 7.3): closed form,
+        # no iteration. Without it the user has to guess FSR and re-check
+        # where the loaded fundamental actually landed.
+        solve_row = QHBoxLayout()
+        self.target_spin = spin(float(line.get('FSR', 1.0)), 1e-9, 1e12, 4,
+                                0.1, "Frequency the chosen LOADED mode "
+                                     "should land on")
+        self.target_mode_spin = QSpinBox()
+        self.target_mode_spin.setRange(1, 999)
+        self.target_mode_spin.setValue(1)
+        self.target_mode_spin.setToolTip(
+            "Which loaded mode to place: 1 is the quarter-wave-like "
+            "fundamental.")
+        self.solve_button = QPushButton("Set FSR")
+        self.solve_button.setToolTip(
+            "FSR = \u03c0 f / (arccot(x(f)) + (n\u22121)\u03c0) \u2014 "
+            "evaluating the resonance condition AT the target, so no "
+            "iteration and no guessing.")
+        self.solve_button.clicked.connect(self._solve_fsr)
+        for w in (self.target_spin, QLabel("mode"), self.target_mode_spin,
+                  self.solve_button):
+            solve_row.addWidget(w)
+        form.addRow("Target resonance:", solve_row)
+
+        self.load_status = QLabel("")
+        self.load_status.setWordWrap(True)
+        form.addRow("", self.load_status)
+
+        self.load_combo.currentIndexChanged.connect(self._refresh_load_rows)
+        for box in (self.fsr_spin, self.ztx_spin, self.fmax_spin,
+                    self.fz_spin):
+            box.valueChanged.connect(self._refresh_load_rows)
+        self._refresh_load_rows()
+
+    def _current_load(self):
+        value = self.load_combo.currentData()
+        if value is None:
+            return None
+        end, kind = value
+        return {'end': end, 'type': kind, 'f_Z': float(self.fz_spin.value())}
+
+    def _solve_fsr(self):
+        load = self._current_load()
+        if load is None:
+            return
+        self.fsr_spin.setValue(line_fsr_for_target(
+            float(self.target_spin.value()),
+            int(self.target_mode_spin.value()),
+            load['f_Z'], load['type']))
+
+    def _refresh_load_rows(self):
+        """Enable the load widgets only when a load is chosen, and show
+        where the loaded modes actually land."""
+        load = self._current_load()
+        for w in (self.fz_spin, self.target_spin, self.target_mode_spin,
+                  self.solve_button):
+            w.setEnabled(load is not None)
+        if load is None:
+            self.solve_button.setToolTip(
+                "Unloaded, mode n sits at n\u00b7FSR \u2014 set FSR = f/n "
+                "directly. Choose an end load to solve for a dispersed comb.")
+            self.load_status.setText(
+                "Open\u2013open comb: modes at n\u00b7FSR, \u03b3 the same "
+                "for every mode.")
+            return
+        try:
+            probe = LineResonator(
+                line_id='probe', FSR=float(self.fsr_spin.value()),
+                Ztx=float(self.ztx_spin.value()),
+                f_max=float(self.fmax_spin.value()), load=load)
+            freqs = probe.mode_freqs()[:6]
+        except Exception as exc:                        # pragma: no cover
+            self.load_status.setText(str(exc))
+            return
+        shown = ", ".join(f"{f:g}" for f in freqs)
+        more = " \u2026" if probe.N > len(freqs) else ""
+        self.load_status.setText(
+            f"Loaded modes: {shown}{more}   (N = {probe.N}; DC mode shorted "
+            f"away). FSR here is v/2\u2113, not the spacing.")
+
     def get_result(self):
         return {
             'label': self.label_edit.text().strip() or 'TL',
             'FSR': self.fsr_spin.value(),
             'Ztx': self.ztx_spin.value(),
             'f_max': self.fmax_spin.value(),
+            'load': self._current_load(),
             'port_end': (self.port_end_combo.currentData()
                          if self.port_end_combo is not None else None),
             'end_coupling': {e: c.currentData()
@@ -482,13 +648,16 @@ class PumpInputDialog(QDialog):
     """Pumped termination of a line: which end, pump frequency, coupling
     rate at the reference pair, pump phase, and the element type."""
 
-    def __init__(self, line_label, N, FSR, end='x0', f_p=None, rate_mau=50.0,
-                 phase=0.0, n_ref=None, coupling='inductive', parent=None,
-                 editing=False):
+    def __init__(self, line_label, resonator, end='x0', f_p=None,
+                 rate_mau=50.0, phase=0.0, n_ref=None, coupling='inductive',
+                 parent=None, editing=False):
         super().__init__(parent)
         self.setWindowTitle(("Edit" if editing else "Add")
                             + f" pumped termination of {line_label}")
-        self.N, self.FSR = int(N), float(FSR)
+        # the live resonator, so every frequency shown here is the LOADED
+        # one when an end is loaded (docs sec. 7.4)
+        self.resonator = resonator
+        self.N, self.FSR = int(resonator.N), float(resonator.FSR)
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
@@ -559,6 +728,8 @@ class PumpInputDialog(QDialog):
         self.coupling_combo.setCurrentIndex(0 if coupling == 'inductive' else 1)
         form.addRow("Element:", self.coupling_combo)
 
+        self._add_load_rows(form)
+
         layout.addLayout(form)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -569,23 +740,153 @@ class PumpInputDialog(QDialog):
         self.nref_spin.valueChanged.connect(lambda _v: self._refresh_partner())
         self._refresh_partner()
 
+    # ---- the modulated element as the line's end load (docs sec. 7.1) ----
+    #
+    # The element IS the load, so its type is already known here. What is
+    # NOT known is its reactance, and without it the comb keeps using the
+    # open-open roots -- which sec. 6 measured as a real error, not a
+    # rounding one. This section is how you supply it, and how you aim the
+    # LOADED fundamental at a frequency instead of guessing FSR.
+
+    def _add_load_rows(self, form):
+        from PySide6.QtWidgets import QPushButton
+        load = self.resonator.load or None
+
+        self.load_check = QCheckBox(
+            "model this element as the line's end load")
+        self.load_check.setChecked(bool(load))
+        self.load_check.setToolTip(
+            "Re-derive the comb on the LOADED basis: the modes leave "
+            "n\u00b7FSR and u_n(end), C_n and \u03b3_n move with them. "
+            "Unchecked, the comb stays open\u2013open and the termination's "
+            "dispersion is ignored (sec. 6 measures what that costs).")
+        form.addRow("End load:", self.load_check)
+
+        self.fz_spin = QDoubleSpinBox()
+        self.fz_spin.setRange(1e-9, 1e12)
+        self.fz_spin.setDecimals(6)
+        self.fz_spin.setSingleStep(0.1)
+        self.fz_spin.setValue(float((load or {}).get('f_Z', self.FSR)))
+        self.fz_spin.setToolTip(
+            "f_Z: the frequency at which |X_elem| = Ztx (= Ztx/2\u03c0L for "
+            "an inductor). Absolute frequency, no reference to agree on.")
+        form.addRow("f_Z [au]:", self.fz_spin)
+
+        solve_row = QHBoxLayout()
+        self.target_spin = QDoubleSpinBox()
+        self.target_spin.setRange(1e-9, 1e12)
+        self.target_spin.setDecimals(4)
+        self.target_spin.setSingleStep(0.1)
+        self.target_spin.setValue(float(self.resonator.mode_freq(1)))
+        self.target_spin.setToolTip(
+            "Where the chosen LOADED mode should land.")
+        self.target_mode_spin = QSpinBox()
+        self.target_mode_spin.setRange(1, 999)
+        self.target_mode_spin.setValue(1)
+        self.target_mode_spin.setPrefix("mode ")
+        self.solve_button = QPushButton("Set FSR")
+        self.solve_button.setToolTip(
+            "Solves FSR = \u03c0 f / (arccot(x(f)) + (n\u22121)\u03c0) and "
+            "applies it to the line, so the loaded resonance lands where you "
+            "asked instead of where the open\u2013open guess put it.")
+        self.solve_button.clicked.connect(self._solve_fsr)
+        for w in (self.target_spin, self.target_mode_spin, self.solve_button):
+            solve_row.addWidget(w)
+        form.addRow("Target resonance:", solve_row)
+
+        self.load_status = QLabel("")
+        self.load_status.setWordWrap(True)
+        self.load_status.setStyleSheet("color: #666; font-style: italic;")
+        form.addRow("", self.load_status)
+
+        self.load_check.toggled.connect(lambda _v: self._refresh_load())
+        self.coupling_combo.currentIndexChanged.connect(
+            lambda _v: self._refresh_load())
+        self.fz_spin.valueChanged.connect(lambda _v: self._refresh_load())
+        self._refresh_load()
+
+    def _load_result(self):
+        """The load this dialog describes, or None."""
+        if not self.load_check.isChecked():
+            return None
+        return {'end': self.end_combo.currentData(),
+                'type': self.coupling_combo.currentData(),
+                'f_Z': float(self.fz_spin.value())}
+
+    def _probe(self):
+        """A resonator carrying the load currently described here."""
+        load = self._load_result()
+        return LineResonator(
+            line_id='probe', FSR=float(self.FSR), Ztx=self.resonator.Ztx,
+            f_max=self.resonator.f_max, Z0_port=self.resonator.Z0_port,
+            load=load)
+
+    def _solve_fsr(self):
+        load = self._load_result()
+        if load is None:
+            return
+        self.FSR = line_fsr_for_target(float(self.target_spin.value()),
+                                       int(self.target_mode_spin.value()),
+                                       load['f_Z'], load['type'])
+        self._refresh_load()
+        self._refresh_partner()
+
+    def _refresh_load(self):
+        on = self.load_check.isChecked()
+        for w in (self.fz_spin, self.target_spin, self.target_mode_spin,
+                  self.solve_button):
+            w.setEnabled(on)
+        if not on:
+            self.load_status.setText(
+                f"open\u2013open comb: modes at n\u00b7{self.FSR:g}")
+            return
+        try:
+            probe = self._probe()
+            self.N = probe.N
+            shown = ", ".join(f"{f:g}" for f in probe.mode_freqs()[:6])
+            more = " \u2026" if probe.N > 6 else ""
+            self.load_status.setText(
+                f"FSR = {self.FSR:g} (= v/2\u2113); loaded modes "
+                f"{shown}{more}")
+        except ValueError as exc:
+            self.N = self.resonator.N
+            self.load_status.setText(str(exc))
+        self.nref_spin.setRange(1, max(1, self.N))
+        self._refresh_partner()
+
+    def _mode_freq(self, n):
+        """Mode frequency under the load currently described here."""
+        try:
+            return self._probe().mode_freq(n)
+        except ValueError:
+            return n * self.FSR
+
     def _refresh_partner(self):
         n = self.nref_spin.value()
-        f_partner = self.fp_spin.value() - n * self.FSR
-        m = int(min(max(int(round(f_partner / self.FSR)), 1), max(1, self.N)))
-        mismatch = f_partner - m * self.FSR
+        f_partner = self.fp_spin.value() - self._mode_freq(n)
+        m = int(min(range(1, max(1, self.N) + 1),
+                    key=lambda k: abs(self._mode_freq(k) - abs(f_partner))))
+        mismatch = f_partner - self._mode_freq(m)
         tag = "degenerate" if m == n else f"idler partner m = {m}"
         self.partner_label.setText(
             f"{tag}  (f_p \N{MINUS SIGN} f_n = {f_partner:g}; "
-            f"off harmonic by {mismatch:+g})")
+            f"off mode by {mismatch:+g})")
 
     def get_result(self):
+        """Pump params, plus the load and FSR the load section settled on.
+
+        `load` and `FSR` are applied to the LINE by the caller before the
+        pump is set: the modulated element is the load, so they are one
+        edit, not two.
+        """
         return {'end': self.end_combo.currentData(),
                 'f_p': self.fp_spin.value(),
                 'rate': self.rate_spin.value() / 1000.0,
                 'phase': self.phase_spin.value(),
                 'n_ref': self.nref_spin.value(),
-                'coupling': self.coupling_combo.currentData()}
+                'coupling': self.coupling_combo.currentData(),
+                'load': self._load_result(),
+                'FSR': float(self.FSR)}
 
 
 class AttachmentEditDialog(QDialog):
@@ -701,7 +1002,7 @@ class ExplicitPortsMixin:
                            Z0_port=50.0, alpha_uniform=0.0, angle=0.0,
                            end_coupling=None, w_mult=1.0, h_mult=1.0,
                            linewidth=None, color='black', fill='#cccccc',
-                           conj=False, twin_of=None):
+                           conj=False, twin_of=None, load=None):
         """Create a transmission-line macro glyph."""
         if label is None:
             label = f"TL{self.line_id_counter + 1}"
@@ -739,6 +1040,9 @@ class ExplicitPortsMixin:
             'port_end': port_end,
             'Z0_port': float(Z0_port),
             'alpha_uniform': float(alpha_uniform),
+            # Shunt reactance terminating ONE end (see set_line_load); None
+            # leaves both ends open, which is the f_Z -> 0 inductive limit.
+            'load': (dict(load) if load else None),
         }
         # Validate parameters early through the numerics-side schema
         LineResonator(**line_payload(line))
@@ -1542,7 +1846,7 @@ class ExplicitPortsMixin:
         pump = line.get('pump') or {}
         resonator = self.line_resonator_for(line)
         dialog = PumpInputDialog(
-            line['label'], resonator.N, resonator.FSR,
+            line['label'], resonator,
             end=pump.get('end', 'x0'), f_p=pump.get('f_p'),
             rate_mau=pump.get('rate', 0.05) * 1000.0,
             phase=pump.get('phase', 0.0), n_ref=pump.get('n_ref'),
@@ -1560,10 +1864,20 @@ class ExplicitPortsMixin:
         result = self._prompt_pump_params(line, editing=editing)
         if result is None:
             return
+        load = result.pop('load', None)
+        fsr = result.pop('FSR', None)
+        # The element IS the load, so FSR, the basis and the pump are ONE
+        # edit. Keep the pre-edit values so a refusal (e.g. a capacitive
+        # load) cannot leave the line half-changed.
+        prev = {'FSR': line['FSR'], 'load': line.get('load')}
         self._save_state()
         try:
+            if fsr is not None:
+                line['FSR'] = float(fsr)
+            self.set_line_load(line, load)
             self.set_line_pump(line, **result)
         except ValueError as exc:
+            line.update(prev)
             if self.undo_stack:
                 self.undo_stack.pop()
             QMessageBox.warning(self, "Cannot pump this line", str(exc))
@@ -1592,6 +1906,41 @@ class ExplicitPortsMixin:
         primary = self.line_primary(line)
         return bool(primary and primary.get('pump')
                     and primary['pump'].get('end') == end)
+
+    def pump_truncation_gaps(self, line):
+        """Families whose partners fall OUTSIDE the truncated comb.
+
+        Returns a subset of {'amplification', 'conversion'}: a warning that
+        f_max is too small for this pump, NOT a statement about the device.
+        In the two-cluster picture a signal at omega pairs with the twin's
+        +m member at omega = f_p - f_m (amplification) and with its -m member
+        at omega = f_p + f_m (conversion); when those land beyond the comb's
+        last harmonic the process is missing from the MODEL while remaining
+        perfectly real in the line.
+
+        This is deliberately not wired to the bus glyph -- see
+        PUMP_BUS_STROKES for why the stroke count must not be computed.
+        """
+        pump = line.get('pump')
+        if not pump:
+            return set()
+        res = self.line_resonator_for(line)
+        f_p = float(pump['f_p'])
+        # first and last mode the comb actually holds — the LOADED ones when
+        # an end is loaded, since those are the modes that can pair up
+        lo, hi = res.mode_freq(1), res.mode_freq(res.N)
+        gaps = set()
+        # Amplification needs a pair summing to f_p with BOTH members in the
+        # comb: f_m in [f_p - hi, f_p - lo] must meet [lo, hi]. Below 2*lo no
+        # such pair exists in the line either, so that is a real absence, not
+        # a truncation gap.
+        if f_p >= 2 * lo and f_p > 2 * hi:
+            gaps.add('amplification')
+        # Conversion needs f_p + f_m <= hi for some m; the line always has
+        # such a mode, so failing here is purely the truncation.
+        if f_p + lo > hi:
+            gaps.add('conversion')
+        return gaps
 
     def _pump_bus_wire(self, line):
         """Sampled wire of the pump bus from `line`'s pumped end into its
@@ -2078,13 +2427,36 @@ class ExplicitPortsMixin:
         return next((l for l in self.line_resonators
                      if l['line_id'] == line['twin_of']), None)
 
+    @staticmethod
+    def _clamp_mode(resonator, n, label, what):
+        """Keep a stored reference mode inside the comb.
+
+        f_max and the end load both move N, and neither edit can reach back
+        into the taps and pumps that named a mode. Clamping keeps drawing
+        and extraction working; the warning says why the number moved.
+        """
+        n = int(n)
+        if 1 <= n <= resonator.N:
+            return n
+        logger.warning(
+            "%s on line %r references mode %d, outside the %d-mode comb; "
+            "clamping. Raise f_max or re-enter the reference mode.",
+            what, label, n, resonator.N)
+        return int(min(max(n, 1), resonator.N))
+
     def _pump_reference_pair(self, line):
-        """(n_ref, m_ref): the signal harmonic the rate is defined at and
-        its idler partner, the harmonic nearest f_p - n_ref*FSR."""
+        """(n_ref, m_ref): the signal mode the rate is defined at and its
+        idler partner, the mode nearest f_p - f_(n_ref).
+
+        Uses the LOADED mode frequencies when an end is loaded: on a
+        dispersed comb the n-th mode is not at n*FSR, so pairing off
+        n_ref*FSR would name the wrong partner (docs sec. 7.4).
+        """
         pump = line['pump']
         resonator = self.line_resonator_for(line)
-        n_ref = int(pump.get('n_ref', 1))
-        f_partner = float(pump['f_p']) - n_ref * resonator.FSR
+        n_ref = self._clamp_mode(resonator, pump.get('n_ref', 1),
+                                 line['label'], 'pump')
+        f_partner = float(pump['f_p']) - resonator.mode_freq(n_ref)
         return n_ref, resonator.nearest_harmonic(f_partner)
 
     def set_line_pump(self, line, end, f_p, rate, phase=0.0, n_ref=None,
@@ -2134,6 +2506,10 @@ class ExplicitPortsMixin:
                 FSR=line['FSR'], Ztx=line['Ztx'], f_max=line['f_max'],
                 port_end=None, Z0_port=line.get('Z0_port', 50.0),
                 alpha_uniform=line.get('alpha_uniform', 0.0),
+                # the twin is the same physical line: it is BORN with the
+                # end load, not given it by the later _sync_twin, or its
+                # own validation would run against the wrong basis
+                load=(dict(line['load']) if line.get('load') else None),
                 end_coupling=dict(line.get('end_coupling') or {}),
                 w_mult=line.get('w_mult', 1.0), h_mult=line.get('h_mult', 1.0),
                 linewidth=line.get('linewidth'), color=line.get('color', 'black'),
@@ -2160,6 +2536,29 @@ class ExplicitPortsMixin:
         self._sync_twin(line)
         self._invalidate_scattering_data()
         return twin
+
+    def set_line_load(self, line, load):
+        """Terminate ONE end of `line` in a shunt reactance (docs sec. 7).
+
+        The comb is then re-derived on the LOADED basis: the modes leave
+        n*FSR, the DC mode is shorted away, and u_n(end), C_n and gamma_n
+        move with the roots. `load` is {'end', 'type', 'f_Z'} or None (both
+        ends open, the open-open comb). Validation goes through
+        LineResonator, so a capacitive load is refused here with its reason
+        rather than silently producing a non-convergent comb (sec. 7.5).
+
+        A pumped line's twin carries the same load: it is the same physical
+        line seen in the idler sector.
+        """
+        if line.get('twin_of') is not None:
+            raise ValueError("Load the primary line, not its conjugate twin.")
+        candidate = dict(line)
+        candidate['load'] = (dict(load) if load else None)
+        LineResonator(**line_payload(candidate))        # validates or raises
+        line['load'] = candidate['load']
+        self._sync_twin(line)
+        self._invalidate_scattering_data()
+        return line['load']
 
     def clear_line_pump(self, line):
         """Remove the pumped termination and its twin glyph."""
@@ -2193,6 +2592,9 @@ class ExplicitPortsMixin:
             return
         for key in TWIN_MIRRORED_KEYS:
             twin[key] = line[key]
+        # the twin is the SAME physical line in the idler sector, so it
+        # carries the same end load and hence the same dispersed basis
+        twin['load'] = (dict(line['load']) if line.get('load') else None)
         twin['end_coupling'] = dict(line.get('end_coupling')
                                     or {'x0': 'capacitive', 'xL': 'capacitive'})
         twin['label'] = f"{line['label']}*"
@@ -2273,7 +2675,8 @@ class ExplicitPortsMixin:
                         continue
                     rate = float(conn.get('rate', 0.0))
                     flip = conn.get('sign', 1) < 0
-                    n_ref = int(conn.get('n_ref', 1))
+                    n_ref = self._clamp_mode(resonator, conn.get('n_ref', 1),
+                                             line['label'], 'tap')
                     for comb_id, weight, phase in resonator.tap_couplings(
                             end, n_ref, coupling):
                         if flip:
@@ -2508,6 +2911,39 @@ class ExplicitPortsMixin:
             pts[:, 0], pts[:, 1], color=color, linewidth=linewidth,
             linestyle=linestyle, zorder=zorder, alpha=alpha,
             solid_capstyle='round'))
+
+    def _draw_multi_wire(self, ax, pts, n_strokes, color, linewidth,
+                         selected=False, zorder=4):
+        """Draw a wire as `n_strokes` parallel strokes.
+
+        The PRXQ visual language reserves a single line for conversion
+        (beam-splitter) coupling and a double line for amplification
+        (two-mode squeezing). A pump bus can carry either or both, so the
+        stroke count says which: 1 = conversion only, 2 = amplification
+        only, 3 = both. Strokes are offset along the curve normal so the
+        count reads at any curvature.
+        """
+        if n_strokes <= 1:
+            self._draw_wire(ax, pts, color, linewidth, selected=selected,
+                            zorder=zorder)
+            return
+        tang = np.gradient(pts, axis=0)
+        norm = np.stack([-tang[:, 1], tang[:, 0]], axis=1)
+        length = np.hypot(norm[:, 0], norm[:, 1])
+        length[length == 0.0] = 1.0
+        norm = norm / length[:, None]
+        gap = 0.075 * self.node_radius
+        offsets = (np.arange(n_strokes) - (n_strokes - 1) / 2.0) * gap
+        if selected:                      # one halo around the whole bundle
+            self._draw_wire(ax, pts + norm * offsets[0], color, linewidth,
+                            selected=True, zorder=zorder)
+            self._draw_wire(ax, pts + norm * offsets[-1], color, linewidth,
+                            selected=True, zorder=zorder)
+        for off in offsets:
+            ax.add_line(mlines.Line2D(
+                (pts + norm * off)[:, 0], (pts + norm * off)[:, 1],
+                color=color, linewidth=linewidth, zorder=zorder,
+                alpha=0.9, solid_capstyle='round'))
 
     def _draw_wire_label(self, ax, pts, conn, ppdu, color, fallback=None):
         """Label a wire at its midpoint, node-style (edge-label parity).
@@ -2844,12 +3280,8 @@ class ExplicitPortsMixin:
             pump = line['pump']
             selected = line in getattr(self, 'selected_pump_buses', [])
             color, lw = self.wire_style(pump, PUMP_BUS_COLOR)
-            outer = max(3.0 * lw, lw + 2.4)
-            self._draw_wire(ax, pts, color, outer, selected=selected,
-                            zorder=4)
-            ax.add_line(mlines.Line2D(
-                pts[:, 0], pts[:, 1], color='white', linewidth=outer - 2.0 * lw,
-                zorder=4.1, solid_capstyle='butt'))
+            self._draw_multi_wire(ax, pts, PUMP_BUS_STROKES, color, lw,
+                                  selected=selected, zorder=4)
             n_ref, m_ref = self._pump_reference_pair(line)
             self._draw_wire_label(
                 ax, pts, pump, ppdu, color,
@@ -2907,6 +3339,7 @@ class ExplicitPortsMixin:
                     'port_end': l.get('port_end'),   # legacy, read on load
                     'Z0_port': l.get('Z0_port', 50.0),
                     'alpha_uniform': l.get('alpha_uniform', 0.0),
+                    'load': (dict(l['load']) if l.get('load') else None),
                     'pump': (dict(l['pump']) if l.get('pump') else None),
                     'conj': bool(l.get('conj', False)),
                     'twin_of': l.get('twin_of'),
@@ -2992,6 +3425,7 @@ class ExplicitPortsMixin:
                 'port_end': ldata.get('port_end'),
                 'Z0_port': float(ldata.get('Z0_port', 50.0)),
                 'alpha_uniform': float(ldata.get('alpha_uniform', 0.0)),
+                'load': (dict(ldata['load']) if ldata.get('load') else None),
                 'pump': (dict(ldata['pump']) if ldata.get('pump') else None),
                 'conj': bool(ldata.get('conj', False)),
                 'twin_of': ldata.get('twin_of'),

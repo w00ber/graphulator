@@ -12,6 +12,7 @@ import json
 import logging
 import numpy as np
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Tuple, Set, Optional, Any, Union
 from more_itertools import collapse
@@ -113,6 +114,7 @@ def pgraph_line_to_resonator(line_data) -> "LineResonator":
         Z0_port=float(line_data.get('Z0_port', 50.0)),
         alpha_uniform=float(line_data.get('alpha_uniform', 0.0)),
         conj=bool(line_data.get('conj', False)),
+        load=line_data.get('load'),
     )
 
 # ---------------------------------------------------------------------------
@@ -322,6 +324,116 @@ def _line_comb_natural(N, Z0, signs=True):
     return np.array(poles), np.array(kap, dtype=float), gam
 
 
+# ---------------------------------------------------------------------------
+# Loaded (reactively terminated) lines
+# ---------------------------------------------------------------------------
+#
+# A shunt reactance at one end DISPERSES the comb: the modes no longer sit at
+# n*FSR, and u_n(end), C_n and gamma_n all move with them. Everything below is
+# derived in docs/pumped_line_termination.md section 7 and reproduced
+# numerically by misc/loaded_line_checks.py; the gate is
+# tests/test_loaded_line.py (complex S11 vs exact ABCD through
+# tests/cmtline_core.py).
+#
+# Parameterization (7.1-7.2): an explicit TYPE plus one magnitude f_Z, the
+# frequency at which |X_elem| = Ztx. The SIGN of the reactance is deliberately
+# not the handle: this project's convention is Z_ind = -i w L and
+# Z_cap = +i/(w C), so here an inductor's reactance is negative and a
+# capacitor's positive -- the opposite of the textbook reading -- and a sign
+# only determines the frequency dependence for a single element anyway.
+
+LINE_LOAD_TYPES = ('inductive', 'capacitive')
+LINE_LOAD_ENDS = ('x0', 'xL')
+
+_CAPACITIVE_LOAD_MSG = (
+    "LineResonator '{line_id}': a capacitive end load is not supported yet. "
+    "Its comb S11 does not converge with mode count -- it plateaus near 0.94 "
+    "from N=10 to N=80 against exact ABCD, instead of falling like 1/N as the "
+    "inductive case does -- so a direct, non-resonant term (a Foster pole at "
+    "infinity) is missing from the comb and the answer would be silently "
+    "wrong. See docs/pumped_line_termination.md section 7.5. Inductive loads "
+    "are verified and available."
+)
+
+
+def line_load_reactance(f, f_Z, kind):
+    """Normalized reactance x = X_elem/Ztx at linear frequency `f` (7.2).
+
+    f_Z is the frequency where |X_elem| = Ztx, so x = f/f_Z for an inductor
+    and -f_Z/f for a capacitor, in absolute frequency with no reference
+    frequency to agree on.
+    """
+    if kind == 'inductive':
+        return float(f) / float(f_Z)
+    if kind == 'capacitive':
+        return -float(f_Z) / float(f)
+    raise ValueError(f"load type must be one of {LINE_LOAD_TYPES!r}, "
+                     f"got {kind!r}")
+
+
+@lru_cache(maxsize=8192)
+def line_loaded_theta(n, FSR, f_Z, kind):
+    """theta_n = k_n*ell of the n-th loaded mode (n >= 1), in radians.
+
+    Solves the source-free condition cot(theta) = x(f), f = theta*FSR/pi, on
+    the bracket theta in ((n-1)pi, n pi). The residual is taken in the
+    POLE-FREE form
+
+        h(theta) = s * (cos theta - x(f) sin theta),   s = (-1)^(n-1),
+
+    which is exactly +1 at the lower end of the bracket and -1 at the upper
+    (both endpoints have sin theta = 0), so bisection always brackets. cot is
+    strictly decreasing across the interval and x is monotone, so the root is
+    unique. Bisection runs to adjacent floats.
+    """
+    n = int(n)
+    if n < 1:
+        raise ValueError("loaded mode index must be >= 1 "
+                         "(an inductive load shorts DC; see section 7.4)")
+    s = (-1.0) ** (n - 1)
+    if kind == 'inductive':
+        a = FSR / (np.pi * f_Z)                      # x(theta) = a*theta
+        def h(t):
+            return s * (np.cos(t) - a * t * np.sin(t))
+    elif kind == 'capacitive':
+        b = np.pi * f_Z / FSR                        # x(theta) = -b/theta
+        def h(t):
+            # (b/theta) sin theta = b * sinc(theta/pi), finite at theta = 0
+            return s * (np.cos(t) + b * np.sinc(t / np.pi))
+    else:
+        raise ValueError(f"load type must be one of {LINE_LOAD_TYPES!r}, "
+                         f"got {kind!r}")
+    lo, hi = (n - 1) * np.pi, n * np.pi
+    while True:
+        mid = 0.5 * (lo + hi)
+        if not (lo < mid < hi):                      # adjacent floats
+            return float(mid)
+        if h(mid) > 0.0:
+            lo = mid
+        else:
+            hi = mid
+
+
+def line_fsr_for_target(f_target, n, f_Z, kind):
+    """FSR putting the n-th LOADED mode at `f_target` -- closed form (7.3).
+
+        FSR = pi f_t / (arccot(x(f_t)) + (n-1) pi),   arccot in (0, pi)
+
+    Evaluating the resonance condition AT the target removes the iteration
+    entirely. n = 1 is the quarter-wave-like fundamental.
+
+    Note what FSR then means: the GEOMETRIC parameter v/2*ell, not the mode
+    spacing -- a loaded comb is not uniformly spaced.
+    """
+    n = int(n)
+    if n < 1:
+        raise ValueError("target mode index must be >= 1")
+    if f_target <= 0:
+        raise ValueError("target frequency must be > 0")
+    x = line_load_reactance(f_target, f_Z, kind)
+    return float(np.pi * f_target / (np.arctan2(1.0, x) + (n - 1) * np.pi))
+
+
 @dataclass
 class LineResonator:
     """Transmission-line standing-wave comb macro (GUI glyph: cylinder, "L").
@@ -356,6 +468,14 @@ class LineResonator:
         One-way amplitude attenuation alpha*ell in nepers; maps to per-mode
         B_int = (2/pi) alpha FSR (see module comment; gated by
         tests/test_uniform_loss.py).
+    load : None | dict
+        Optional shunt reactance terminating ONE end,
+        ``{'end': 'x0'|'xL', 'type': 'inductive', 'f_Z': float}``. None (the
+        default) means both ends open, which reproduces the open-open comb
+        bit-for-bit. A load disperses the comb: the modes move off n*FSR and
+        u_n(end), C_n and gamma_n move with them (see the module comment
+        above this class and docs/pumped_line_termination.md section 7).
+        Capacitive loads are refused pending their direct term (7.5).
     """
 
     line_id: Any
@@ -372,43 +492,198 @@ class LineResonator:
     #: hub on this comb stays single-sector (a resistor does not convert
     #: frequency: one hub column per sector).
     conj: bool = False
+    #: Shunt reactance at one end; see the class docstring and section 7.
+    load: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
+        self.load = self._normalize_load(self.load)
         if self.port_end not in _LINE_PORT_ENDS:
             raise ValueError(_LINE_TWO_PORT_MSG.format(
                 line_id=self.line_id, ends=_LINE_PORT_ENDS))
         if self.FSR <= 0:
             raise ValueError(f"LineResonator '{self.line_id}': FSR must be > 0")
-        if self.f_max < self.FSR:
+        if self.f_max <= 0:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': f_max must be > 0")
+        if self.load is None and self.f_max < self.FSR:
+            # Only meaningful on the open-open comb, where FSR IS the mode
+            # spacing. Loaded, FSR is the geometric parameter v/2*ell and
+            # the fundamental can sit far below it (a near-shorted end puts
+            # it at FSR/2, and a weakly loaded one lower still), so the comb
+            # always holds at least one pair and this test would refuse
+            # perfectly ordinary lines.
             raise ValueError(
                 f"LineResonator '{self.line_id}': f_max ({self.f_max}) must "
                 f"be >= FSR ({self.FSR}) so the comb has at least one pair")
         if not self.label:
             self.label = str(self.line_id)
 
+    def _normalize_load(self, load):
+        """Validate and canonicalize the optional end load (7.1-7.2)."""
+        if not load:
+            return None
+        end, kind, f_Z = load.get('end'), load.get('type'), load.get('f_Z')
+        if end not in LINE_LOAD_ENDS:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': load end must be one of "
+                f"{LINE_LOAD_ENDS!r}, got {end!r}")
+        if kind not in LINE_LOAD_TYPES:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': load type must be one of "
+                f"{LINE_LOAD_TYPES!r}, got {kind!r}. The TYPE is explicit on "
+                f"purpose -- the sign of the reactance is convention-"
+                f"dependent here (Z_ind = -i w L), see section 7.1.")
+        if kind == 'capacitive':
+            raise ValueError(_CAPACITIVE_LOAD_MSG.format(line_id=self.line_id))
+        if f_Z is None or float(f_Z) <= 0:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': load f_Z must be > 0 -- it "
+                f"is the frequency at which |X_elem| = Ztx, got {f_Z!r}")
+        return {'end': end, 'type': kind, 'f_Z': float(f_Z)}
+
+    @property
+    def loaded(self) -> bool:
+        """True when one end carries a shunt reactance."""
+        return self.load is not None
+
+    @property
+    def _skip_dc(self) -> bool:
+        """An inductive load shorts DC, so the free n=0 mode is gone (7.4)."""
+        return self.load is not None and self.load['type'] == 'inductive'
+
+    @property
+    def _origin_end(self) -> str:
+        """The end that plays x = 0 in u_n(x) = cos(k_n x): the OPEN one."""
+        if self.load is None:
+            return 'x0'
+        return 'x0' if self.load['end'] == 'xL' else 'xL'
+
     @property
     def N(self) -> int:
-        """Number of nonzero-frequency pole pairs, N = ceil(f_max/FSR)."""
-        return int(np.ceil(self.f_max / self.FSR))
+        """Number of nonzero-frequency pole pairs the comb carries.
+
+        Unloaded this is ceil(f_max/FSR). Loaded the modes are not at n*FSR,
+        so it is the smallest n whose LOADED frequency reaches f_max --
+        which reduces to ceil(f_max/FSR) when the roots are n*FSR, and is
+        never smaller (f_n < n*FSR always).
+        """
+        n = int(np.ceil(self.f_max / self.FSR))
+        if self.load is None:
+            return n
+        while self.mode_freq(n) < self.f_max:
+            n += 1
+        return n
+
+    def mode_theta(self, n) -> float:
+        """theta_n = k_n*ell of mode n >= 1 (exactly n*pi when unloaded)."""
+        n = int(n)
+        if n < 1:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': mode index must be >= 1; "
+                f"the n=0 free mode has no k*ell root")
+        if self.load is None:
+            return float(n) * np.pi
+        return line_loaded_theta(n, float(self.FSR), float(self.load['f_Z']),
+                                 self.load['type'])
+
+    def mode_freq(self, n) -> float:
+        """Linear frequency of mode n >= 1 (n*FSR when unloaded)."""
+        if self.load is None:
+            return float(int(n)) * self.FSR
+        return self.mode_theta(n) * self.FSR / np.pi
+
+    def mode_freqs(self):
+        """[f_1, ..., f_N] -- the positive half of the comb."""
+        return [self.mode_freq(n) for n in range(1, self.N + 1)]
+
+    @property
+    def C_line(self) -> float:
+        """Total line capacitance c*ell = 1/(2 Ztx FSR)."""
+        return 1.0 / (2.0 * self.Ztx * self.FSR)
+
+    @property
+    def C_load(self) -> float:
+        """The load's shunt capacitance; 0 unless the load is capacitive."""
+        if self.load is None or self.load['type'] != 'capacitive':
+            return 0.0
+        return 1.0 / (2.0 * np.pi * self.load['f_Z'] * self.Ztx)
+
+    def mode_profile(self, n, end) -> float:
+        """u_n(end): +1 at the open end, cos(k_n ell) at the far one.
+
+        Unloaded this is the familiar all-plus / alternating pattern, since
+        cos(n pi) = (-1)^n.
+        """
+        if end not in LINE_LOAD_ENDS:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': end must be 'x0' or 'xL', "
+                f"got {end!r}")
+        if end == self._origin_end:
+            return 1.0
+        return float(np.cos(self.mode_theta(n)))
+
+    def mode_mass(self, n) -> float:
+        """C_n (7.4): the line's own share, plus a shunt capacitor's.
+
+        A shunt capacitor's energy (1/2) C Phi_dot(ell)^2 is KINETIC, so it
+        adds to the mode's mass; an inductor's (1/2) Phi(ell)^2/L is
+        potential and the eigenvalue already carries it.
+        """
+        th = self.mode_theta(n)
+        line_share = self.C_line * (0.5 + np.sin(2.0 * th) / (4.0 * th))
+        return float(line_share + self.C_load * np.cos(th) ** 2)
+
+    def mode_gamma(self, n) -> float:
+        """gamma_n = 1/(2 pi Z0 C_n): the port rate for a UNIT profile (7.4).
+
+        The rate a port at `end` actually sees is u_n(end)^2 times this; the
+        couplings below carry the profile explicitly. Reduces to the
+        n-independent (2/pi)(Ztx/Z0) FSR on the open-open comb.
+        """
+        return float(1.0 / (2.0 * np.pi * self.Z0_port * self.mode_mass(n)))
+
+    def _comb_ks(self):
+        """Comb mode indices in expansion order, DC first when it exists."""
+        ks = [] if self._skip_dc else [0]
+        for n in range(1, self.N + 1):
+            ks += [n, -n]
+        return ks
 
     def expand_arrays(self):
         """Return (freqs, kappas, gamma_phys, N) in physical units.
 
-        freqs[i], kappas[i] follow the reference comb order
+        Unloaded, freqs[i]/kappas[i] follow the reference comb order
         [0, +FSR, -FSR, +2 FSR, -2 FSR, ...] (frequencies to ~1 ulp of
         k*FSR — they are produced by the tested unit mapping, not by
-        multiplying k*FSR directly).
+        multiplying k*FSR directly) and gamma_phys is the single scalar
+        (2/pi)(Ztx/Z0) FSR. This path is untouched by the loaded basis and
+        stays bitwise equal to cmtline_core.
+
+        Loaded, the DC mode is dropped (an inductive load shorts it), the
+        frequencies are the loaded roots, and gamma_phys comes back as a
+        PER-MODE array aligned with freqs — the whole point of section 7.4
+        is that the port rate is no longer n-independent.
         """
-        poles_nat, kap_nat, gam_nat = _line_comb_natural(
-            self.N, self.Z0_port / self.Ztx, signs=(self.port_end == 'xL'))
-        freqs = line_natural_frequency_to_physical(poles_nat, self.FSR)
-        kappas = line_natural_coupling_to_physical(kap_nat, self.FSR)
-        gamma_phys = line_natural_frequency_to_physical(gam_nat, self.FSR)
+        if self.load is None:
+            poles_nat, kap_nat, gam_nat = _line_comb_natural(
+                self.N, self.Z0_port / self.Ztx, signs=(self.port_end == 'xL'))
+            freqs = line_natural_frequency_to_physical(poles_nat, self.FSR)
+            kappas = line_natural_coupling_to_physical(kap_nat, self.FSR)
+            gamma_phys = line_natural_frequency_to_physical(gam_nat, self.FSR)
+            return freqs, kappas, gamma_phys, self.N
+
+        ks = self._comb_ks()
+        end = self.port_end or self._origin_end
+        freqs = np.array([np.sign(k) * self.mode_freq(abs(k)) for k in ks])
+        gamma_phys = np.array([self.mode_gamma(abs(k)) for k in ks])
+        kappas = np.array([self.mode_profile(abs(k), end) for k in ks]) \
+            * np.sqrt(gamma_phys)
         return freqs, kappas, gamma_phys, self.N
 
     @property
-    def gamma(self) -> float:
-        """Total port coupling rate gamma = (2/pi)(Ztx/Z0_port) FSR."""
+    def gamma(self):
+        """Port coupling rate: the scalar (2/pi)(Ztx/Z0_port) FSR on an
+        open-open line, a per-mode array once an end is loaded (7.4)."""
         return self.expand_arrays()[2]
 
     @property
@@ -426,11 +701,13 @@ class LineResonator:
         return f"{self.line_id}:port"
 
     def comb_mode_ids(self):
-        """Comb mode node ids in expansion order [0, +1, -1, +2, -2, ...]."""
-        ks = [0]
-        for n in range(1, self.N + 1):
-            ks += [n, -n]
-        return [self.mode_node_id(k) for k in ks]
+        """Comb mode node ids in expansion order [0, +1, -1, +2, -2, ...].
+
+        The DC entry is absent when an inductive load shorts that end (7.4);
+        ids of the remaining modes are unchanged, so pump edges and taps keep
+        addressing them by the same names.
+        """
+        return [self.mode_node_id(k) for k in self._comb_ks()]
 
     def end_couplings(self, end):
         """Hub attachments for terminating this line at `end`.
@@ -448,9 +725,16 @@ class LineResonator:
             raise ValueError(
                 f"LineResonator '{self.line_id}': end must be 'x0' or 'xL', "
                 f"got {end!r}")
-        _, kap_nat, _ = _line_comb_natural(
-            self.N, self.Z0_port / self.Ztx, signs=(end == 'xL'))
-        kappas = line_natural_coupling_to_physical(kap_nat, self.FSR)
+        if self.load is None:
+            _, kap_nat, _ = _line_comb_natural(
+                self.N, self.Z0_port / self.Ztx, signs=(end == 'xL'))
+            kappas = line_natural_coupling_to_physical(kap_nat, self.FSR)
+        else:
+            # same formula, loaded quantities: gamma_n is now mode-dependent
+            # and u_n(far end) = cos(k_n ell) is no longer just (-1)^n.
+            kappas = np.array([
+                self.mode_profile(abs(k), end) * np.sqrt(self.mode_gamma(abs(k)))
+                for k in self._comb_ks()])
         return [
             (node_id, float(abs(kappas[i])),
              0.0 if kappas[i] >= 0 else 180.0)
@@ -485,7 +769,8 @@ class LineResonator:
         so the verification above covers n >= 1 only. For a capacitive tap
         this coincides with the profile's own limit (w_0 = 0 -> no
         coupling); for an inductive tap it is an explicit exclusion, not a
-        derived result.
+        derived result. On an inductively LOADED line the question does not
+        arise: that end shorts DC and the free mode is gone (7.4).
         """
         if coupling not in self.TAP_COUPLINGS:
             raise ValueError(
@@ -501,25 +786,50 @@ class LineResonator:
                 f"between 1 and N = {self.N}, got {n_ref}")
 
         exponent = 0.5 if coupling == 'capacitive' else -0.5
-        alternating = (end == 'xL')
         out = []
-        ks = [0]
-        for n in range(1, self.N + 1):
-            ks += [n, -n]
-        for k in ks:
+        if self.load is None:
+            # C_n is n-independent on the open-open comb, so the general
+            # form below collapses to a pure harmonic ratio. Kept in closed
+            # form so every pinned golden stays bit-identical; the two agree
+            # to ~1e-15 (tests/test_loaded_line.py).
+            alternating = (end == 'xL')
+            for k in self._comb_ks():
+                n = abs(k)
+                if n == 0:
+                    continue                  # free mode, see docstring
+                weight = (n / n_ref) ** exponent
+                sign = (-1) ** n if alternating else 1
+                out.append((self.mode_node_id(k), float(weight),
+                            0.0 if sign > 0 else 180.0))
+            return out
+
+        # Loaded: u_n(end), f_n and C_n all move together (7.4), so carry
+        # the profile explicitly instead of the (-1)^n / sqrt(n) shorthand.
+        def amp(n):
+            return self.mode_freq(n) ** exponent * self.mode_mass(n) ** -0.5
+
+        ref = abs(self.mode_profile(n_ref, end)) * amp(n_ref)
+        for k in self._comb_ks():
             n = abs(k)
             if n == 0:
-                continue                      # free mode, see docstring
-            weight = (n / n_ref) ** exponent
-            sign = (-1) ** n if alternating else 1
-            out.append((self.mode_node_id(k), float(weight),
-                        0.0 if sign > 0 else 180.0))
+                continue
+            u = self.mode_profile(n, end)
+            out.append((self.mode_node_id(k), float(abs(u) * amp(n) / ref),
+                        0.0 if u >= 0 else 180.0))
         return out
 
     def nearest_harmonic(self, freq):
-        """Harmonic number whose comb frequency is closest to `freq`."""
-        n = int(round(abs(float(freq)) / self.FSR))
-        return int(min(max(n, 1), self.N))
+        """Mode number whose comb frequency is closest to `freq`.
+
+        Uses the LOADED frequencies when an end is loaded — on a dispersed
+        comb the n-th mode is not at n*FSR, so rounding freq/FSR would name
+        the wrong partner.
+        """
+        f = abs(float(freq))
+        if self.load is None:
+            return int(min(max(int(round(f / self.FSR)), 1), self.N))
+        return int(min(range(1, self.N + 1),
+                       key=lambda n: abs(self.mode_freq(n) - f)))
 
     def expand(self):
         """Expand to (nodes, hubs) in pgraph-style dicts.
@@ -529,9 +839,7 @@ class LineResonator:
         attachment vector is the signed kappa comb.
         """
         freqs, kappas, _, N = self.expand_arrays()
-        ks = [0]
-        for n in range(1, N + 1):
-            ks += [n, -n]
+        ks = self._comb_ks()
 
         B_int = self.B_int_per_mode
         nodes = []
@@ -572,6 +880,7 @@ class LineResonator:
             'port_end': self.port_end,
             'Z0_port': self.Z0_port,
             'alpha_uniform': self.alpha_uniform,
+            'load': dict(self.load) if self.load else None,
         }
 
 
@@ -580,7 +889,8 @@ def _normalize_line(line) -> "LineResonator":
     if isinstance(line, LineResonator):
         return line
     kwargs = {k: line[k] for k in ('line_id', 'FSR', 'Ztx', 'f_max')}
-    for k in ('label', 'port_end', 'Z0_port', 'alpha_uniform', 'conj'):
+    for k in ('label', 'port_end', 'Z0_port', 'alpha_uniform', 'conj',
+              'load'):
         if k in line and line[k] is not None:
             kwargs[k] = line[k]
     return LineResonator(**kwargs)

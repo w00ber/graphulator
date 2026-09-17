@@ -37,17 +37,71 @@
 - [x] Dragging + rotation of port/line glyphs (drag to move with grid
   snap; Ctrl+U/Ctrl+I rotate the selected glyph's orientation in 15-degree
   steps; angle persists in .pgraph).
+- [ ] **Port / txline glyphs in the drawing-code export.** `_export_code`
+  (graphulator_para.py, "Export graph as Python code", Ctrl+Shift+E) walks
+  `self.nodes` / `self.edges` and emits matplotlib calls that redraw the
+  figure; it has no representation for port or line glyphs, so it still
+  requires nodes and says so. To add them, emit the same geometry
+  `ExplicitPortsMixin._draw_ports_and_lines` draws: `_port_geometry` +
+  `_port_effective_angle` for the pentagon and lead, `_line_geometry` +
+  `_line_end_points` for the cylinder/caps/stubs, and the routed wires from
+  `_attachment_wire` / `_tap_wire` / `_line_end_port_wire` / `_pump_bus_wire`
+  (all sampled polylines already, so they emit as plain `plot` calls). The
+  per-glyph style keys (w_mult, h_mult, linewidth, color, fill) and the wire
+  style keys (color, linewidth_mult, label, label_size_mult) should come
+  along. Note the IMAGE exports (PNG/SVG/PDF/clipboard) already handle glyph
+  -only graphs — this item is only about the code export.
 - [ ] GUI conveniences still deferred: ghost placement previews for
   ports/lines, port glyphs in clipboard copy/paste.
+- [x] **Loaded-line basis** SHIPPED (docs/pumped_line_termination.md sec. 7;
+  gate: tests/test_loaded_line.py). The load is stored per end as {type, f_Z},
+  f_Z being the frequency at which |X_elem| = Ztx — one number, no reference frequency to
+  agree on, and an explicit type rather than a sign (the project's JAA
+  convention gives an inductor NEGATIVE reactance, so a bare sign field would
+  be a trap). Default None = open, so today's numbers and every golden stay
+  pinned. What that took:
+  - loaded roots cot(kl) = x(w); u_n(l) = cos(k_n l); C_n = c*int u_n^2 (+
+    C_elem u_n(l)^2 for a capacitive load, whose energy is kinetic);
+    gamma_n = u_n(0)^2/(2 pi Z0 C_n), now MODE-DEPENDENT.
+  - every derived profile currently assumes the open-open basis (kappa_n, the
+    tap envelope, gamma, B_int per mode, the pump profile) and must be
+    re-derived on the loaded one; the existing tests stay valid as the
+    unloaded limit.
+  - "solve FSR for a target loaded resonance" helper in the line and pump
+    dialogs: FSR = pi f_t / (arccot(x(f_t)) + (n-1) pi), closed form, verified
+    to 1e-15 for both types and for modes 1 and 3.
+  - the DC mode differs by type: an inductive load shorts DC (free mode gone,
+    replaced by the quarter-wave mode), a capacitive one keeps it.
+  - REFUSE capacitive loads until sec. 7.5 is closed: with the DC mode and the
+    element's kinetic term included the ABCD error still PLATEAUS with N
+    (~0.94) instead of falling, i.e. an unresolved direct/Foster-at-infinity
+    term. The inductive case converges ~1/N exactly like the unloaded macro
+    (1.260/0.569/0.276/0.137 at N=10/20/40/80), so it is the one to ship.
+  - All of the above is done. Surfaced as `LineResonator(load=...)` /
+    `set_line_load`, an End-load row in the line dialog and on the line's
+    Properties page, and a load section in the pump dialog (the modulated
+    element IS the load, so its type is already known there). Capacitive
+    entries are LISTED AND DISABLED everywhere rather than hidden, with the
+    7.5 reason in the tooltip. Bundled scene: LINE_PUMPED_LOADED.
+  - Three defects the loaded basis exposed, all fixed: N counted
+    ceil(f_max/FSR) rather than the modes that reach f_max; `f_max >= FSR`
+    was enforced on loaded lines, where FSR is v/2l and the fundamental can
+    sit far below it; the idler partner was found at f_p - n*FSR instead of
+    f_p - f_n. A pumped line's twin is also BORN with the load now (it was
+    validated before the load was mirrored onto it).
+  - Still open here: the capacitive load's direct term (sec. 7.5), and
+    loading BOTH ends (one reactance only; two needs its own root equation
+    and its own ABCD gate).
 - [x] **Pumped line termination (gain)** SHIPPED as a macro: linked
   conjugate twin + one double-line pump bus = the rank-one block g g^T
   (`docs/pumped_line_termination.md`). Normalization pinned against
   build_galvanic + hb_signal_idler: rate = 2 FSR g / pi. Two core bugs fixed
   on the way (sorted-vs-traversal tree orientation; explicit 'sector' frame
   rule for pump edges onto a +-n comb).
-  - Remaining: loaded-line roots (the inductive termination disperses the
-    comb, sec. 4 of the note); the DC mode's pumped coupling (needs the
-    loaded omega_0; today it is the 2e-3 residual floor vs the oracle);
+  - Remaining: the DC mode's pumped coupling on an UNLOADED line (with an
+    inductive load the question is gone — that end shorts DC and the free
+    mode with it; unloaded it is still the 2e-3 residual floor vs the
+    oracle);
     tail closure (the 3e-2 residual at a matched port); taps on a pumped
     line (the tapped mode needs its own idler copy — same open question as
     "is the same port connected to signal and conjugate?"); the det-M
@@ -78,9 +132,22 @@
 ## BUGFIXES: PARAGRAPHULATOR / autograph
 - [ ] **Conjugated-node hop sign.** `autograph.GraphScatteringMatrix._build_M_matrix` writes `+beta` for an edge whose two endpoints are both conjugated (the `conj_j == conj_k` branch treats conj/conj like unconj/unconj). The row of a conjugated node is minus the complex conjugate of the unconjugated row, so a real resonant coupling between two conjugated nodes must enter as `-beta` (the pump edges already carry `-conj(beta)`; the diagonal already flips the sign of `f0`). Consequence today: |S| is unaffected only up to a pi-per-cell pump phase step (verified DTWPA_A ledger 55), but any pump phase derived from a physical pump wavenumber is off by pi per cell. Fix: in the `conj_j == conj_k` branch, when both are conjugated write `-beta` / `-conj(beta)`; check the symbolic M display and any code-generation path do the same; add a test with a 4-node two-rail amplifier comparing against the DTWPA_A `stagger.py` builder (now -beta_B). Found 2026-09-07 while fixing the DTWPA_A convention.
 
-- [ ] **Widen the S-parameter selection section in S-parameters tab** to accommodate the labels. We can actually remove the "S_" part of the checkbox text because it's redundant.
+- [x] **Widen the S-parameter selection section in S-parameters tab** to accommodate the labels. We can actually remove the "S_" part of the checkbox text because it's redundant.
+  - Done: the column was hard-capped at 120 px with horizontal scrolling off,
+    so long labels were clipped; it now sizes to its widest entry (120-340 px).
+    Trace names dropped the "S_" AND gained an out <- in arrow, because bare
+    concatenation is ambiguous for multi-character labels ("S_TL1TL1*"); they
+    now read "TL1 <- TL1*". Checkbox state is keyed on the label tuple rather
+    than the rendered text, so the rename did not reset anyone's selections.
 
-- [ ] **Copy vectors doesn't work** for port and txline elements. It seems to work if I add a graph node though.
+- [x] **Copy vectors doesn't work** for port and txline elements. It seems to work if I add a graph node though.
+  - Fixed: copy-to-clipboard and the PNG/SVG/PDF exports all guarded on
+    `not self.nodes`, but an image export captures the FIGURE, so a graph of
+    only port/line glyphs is perfectly exportable — hence "works if I add a
+    graph node". They now use `_has_drawable_content()` (nodes OR ports OR
+    lines). The drawing-CODE export still requires nodes, since it
+    regenerates matplotlib calls from nodes/edges and has no representation
+    for glyphs; its message now says so.
 
 - [ ] need to add the port and txline placement options to the on-screen help and update any menus/documentation with these new actions
 

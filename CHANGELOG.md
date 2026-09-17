@@ -122,6 +122,21 @@
     refused for now. `LineResonator` gained `conj`.
 
 ### Fixed
+- Export: copying the graph to the clipboard (and the PNG/SVG/PDF exports)
+  refused any graph made only of port or transmission-line glyphs — they
+  guarded on "no nodes", but an image export captures the figure, so a
+  terminated line is perfectly exportable. All four paths now test for
+  drawable content (nodes, ports, or lines). The drawing-*code* export
+  still requires nodes, since it regenerates matplotlib calls from
+  nodes/edges and cannot represent glyphs; its message now says that.
+- S-parameters tab: the trace-selection column was hard-capped at 120 px
+  with horizontal scrolling disabled, so longer port labels were silently
+  clipped. It now sizes to its widest entry (between 120 and 340 px).
+  Trace names also drop the redundant `S_` (the column is headed
+  "S-parameters:") and name the pair explicitly as `out ← in`, since bare
+  concatenation is ambiguous once labels are more than one character
+  (`S_TL1TL1*`). Checkbox state is keyed on the port-label tuple rather
+  than the rendered text, so this rename did not reset selections.
 - Core: spanning-tree edges were stored as the canonically *sorted* pair
   while the frame accumulation read them as parent→child, so any hop
   traversed toward a smaller (or lexically earlier) id credited its pump
@@ -138,6 +153,52 @@
   use it, hand-drawn edges keep the heuristic.
 
 ### Added (continued)
+  - **Loaded (reactively terminated) lines.** A `LineResonator` can now carry
+    a shunt reactance at ONE end, `load={'end','type','f_Z'}`, and the comb is
+    re-derived on that dispersed basis: loaded roots `cot(kℓ) = X_elem/Ztx`
+    (bisection on a pole-free residual), the DC mode dropped for an inductive
+    load, and `u_n(end) = cos(k_nℓ)`, `C_n` and `γ_n = 1/(2π Z0 C_n)` all
+    moving with them — γ is no longer the same for every mode. The end
+    couplings and the tap/pump profiles are rebuilt from `(u_n, f_n, C_n)`;
+    the open–open branch keeps its closed form, so `load=None` (the default)
+    reproduces every pinned golden bit-for-bit and is itself the `f_Z → 0`
+    inductive limit. Gated against exact ABCD in the project's JAA convention
+    at ~1/N, the same tail-limited convergence the unloaded macro shows
+    (1.260/0.569/0.276/0.137 at N=10/20/40/80): `tests/test_loaded_line.py`.
+    The load is parameterized by an explicit TYPE plus f_Z — the frequency
+    where |X_elem| = Ztx — rather than a signed reactance, because this
+    project's `Z_ind = -iωL` makes an inductor's reactance negative, the
+    opposite of the textbook. `line_fsr_for_target` inverts §7.3 in closed
+    form, so you name the LOADED resonance and get the line instead of
+    guessing FSR: offered in the line dialog, the line's Properties page and
+    the pump dialog, where the modulated element is itself the load.
+    **Capacitive loads are refused**, listed-and-disabled rather than hidden:
+    their comb S11 plateaus near 0.94 from N=10 to N=80 instead of falling,
+    so a direct non-resonant term is missing (docs §7.5). New scene:
+    `LINE_PUMPED_LOADED`.
+  - Fixed along the way, each a real defect the loaded basis exposed: `N`
+    counted `ceil(f_max/FSR)` rather than the modes that reach `f_max`;
+    `f_max >= FSR` was enforced on loaded lines, where FSR is the geometric
+    parameter `v/2ℓ` and the fundamental can sit far below it; the idler
+    partner was found at `f_p - n·FSR` instead of `f_p - f_n`, which names a
+    different mode on a dispersed comb; a pumped line's twin was validated
+    before its load was mirrored onto it, so a strongly loaded line could not
+    be pumped at all; and a tap or pump naming a mode outside a shrunken comb
+    raised instead of clamping with a warning.
+  - **Pump bus: three strokes.** In the PRXQ visual language a single line
+    is conversion (beam-splitter) coupling and a double line is amplification
+    (two-mode squeezing). A pump bus is neither — one pump on a comb drives
+    both families at once through the same rank-one block — so it draws their
+    union, three strokes, always. Deliberately NOT computed per graph: on a
+    harmonic comb the two families are satisfied together (separating them
+    needs real dispersion engineering), and a band-edge reachability test
+    measures `f_max` rather than the device — the same line and pump flip
+    from "amplification only" to "both" when `f_max` is raised, because the
+    conversion partners were real modes the short comb omitted. That test is
+    kept for the question it does answer: `pump_truncation_gaps` warns when
+    the comb holds no partner for a family the line has, surfaced as a "raise
+    f_max" note in the bus Properties page and the Ports & Lines row. See
+    `docs/pumped_line_termination.md` §7.6.
   - Phase-2 items are explicitly blocked pending derivations (complex /
     mixed-sector hub weights, band-limited combs, two-port lines,
     frequency-dependent weights); attachments enforce real signed weights
