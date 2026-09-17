@@ -1372,3 +1372,121 @@ def test_tap_properties_panel(para):
     assert restored['label'] == 'g_tap'
     assert restored['color'] == '#884400'
     assert restored['n_ref'] == conn['n_ref']
+
+
+# ---------------------------------------------------------------------------
+# Export / copy of glyph-only graphs; S-parameter selection column
+# ---------------------------------------------------------------------------
+
+def test_glyph_only_graph_is_exportable(para):
+    """Image exports capture the FIGURE, so a graph of only ports/lines is
+    perfectly exportable — the old `not self.nodes` guard refused it."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5, Ztx=65.0,
+                           f_max=6.0, port_end='xL', Z0_port=50.0)
+    assert win.nodes == []
+    assert win._has_drawable_content() is True
+
+    svg = win._generate_svg_string()
+    assert svg.startswith('<?xml') and len(svg) > 1000
+
+    # the clipboard path must reach the exporter rather than bailing early
+    from graphulator import clipboard_export
+    seen = {}
+    original = clipboard_export.copy_figure_to_clipboard
+
+    def spy(fig, include_png=True):
+        seen['called'] = True
+        return ('spy', ['pdf', 'svg'])
+
+    clipboard_export.copy_figure_to_clipboard = spy
+    try:
+        win._copy_graph_to_clipboard(include_png=False)
+    finally:
+        clipboard_export.copy_figure_to_clipboard = original
+    assert seen.get('called') is True
+
+
+def test_truly_empty_graph_still_refuses_export(para):
+    gp, win, config = para
+    assert win._has_drawable_content() is False
+    assert win._generate_svg_string() == ""
+
+
+def make_sparams_checkboxes(win):
+    """Compute one component's S and populate the selection column."""
+    from graphulator.graphulator_para import _compute_sparams_job
+    win._enter_scattering_mode()
+    comps = win._find_connected_components()
+    f = np.linspace(-2.0, 2.0, 11)
+    res = _compute_sparams_job(win._build_sparams_job(comps[0], f, -2.0,
+                                                      2.0, 11))
+    win.sparams_data = {'frequencies': f, 'num_components': 1,
+                        'components': [dict(res, component_index=0)]}
+    win._update_sparams_checkboxes()
+    return [cb.text() for cb in win.sparams_checkboxes.values()]
+
+
+def test_sparams_trace_names_drop_prefix_and_disambiguate(para):
+    """'S_' is redundant under the panel header, and bare concatenation is
+    ambiguous once labels are longer than one character."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    a = add_node(win, 0, 'A', 0.0, freq=5.0)
+    b = add_node(win, 1, 'B', 2.0, freq=6.0)
+    add_gui_edge(win, a, b, rate=0.05)     # one component, so one 2x2 S
+    for k, node_id in enumerate((0, 1)):
+        port = win.add_port(label=f"PORT{k+1}", pos=(4.0, 2.0 * k))
+        win.add_port_attachment(port, node_id, rate=0.2)
+
+    texts = make_sparams_checkboxes(win)
+    assert len(texts) == 4
+    assert all(not t.startswith('S_') for t in texts)
+    # out <- in, so every name names both ports unambiguously
+    arrow = '\N{LEFTWARDS ARROW}'
+    for t in texts:
+        assert arrow in t
+        left, right = [s.strip() for s in t.split(arrow)]
+        assert left in ('PORT1', 'PORT2') and right in ('PORT1', 'PORT2')
+    assert f"PORT1 {arrow} PORT2" in texts
+
+
+def test_sparams_selection_column_fits_its_labels(para):
+    """The column used to be hard-capped at 120 px with horizontal
+    scrolling off, clipping long port labels."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    add_node(win, 0, 'A', 0.0, freq=5.0)
+    port = win.add_port(label='readout_long_name', pos=(4.0, 0.0))
+    win.add_port_attachment(port, 0, rate=0.2)
+
+    texts = make_sparams_checkboxes(win)
+    widget = win.sparams_selection_widget
+    widest = max(widget.fontMetrics().horizontalAdvance(t) for t in texts)
+    assert widget.maximumWidth() > win.SPARAMS_SELECTION_MIN_W
+    assert widget.maximumWidth() <= win.SPARAMS_SELECTION_MAX_W
+    # either the label fits with its chrome, or we are at the sane maximum
+    assert (widest + 60 <= widget.maximumWidth()
+            or widget.maximumWidth() == win.SPARAMS_SELECTION_MAX_W)
+
+
+def test_sparams_checkbox_state_survives_rebuild(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    add_node(win, 0, 'A', 0.0, freq=5.0)
+    port = win.add_port(label='P1', pos=(4.0, 0.0))
+    win.add_port_attachment(port, 0, rate=0.2)
+
+    make_sparams_checkboxes(win)
+    box = list(win.sparams_checkboxes.values())[0]
+    assert box.property('state_key') is not None
+    box.setChecked(False)
+
+    win._last_all_ports_sig = None          # force a full rebuild
+    win._update_sparams_checkboxes()
+    assert list(win.sparams_checkboxes.values())[0].isChecked() is False

@@ -77,9 +77,22 @@
 ## BUGFIXES: PARAGRAPHULATOR / autograph
 - [ ] **Conjugated-node hop sign.** `autograph.GraphScatteringMatrix._build_M_matrix` writes `+beta` for an edge whose two endpoints are both conjugated (the `conj_j == conj_k` branch treats conj/conj like unconj/unconj). The row of a conjugated node is minus the complex conjugate of the unconjugated row, so a real resonant coupling between two conjugated nodes must enter as `-beta` (the pump edges already carry `-conj(beta)`; the diagonal already flips the sign of `f0`). Consequence today: |S| is unaffected only up to a pi-per-cell pump phase step (verified DTWPA_A ledger 55), but any pump phase derived from a physical pump wavenumber is off by pi per cell. Fix: in the `conj_j == conj_k` branch, when both are conjugated write `-beta` / `-conj(beta)`; check the symbolic M display and any code-generation path do the same; add a test with a 4-node two-rail amplifier comparing against the DTWPA_A `stagger.py` builder (now -beta_B). Found 2026-09-07 while fixing the DTWPA_A convention.
 
-- [ ] **Widen the S-parameter selection section in S-parameters tab** to accommodate the labels. We can actually remove the "S_" part of the checkbox text because it's redundant.
+- [x] **Widen the S-parameter selection section in S-parameters tab** to accommodate the labels. We can actually remove the "S_" part of the checkbox text because it's redundant.
+  - Done: the column was hard-capped at 120 px with horizontal scrolling off,
+    so long labels were clipped; it now sizes to its widest entry (120-340 px).
+    Trace names dropped the "S_" AND gained an out <- in arrow, because bare
+    concatenation is ambiguous for multi-character labels ("S_TL1TL1*"); they
+    now read "TL1 <- TL1*". Checkbox state is keyed on the label tuple rather
+    than the rendered text, so the rename did not reset anyone's selections.
 
-- [ ] **Copy vectors doesn't work** for port and txline elements. It seems to work if I add a graph node though.
+- [x] **Copy vectors doesn't work** for port and txline elements. It seems to work if I add a graph node though.
+  - Fixed: copy-to-clipboard and the PNG/SVG/PDF exports all guarded on
+    `not self.nodes`, but an image export captures the FIGURE, so a graph of
+    only port/line glyphs is perfectly exportable — hence "works if I add a
+    graph node". They now use `_has_drawable_content()` (nodes OR ports OR
+    lines). The drawing-CODE export still requires nodes, since it
+    regenerates matplotlib calls from nodes/edges and has no representation
+    for glyphs; its message now says so.
 
 ---
 # Physics things to work out

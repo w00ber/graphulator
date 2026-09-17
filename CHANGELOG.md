@@ -122,6 +122,21 @@
     refused for now. `LineResonator` gained `conj`.
 
 ### Fixed
+- Export: copying the graph to the clipboard (and the PNG/SVG/PDF exports)
+  refused any graph made only of port or transmission-line glyphs — they
+  guarded on "no nodes", but an image export captures the figure, so a
+  terminated line is perfectly exportable. All four paths now test for
+  drawable content (nodes, ports, or lines). The drawing-*code* export
+  still requires nodes, since it regenerates matplotlib calls from
+  nodes/edges and cannot represent glyphs; its message now says that.
+- S-parameters tab: the trace-selection column was hard-capped at 120 px
+  with horizontal scrolling disabled, so longer port labels were silently
+  clipped. It now sizes to its widest entry (between 120 and 340 px).
+  Trace names also drop the redundant `S_` (the column is headed
+  "S-parameters:") and name the pair explicitly as `out ← in`, since bare
+  concatenation is ambiguous once labels are more than one character
+  (`S_TL1TL1*`). Checkbox state is keyed on the port-label tuple rather
+  than the rendered text, so this rename did not reset selections.
 - Core: spanning-tree edges were stored as the canonically *sorted* pair
   while the frame accumulation read them as parent→child, so any hop
   traversed toward a smaller (or lexically earlier) id credited its pump

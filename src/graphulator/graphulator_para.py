@@ -7122,7 +7122,12 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         sparams_selection_widget = QWidget()
         sparams_selection_layout = QVBoxLayout()
         sparams_selection_widget.setLayout(sparams_selection_layout)
-        sparams_selection_widget.setMaximumWidth(120)
+        # width is sized to the widest trace name after the checkboxes are
+        # built (_fit_sparams_selection_width); a hard cap used to clip long
+        # port labels, and horizontal scrolling is off by design
+        self.sparams_selection_widget = sparams_selection_widget
+        sparams_selection_widget.setMinimumWidth(self.SPARAMS_SELECTION_MIN_W)
+        sparams_selection_widget.setMaximumWidth(self.SPARAMS_SELECTION_MIN_W)
 
         sparams_selection_label = QLabel("S-parameters:")
         sparams_selection_label.setStyleSheet("font-weight: bold;")
@@ -8788,8 +8793,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 self.edges = self.kron_graph['edges']
 
         try:
-            if not self.nodes:
-                print("No nodes to export")
+            if not self._has_drawable_content():
+                print("Nothing to export")
                 return
 
             filepath, _ = QFileDialog.getSaveFileName(
@@ -8832,6 +8837,47 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 self.edges = saved_edges
 
 
+    # S-parameter selection panel: sized to content between these bounds
+    # (long port labels like 'TL1*' used to be clipped by a hard 120 px cap)
+    SPARAMS_SELECTION_MIN_W = 120
+    SPARAMS_SELECTION_MAX_W = 340
+
+    def _fit_sparams_selection_width(self):
+        """Size the S-parameter selection column to its widest entry."""
+        widget = getattr(self, 'sparams_selection_widget', None)
+        boxes = getattr(self, 'sparams_checkboxes', None)
+        if widget is None:
+            return
+        texts = [cb.text() for cb in (boxes or {}).values()]
+        layout = getattr(self, 'sparams_checkbox_layout', None)
+        if layout is not None:                      # component header rows
+            for i in range(layout.count()):
+                w = layout.itemAt(i).widget()
+                if isinstance(w, QLabel):
+                    texts.append(w.text())
+        if not texts:
+            widget.setMaximumWidth(self.SPARAMS_SELECTION_MIN_W)
+            return
+        metrics = widget.fontMetrics()
+        text_w = max(metrics.horizontalAdvance(t) for t in texts)
+        # checkbox indicator + spacing + scrollbar + margins
+        needed = text_w + 60
+        widget.setMaximumWidth(int(min(max(needed,
+                                           self.SPARAMS_SELECTION_MIN_W),
+                                       self.SPARAMS_SELECTION_MAX_W)))
+
+    def _has_drawable_content(self):
+        """True when the canvas has something worth exporting.
+
+        Image exports capture the FIGURE, so a graph made only of port or
+        transmission-line glyphs (a terminated line, say) is perfectly
+        exportable even though it has no nodes at all. The old `not
+        self.nodes` guard silently refused those.
+        """
+        return bool(self.nodes
+                    or getattr(self, 'ports', None)
+                    or getattr(self, 'line_resonators', None))
+
     def _copy_graph_to_clipboard(self, include_png=True):
         """Copy the whole graph to the clipboard as vector PDF/SVG (+ PNG).
 
@@ -8862,8 +8908,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 self.edges = self.kron_graph['edges']
 
         try:
-            if not self.nodes:
-                print("No nodes to copy")
+            if not self._has_drawable_content():
+                print("Nothing to copy")
                 self.statusBar().showMessage("No graph to copy", 3000)
                 return
 
@@ -8917,8 +8963,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 self.edges = self.kron_graph['edges']
 
         try:
-            if not self.nodes:
-                print("No nodes to export")
+            if not self._has_drawable_content():
+                print("Nothing to export")
                 return
 
             filepath, _ = QFileDialog.getSaveFileName(
@@ -8980,7 +9026,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         str
             The SVG content as a string, or empty string if generation fails.
         """
-        if not self.nodes:
+        if not self._has_drawable_content():
             return ""
 
         # Determine which canvas to use
@@ -9047,8 +9093,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 self.edges = self.kron_graph['edges']
 
         try:
-            if not self.nodes:
-                print("No nodes to export")
+            if not self._has_drawable_content():
+                print("Nothing to export")
                 return
 
             filepath, _ = QFileDialog.getSaveFileName(
@@ -11252,6 +11298,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                         item.widget().deleteLater()
             if hasattr(self, 'sparams_checkboxes'):
                 self.sparams_checkboxes = {}
+            self._fit_sparams_selection_width()
             return
 
         # Get components list (or create single-element list for backward compatibility)
@@ -11285,15 +11332,14 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         # Port configuration changed - save this for future comparisons
         self._last_all_ports_sig = all_ports_sig
 
-        # Save current checkbox states by full S-parameter name (including component label)
+        # Save current checkbox states by (component, out label, in label) —
+        # a stable key, unlike the rendered text
         saved_states = {}
         if hasattr(self, 'sparams_checkboxes') and self.sparams_checkboxes:
             for key, checkbox in self.sparams_checkboxes.items():
-                try:
-                    sparam_name = checkbox.text()
-                    saved_states[sparam_name] = checkbox.isChecked()
-                except (IndexError, StopIteration):
-                    continue
+                state_key = checkbox.property('state_key')
+                if state_key is not None:
+                    saved_states[tuple(state_key)] = checkbox.isChecked()
 
         # Clear existing checkboxes
         while self.sparams_checkbox_layout.count():
@@ -11335,17 +11381,27 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     if k_info.get('conj', False):
                         k_label += '*'
 
-                    # Create checkbox with optional component prefix
+                    # "S_" is redundant under the "S-parameters:" header, and
+                    # bare concatenation is ambiguous once labels are longer
+                    # than one character ("TL1TL1*"), so name the trace by its
+                    # out <- in pair: S_jk is the response at j to a drive at k
+                    pair = f"{j_label} \N{LEFTWARDS ARROW} {k_label}"
                     if num_components > 1 and comp_label:
-                        sparam_name = f"{comp_label}: S_{j_label}{k_label}"
+                        sparam_name = f"{comp_label}: {pair}"
                     else:
-                        sparam_name = f"S_{j_label}{k_label}"
+                        sparam_name = pair
 
                     checkbox = QCheckBox(sparam_name)
 
-                    # Restore saved state if available, otherwise default to checked
-                    if sparam_name in saved_states:
-                        checkbox.setChecked(saved_states[sparam_name])
+                    # Restore saved state if available, otherwise default to
+                    # checked. The key is the LABEL tuple rather than the
+                    # rendered text, so selections survive a change to how the
+                    # trace name is formatted (and index shifts when a
+                    # component is added). Renaming a port does change the
+                    # key — the labels ARE the identity here.
+                    state_key = (comp_label, j_label, k_label)
+                    if state_key in saved_states:
+                        checkbox.setChecked(saved_states[state_key])
                     else:
                         checkbox.setChecked(True)  # All checked initially
 
@@ -11353,10 +11409,14 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     # Store component index and port indices as properties
                     checkbox.setProperty('component_index', comp_data.get('component_index', comp_idx))
                     checkbox.setProperty('port_indices', (j_idx, k_idx))
+                    checkbox.setProperty('state_key', state_key)
 
                     self.sparams_checkbox_layout.addWidget(checkbox)
                     # Use compound key: (component_index, j_idx, k_idx)
                     self.sparams_checkboxes[(comp_data.get('component_index', comp_idx), j_idx, k_idx)] = checkbox
+
+        # Size the column to the widest trace name now that they all exist
+        self._fit_sparams_selection_width()
 
         # Apply pending S-parameter settings from loaded file
         if hasattr(self, '_pending_sparams_settings') and self._pending_sparams_settings:
@@ -16571,7 +16631,10 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
         try:
             if not self.nodes:
-                print("No nodes to export")
+                # this export regenerates matplotlib code from nodes/edges;
+                # port and line glyphs have no representation in it
+                print("No nodes to export (port/line glyphs are not part of "
+                      "the drawing-code export)")
                 return
 
             # Calculate full graph extents including all objects first
