@@ -233,12 +233,19 @@ SETTINGS_PARAMS = {
         ('EDGELABELOFFSET', 'Edge Label Offset', 'float', 0.1, 3.0, 0.05),
     ],
     'Interface': [
-        ('EXPLICIT_PORTS_MODE', 'Explicit Ports & Lines (hub dissipation)', 'bool', None, None, None),
         ('SHOW_SHORTCUT_OVERLAY', 'Show Shortcut Hints', 'bool', None, None, None),
         ('SHORTCUT_OVERLAY_CORNER', 'Hints Corner', 'dropdown',
          [('Top Left', 'top-left'), ('Top Right', 'top-right'),
           ('Bottom Left', 'bottom-left'), ('Bottom Right', 'bottom-right')], None, None),
         ('SHORTCUT_OVERLAY_SHOW_ALL', 'Show All Shortcuts (not just essentials)', 'bool', None, None, None),
+    ],
+    # Features that change the physics model and are still being validated.
+    # Kept apart from Interface so nobody mistakes them for cosmetics.
+    'Experimental': [
+        ('EXPLICIT_PORTS_MODE',
+         'Explicit Ports & Lines (hub dissipation, transmission lines) '
+         '\u2014 EXPERIMENTAL!!! Use at your own risk',
+         'bool', None, None, None),
     ],
 }
 
@@ -8696,8 +8703,14 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             if hasattr(self, 'kron_reduced_matrix_latex') and self.kron_reduced_matrix_latex is not None:
                 data["kron_reduction"]["kron_reduced_matrix_latex"] = self.kron_reduced_matrix_latex
 
-        # Save scattering data if scattering mode has been used
-        if hasattr(self, 'scattering_tree_edges') and self.scattering_tree_edges:
+        # Save scattering data if scattering mode has been used. A non-empty
+        # spanning tree was the historical proxy for that, but a glyph-only
+        # graph (a terminated or pumped line, no GUI edges) has an EMPTY
+        # tree while very much in scattering mode -- its sweep window and
+        # injection choice were silently dropped on save. Being in the mode
+        # is sufficient; the loader recomputes an empty tree on demand.
+        if getattr(self, 'scattering_tree_edges', None) \
+                or getattr(self, 'scattering_mode', False):
             # Convert edge key sets to lists of tuples for JSON serialization
             tree_edges_list = [list(edge_key) for edge_key in self.scattering_tree_edges]
             chord_edges_list = [list(edge_key) for edge_key in self.scattering_chord_edges]
@@ -17634,6 +17647,10 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         'none': [
             ('node.place_single', 'Add node'),
             ('edge.place_continuous', 'Edge mode'),
+            # shown only with Explicit Ports enabled (filtered in
+            # _shortcut_hint_rows)
+            ('port.place_single', 'Add port'),
+            ('line.place', 'Add transmission line'),
             ('node.toggle_conjugation', 'Conjugation mode'),
             ('view.zoom_in', 'Zoom in'),
             ('edit.undo', 'Undo'),
@@ -17696,12 +17713,15 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         if getattr(config, 'SHORTCUT_OVERLAY_SHOW_ALL', False):
             return self._shortcut_hint_rows_all(context)
         rows = []
+        ports_on = bool(getattr(self, 'explicit_ports_enabled', False))
         for entry in self._SHORTCUT_HINTS.get(context, []):
             if entry[0] is None:
                 # Verbatim (None, keys, label) — no managed shortcut
                 rows.append((entry[1], entry[2]))
                 continue
             action_id, label = entry
+            if not ports_on and action_id.split('.')[0] in ('port', 'line'):
+                continue          # the keys are inert without the mode
             keys = self._display_key(action_id)
             if keys:
                 rows.append((keys, label))
