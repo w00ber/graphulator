@@ -432,7 +432,7 @@ load shorts DC, so the free $n=0$ mode is *gone* (replaced by the quarter-wave
 mode); a **capacitive** load is an open at DC, so it *survives*, with
 $C_0 = c\ell + C_\mathrm{elem}$.
 
-### 7.5 Status: inductive verified, capacitive not yet
+### 7.5 Status: inductive implemented, capacitive refused
 
 Feeding these quantities into the ordinary hub pipeline and comparing the
 complex $S_{11}$ against exact ABCD (JAA convention, matched port), the
@@ -442,11 +442,13 @@ complex $S_{11}$ against exact ABCD (JAA convention, matched port), the
 |---|---|---|---|---|---|
 | open–open (existing test, for reference) | 1.112 | 0.537 | 0.268 | 0.134 | ~2 |
 | inductive, $\omega_Z = \pi$ | 1.260 | 0.569 | 0.276 | 0.137 | 2.21 / 2.06 / 2.02 |
-| inductive, $\omega_Z = 0.3\pi$ | 1.256 | 0.567 | 0.275 | 0.136 | 2.22 / 2.06 / 2.02 |
+| inductive, $\omega_Z = 0.3\pi$ | 1.256 | 0.566 | 0.275 | 0.136 | 2.22 / 2.06 / 2.02 |
 
 i.e. $\sim 1/N$, residual = the truncated tail, same as the unloaded macro. The
-loaded inductive basis is therefore **ready to implement** — and it is the case
-the pumped termination needs, since a modulated inductor is the device.
+loaded inductive basis is therefore verified — and it is the case the pumped
+termination needs, since a modulated inductor is the device.
+(`tests/test_loaded_line.py` re-measures the same ladder through the shipped
+macro and reproduces it to the printed digits.)
 
 The **capacitive** case is not closed: adding the surviving DC mode took the
 error from 1.78 to 1.28 and the element's kinetic term took it to 0.94, but it
@@ -456,13 +458,37 @@ finite sum of resonators reproduces — so something in the capacitive terminati
 must be represented outside the comb. That is an open item, not a mystery in
 principle, but it is not verified and must not ship as if it were.
 
-**Recommended staging.** Add the load as a per-end, opt-in parameter
-(`{type, f_Z}`, default `None` = open, which reproduces today's numbers
-bit-for-bit and keeps every golden and profile test pinned as the
-$f_Z \to 0$ inductive limit); implement the inductive basis with the ABCD
-convergence test above as its gate; expose the "solve FSR for a target loaded
-resonance" helper from §7.3 in the line and pump dialogs; leave the capacitive
-load refused with a message pointing here until its direct term is understood.
+**What shipped.** `LineResonator` takes an opt-in
+`load = {'end', 'type', 'f_Z'}` (default `None` = both ends open, which
+reproduces every pinned golden bit-for-bit and is itself the $f_Z \to 0$
+inductive limit). When it is set, the comb is re-derived on the loaded basis:
+roots by bisection on the pole-free residual
+$s\,(\cos\theta - x\sin\theta)$, $s = (-1)^{n-1}$, which is exactly $+1$ and
+$-1$ at the ends of $((n-1)\pi, n\pi)$; the DC mode dropped; $u_n(\text{end})$,
+$C_n$ and $\gamma_n$ from §7.4; and the tap/pump profiles rebuilt from
+$(u_n, f_n, C_n)$ instead of the $(-1)^n/\sqrt{n}$ shorthand, which the
+unloaded branch keeps. `line_fsr_for_target` exposes §7.3 in the line dialog,
+the line's Properties page and the pump dialog. The table above is the gate,
+`tests/test_loaded_line.py`.
+
+Three things the loaded basis changed elsewhere, each a real defect rather
+than a refactor:
+
+* `N` now counts the modes that *reach* $f_\mathrm{max}$, not
+  $\lceil f_\mathrm{max}/\mathrm{FSR}\rceil$ — identical unloaded, right when
+  dispersed.
+* `f_max >= FSR` was the wrong invariant for a loaded line: FSR is the
+  geometric parameter $v/2\ell$ there and the fundamental can sit far below
+  it (§7.3's table bottoms out at $f_1/\mathrm{FSR} \to 0$). It is now
+  enforced only on the open–open comb.
+* The idler partner is the mode nearest $f_p - f_n$, not $f_p - n\,\mathrm{FSR}$;
+  on a dispersed comb those name different modes, and the rank-one block is
+  built around whichever one is chosen.
+
+The **capacitive** load is refused at construction with a message pointing
+here, in the macro, the line dialog, the Properties page and the pump dialog
+— listed and disabled rather than hidden, so the case is visibly open rather
+than silently missing.
 
 ### 7.6 Visual language: the bus is always three strokes
 

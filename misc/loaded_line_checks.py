@@ -12,6 +12,12 @@ Z_cap = +i/(w C)).
      the unloaded macro), and NOT yet converging for a capacitive one.
 
     python misc/loaded_line_checks.py
+
+The inductive case is now implemented in the app (LineResonator(load=...));
+tests/test_loaded_line.py is its gate and re-measures check 3 through the
+shipped macro. This script stays as the standalone, dependency-light
+derivation -- in particular it is the only place the capacitive case is
+computed at all, since the macro refuses it.
 """
 import os
 import sys

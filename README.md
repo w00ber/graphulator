@@ -157,6 +157,19 @@ its `n=…` reference harmonic until you give it a label of your own).
   Cross-damping between comb modes matters whenever γ is comparable to the
   FSR.
 
+  **End load (optional).** One end may instead be terminated in a shunt
+  reactance, which *disperses* the comb: the modes leave `n·FSR` and
+  `u_n(end)`, `C_n` and `γ_n` move with them — so γ is no longer the same
+  for every mode, and FSR becomes the geometric parameter `v/2ℓ` rather than
+  the mode spacing. The load is given as a type plus `f_Z`, the frequency at
+  which `|X_elem| = Ztx` (not a signed reactance: this project uses
+  `Z_ind = -iωL`, so an inductor's reactance is *negative* here). Because
+  the loaded fundamental is what you actually care about, the dialogs invert
+  it for you — name the target resonance and the app solves
+  `FSR = π f / (arccot(x(f)) + (n−1)π)` in closed form. Inductive loads are
+  validated against exact ABCD at ~1/N; capacitive ones are refused pending
+  a missing direct term (`docs/pumped_line_termination.md` §7).
+
   **The comb stays inside the macro.** A line is connected by its **end
   leads**: click a lead with the edge tool (`E`), then a port glyph, and
   that end is terminated — the whole comb joins that port's single hub

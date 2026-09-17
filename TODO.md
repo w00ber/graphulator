@@ -53,14 +53,13 @@
   -only graphs — this item is only about the code export.
 - [ ] GUI conveniences still deferred: ghost placement previews for
   ports/lines, port glyphs in clipboard copy/paste.
-- [ ] **Loaded-line basis** (docs/pumped_line_termination.md sec. 7 — the
-  parameterization is settled and the inductive case is VERIFIED; this is the
-  implementation). Store the load per end as {type, f_Z} where f_Z is the
-  frequency at which |X_elem| = Ztx — one number, no reference frequency to
+- [x] **Loaded-line basis** SHIPPED (docs/pumped_line_termination.md sec. 7;
+  gate: tests/test_loaded_line.py). The load is stored per end as {type, f_Z},
+  f_Z being the frequency at which |X_elem| = Ztx — one number, no reference frequency to
   agree on, and an explicit type rather than a sign (the project's JAA
   convention gives an inductor NEGATIVE reactance, so a bare sign field would
   be a trap). Default None = open, so today's numbers and every golden stay
-  pinned. Then:
+  pinned. What that took:
   - loaded roots cot(kl) = x(w); u_n(l) = cos(k_n l); C_n = c*int u_n^2 (+
     C_elem u_n(l)^2 for a capacitive load, whose energy is kinetic);
     gamma_n = u_n(0)^2/(2 pi Z0 C_n), now MODE-DEPENDENT.
@@ -78,15 +77,31 @@
     (~0.94) instead of falling, i.e. an unresolved direct/Foster-at-infinity
     term. The inductive case converges ~1/N exactly like the unloaded macro
     (1.260/0.569/0.276/0.137 at N=10/20/40/80), so it is the one to ship.
+  - All of the above is done. Surfaced as `LineResonator(load=...)` /
+    `set_line_load`, an End-load row in the line dialog and on the line's
+    Properties page, and a load section in the pump dialog (the modulated
+    element IS the load, so its type is already known there). Capacitive
+    entries are LISTED AND DISABLED everywhere rather than hidden, with the
+    7.5 reason in the tooltip. Bundled scene: LINE_PUMPED_LOADED.
+  - Three defects the loaded basis exposed, all fixed: N counted
+    ceil(f_max/FSR) rather than the modes that reach f_max; `f_max >= FSR`
+    was enforced on loaded lines, where FSR is v/2l and the fundamental can
+    sit far below it; the idler partner was found at f_p - n*FSR instead of
+    f_p - f_n. A pumped line's twin is also BORN with the load now (it was
+    validated before the load was mirrored onto it).
+  - Still open here: the capacitive load's direct term (sec. 7.5), and
+    loading BOTH ends (one reactance only; two needs its own root equation
+    and its own ABCD gate).
 - [x] **Pumped line termination (gain)** SHIPPED as a macro: linked
   conjugate twin + one double-line pump bus = the rank-one block g g^T
   (`docs/pumped_line_termination.md`). Normalization pinned against
   build_galvanic + hb_signal_idler: rate = 2 FSR g / pi. Two core bugs fixed
   on the way (sorted-vs-traversal tree orientation; explicit 'sector' frame
   rule for pump edges onto a +-n comb).
-  - Remaining: loaded-line roots (the inductive termination disperses the
-    comb, sec. 4 of the note); the DC mode's pumped coupling (needs the
-    loaded omega_0; today it is the 2e-3 residual floor vs the oracle);
+  - Remaining: the DC mode's pumped coupling on an UNLOADED line (with an
+    inductive load the question is gone — that end shorts DC and the free
+    mode with it; unloaded it is still the 2e-3 residual floor vs the
+    oracle);
     tail closure (the 3e-2 residual at a matched port); taps on a pumped
     line (the tapped mode needs its own idler copy — same open question as
     "is the same port connected to signal and conjugate?"); the det-M
