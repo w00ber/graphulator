@@ -50,7 +50,9 @@ def macro_s11(N, alpha_uniform=0.0):
                             'points': len(f_phys)},
         line_resonators=[line],
     )
-    gsm = autograph.GraphScatteringMatrix(extractor, f_phys)
+    # This file gates the truncated BASIS (its 1/N tail); the analytic tail
+    # closure that removes that tail is gated in test_tail_closure.py.
+    gsm = autograph.GraphScatteringMatrix(extractor, f_phys, tail_closure=False)
     return gsm.S[:, 0, 0]
 
 

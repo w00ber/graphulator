@@ -277,7 +277,10 @@ def _macro_s11(N, f_Z):
                             'stop': float(f_phys[-1]),
                             'points': len(f_phys)},
         line_resonators=[line])
-    return autograph.GraphScatteringMatrix(extractor, f_phys).S[:, 0, 0]
+    # the gate is on the loaded BASIS (its 1/N tail), so the analytic tail
+    # closure stays off here; test_tail_closure.py covers loaded + closure
+    return autograph.GraphScatteringMatrix(extractor, f_phys,
+                                           tail_closure=False).S[:, 0, 0]
 
 
 def _exact_s11(f_Z):
@@ -321,7 +324,8 @@ def test_ignoring_the_load_is_much_worse_than_the_truncation(loaded_errors):
                             'points': len(f_phys)},
         line_resonators=[naive])
     err = np.max(np.abs(
-        autograph.GraphScatteringMatrix(extractor, f_phys).S[:, 0, 0]
+        autograph.GraphScatteringMatrix(extractor, f_phys,
+                                        tail_closure=False).S[:, 0, 0]
         - _exact_s11(f_Z)))
     assert err > 5.0 * loaded_errors[(f_Z, 80)], (err, loaded_errors[(f_Z, 80)])
 

@@ -1490,3 +1490,52 @@ def test_sparams_checkbox_state_survives_rebuild(para):
     win._last_all_ports_sig = None          # force a full rebuild
     win._update_sparams_checkboxes()
     assert list(win.sparams_checkboxes.values())[0].isChecked() is False
+
+
+def test_multi_glyph_selection_rotates_rigidly(para):
+    """A pumped line, its twin and their ports -- no graph node -- must
+    rotate as ONE layout about the selection centroid, not each glyph
+    about its own center."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    tl = win.add_line_resonator(label='TL1', pos=(0.0, 2.0), FSR=1.5,
+                                Ztx=65.0, f_max=6.0, port_end='xL')
+    win.set_line_pump(tl, 'x0', f_p=9.0, rate=0.05, n_ref=3,
+                      twin_pos=(0.0, -2.0))
+    win.selected_lines = list(win.line_resonators)
+    win.selected_ports = list(win.ports)
+    win.selected_nodes = []
+    glyphs = win.selected_lines + win.selected_ports
+    before = np.array([g['pos'] for g in glyphs])
+    angles_before = [g.get('angle', 0.0) for g in win.selected_lines]
+    pivot = before.mean(axis=0)
+
+    win._rotate_selected_nodes(90)
+
+    after = np.array([g['pos'] for g in glyphs])
+    # every glyph moved (rigid), by a 90-degree turn about the shared pivot
+    assert np.all(np.linalg.norm(after - before, axis=1) > 1e-9)
+    r_before = np.linalg.norm(before - pivot, axis=1)
+    r_after = np.linalg.norm(after - pivot, axis=1)
+    np.testing.assert_allclose(r_after, r_before, atol=1e-9)
+    # the layout's shape is preserved: pairwise distances unchanged
+    d = lambda P: np.linalg.norm(P[:, None] - P[None, :], axis=-1)  # noqa: E731
+    np.testing.assert_allclose(d(after), d(before), atol=1e-9)
+    # and the lines' own orientation turned with it
+    for line, a0 in zip(win.selected_lines, angles_before):
+        assert abs(((line['angle'] - a0) % 360.0) - 270.0) < 1e-9
+
+
+def test_single_glyph_still_spins_in_place(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    tl = win.add_line_resonator(label='TL1', pos=(1.0, 2.0), FSR=1.5,
+                                Ztx=65.0, f_max=6.0, port_end=None)
+    win.selected_lines = [tl]
+    win.selected_ports = []
+    win.selected_nodes = []
+    win._rotate_selected_nodes(15)
+    assert tl['pos'] == (1.0, 2.0)
+    assert abs(tl['angle'] - 345.0) < 1e-9

@@ -153,6 +153,46 @@
   use it, hand-drawn edges keep the heuristic.
 
 ### Added (continued)
+  - **Comb tail closure.** A line macro keeps N pole pairs, but the modes
+    beyond f_max still load the port: a reactive tail ~ 2γf/(FSR²N) that
+    shifts every in-band resonance and converges only as 1/N (measured law
+    in `misc/comb_truncation_checks.py`: |ΔS| ≈ 2.5 (γ/FSR)(f/FSR)/N, all
+    of it in the phase). That tail is now folded back into the port channel
+    in closed form — exact minus kept, with `exact` the line's input
+    impedance from ABCD (open–open, inductively loaded, port at the loaded
+    end, lossy) — as a per-channel scalar λ(f) = 1/(1 + iχ_t/2) on the hub's
+    damper in M and its K column, plus a direct phase on S. It is a Schur
+    complement, i.e. an identity: N = 2 reproduces exact ABCD to 1e-15 where
+    the raw comb was off by 2, and S_full stays unitary. Channels without a
+    tail have λ = 1 exactly, so legacy graphs are bit-identical. What it
+    does not carry is the tail modes' pump/tap couplings (second order):
+    on the §6 pumped line the closed residual sits on the 2e-3 DC-mode
+    floor from N = 4. Toggle in the Ports & Lines panel ("close comb tail
+    analytically", default on); `GraphScatteringMatrix(..., tail_closure=)`;
+    exported code carries hub `tails`. Docs §8; gate `tests/test_tail_closure.py`.
+  - **Check truncation (2× f_max)** button in Ports & Lines: re-solves every
+    component with all combs doubled and reports the largest change of each
+    displayed trace over the window — the honest way to size N for THIS
+    graph, including the couplings the closure does not carry.
+  - **Ports & Lines is tunable without a graph node.** The panel now spans
+    the full width under Nodes | Edges and carries live spinboxes for each
+    line's FSR/Ztx/f_max/Z0/α, its end load's f_Z, and its pump's
+    f_p/rate/phase/n_ref (partner shown beside), with a per-line note giving
+    N, the closure state and — with the closure off — the truncation
+    estimate at the top of the window. A conjugate twin lists its
+    terminations and points at its primary. The Nodes placeholder for a
+    glyph-only graph now says where the controls are instead of "Enter
+    Scattering mode".
+### Fixed (continued)
+  - S-parameter plot lost its frequency-axis numbers when every channel was
+    a hub port: the per-port frequency rows looked channels up in
+    `self.nodes`, found nothing, hid the tick labels and drew no rows. Hubs
+    now carry a drive frame (`drive_signals[hub_id]`) and the plot labels
+    channels from `port_dict`.
+  - Ctrl+U/I on a selection of several port/line glyphs (no node) spun each
+    glyph about its own center; two or more selected objects now rotate
+    rigidly about the selection centroid. A single glyph still spins in
+    place.
   - **Loaded (reactively terminated) lines.** A `LineResonator` can now carry
     a shunt reactance at ONE end, `load={'end','type','f_Z'}`, and the comb is
     re-derived on that dispersed basis: loaded roots `cot(kℓ) = X_elem/Ztx`

@@ -955,6 +955,10 @@ class ExplicitPortsMixin:
         self.selected_attachments = []     # [(port, attachment), ...]
         self.selected_taps = []            # [(line, end, conn), ...]
         self.selected_pump_buses = []   # lines whose pump bus is selected
+        # comb tail closure (autograph "COMB TAIL CLOSURE"): fold the modes
+        # beyond f_max back into the port channel analytically. On by
+        # default; the Ports & Lines panel toggles it.
+        self.line_tail_closure = True
         self._attach_pending_port = None   # port awaiting a node click (edge mode)
         self._attach_pending_line_end = None  # (line, end) awaiting a port
         self._place_loss_hub_next = False  # next port placement is a loss hub
@@ -1210,6 +1214,10 @@ class ExplicitPortsMixin:
             for line, end in terms:
                 resonator = LineResonator(**line_payload(line))
                 hub['attachments'].extend(resonator.end_couplings(end))
+                # the comb beyond N is closed analytically into this channel
+                # (autograph: "comb tail closure")
+                hub.setdefault('tails', []).append(
+                    {'line': resonator.to_dict(), 'end': end})
             payload.append(hub)
         return payload
 
@@ -2119,12 +2127,13 @@ class ExplicitPortsMixin:
     def _rotate_selected_nodes(self, angle_degrees):
         """Rotate selection.
 
-        With ONLY port/line glyphs selected, spin each glyph's own
-        orientation in place (the useful primitive for aiming a lead).
-        When nodes are selected too, the selection is a layout: everything
-        rotates rigidly about the node centroid — glyph positions travel
-        with the modes and each glyph's orientation turns by the same
-        angle, so the drawing keeps its shape.
+        With a SINGLE port/line glyph selected, spin its orientation in
+        place (the useful primitive for aiming a lead). With two or more
+        objects selected -- nodes, glyphs, or any mix -- the selection is a
+        layout and rotates rigidly about its centroid: positions travel and
+        every glyph's orientation turns by the same angle, so the drawing
+        keeps its shape. (The pivot is the node centroid when nodes are in
+        the selection, matching the base class; otherwise the glyphs'.)
 
         Manually rotating an attached port pins its angle (turns off the
         auto-orient toward its attachments), starting from the current
@@ -2133,25 +2142,45 @@ class ExplicitPortsMixin:
         attachments moved too, so it re-aims itself correctly.
         """
         glyphs = list(self.selected_ports) + list(self.selected_lines)
-        if glyphs and self.selected_nodes:
-            # rigid-body: nodes exactly as before, glyphs carried along
-            positions = np.array([n['pos'] for n in self.selected_nodes])
-            centroid = positions.mean(axis=0)
-            super()._rotate_selected_nodes(angle_degrees)
+        n_selected = len(glyphs) + len(self.selected_nodes)
+        if glyphs and n_selected > 1:
+            # Rigid-body rotation of a LAYOUT: two or more selected objects
+            # turn together about the selection's centroid, glyphs carrying
+            # their orientation along, so the drawing keeps its shape. That
+            # includes a pure glyph selection (a pumped line, its twin and
+            # their ports -- an amplifier with no graph node at all), which
+            # used to fall through to the per-glyph spin below and rotate
+            # every glyph about its own center.
+            if self.selected_nodes:
+                # the node centroid, as the base class uses, so the nodes'
+                # own rotation and the glyphs' share one pivot
+                pivot = np.array([n['pos'] for n in self.selected_nodes]
+                                 ).mean(axis=0)
+                super()._rotate_selected_nodes(angle_degrees)
+            else:
+                pivot = np.array([g['pos'] for g in glyphs]).mean(axis=0)
+                self._save_state()
             for glyph in glyphs:
                 gx, gy = _rotate_point(glyph['pos'][0], glyph['pos'][1],
-                                       centroid[0], centroid[1],
-                                       -angle_degrees)
+                                       pivot[0], pivot[1], -angle_degrees)
                 glyph['pos'] = (gx, gy)
                 if 'port_id' in glyph and not glyph.get('angle_pinned'):
                     continue          # auto-orient re-aims it for free
                 glyph['angle'] = (glyph.get('angle', 0.0)
                                   - angle_degrees) % 360.0
-            self._update_plot()
+            if not self.selected_nodes:
+                print(f"Rotated {n_selected} glyphs by "
+                      f"{-angle_degrees:+g}\N{DEGREE SIGN} about their centroid")
+                self._update_plot()
+            else:
+                self._update_plot()
             return
 
         if (self.selected_ports or self.selected_lines) \
                 and not self.selected_nodes:
+            # a SINGLE glyph: spin it in place (the primitive for aiming a
+            # lead); rotating one object about itself is the only sensible
+            # reading of "rotate" here
             self._save_state()
             for port in self.selected_ports:
                 base = self._port_effective_angle(port)

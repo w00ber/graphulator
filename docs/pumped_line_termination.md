@@ -530,3 +530,113 @@ $f_p > 2N\,\mathrm{FSR}$ (a pump below $2\,\mathrm{FSR}$ has no amplification
 pair in the line either, so that is a real absence and is not flagged). It
 surfaces as a "raise f_max" warning on the bus's Properties page and in the
 Ports & Lines row, never as a change to the glyph.
+
+## 8. Truncating the comb — and closing what you cut off
+
+Every macro in this note keeps $N$ pole pairs. §6 and §7 measured the cost of
+that in the whole-band maximum; this section asks the question a user actually
+has — *how wrong is the plot I am looking at, near the modes I care about?* —
+and then removes the question. Numbers from `misc/comb_truncation_checks.py`.
+
+### 8.1 The error is the reactive tail, and it is all in the phase
+
+For a lossless one-port $|S_{11}| \equiv 1$, so truncation cannot show up in a
+dB plot at all: what it moves is *where the resonances sit*. Inside a window of
+$\pm\mathrm{FSR}/2$ around mode $n_w$, the complex error against exact ABCD is
+
+| $\gamma/\mathrm{FSR}$ | window | $N{=}n_w{+}1$ | $n_w{+}4$ | $n_w{+}16$ | $n_w{+}64$ | $\ \varepsilon N\big/\big[(\gamma/\mathrm{FSR})(f/\mathrm{FSR})\big]$ |
+|---|---|---|---|---|---|---|
+| 0.828 | mode 1 | 0.977 | 0.450 | 0.142 | 0.038 | 2.4 → 3.0 |
+| 0.828 | mode 3 | 1.291 | 0.771 | 0.297 | 0.086 | 2.1 → 2.3 |
+| 0.318 | mode 1 | 0.421 | 0.177 | 0.055 | 0.015 | 2.6 → 3.0 |
+| 0.064 | mode 3 | 0.130 | 0.064 | 0.023 | 0.007 | 2.7 → 2.3 |
+
+i.e. one law across two decades of coupling,
+
+$$
+|\Delta S| \;\approx\; 2.5\,\frac{\gamma}{\mathrm{FSR}}\,\frac{f}{\mathrm{FSR}}\,\frac{1}{N},
+$$
+
+linear in the coupling, linear in the frequency you look at, and only $1/N$ in
+the comb size. That is the tail of the Mittag-Leffler sum: the modes beyond $N$
+contribute $\sum_{n>N}\gamma\,[\,(f-nF)^{-1}+(f+nF)^{-1}] \approx -2\gamma f/(F^2 N)$,
+a *reactive* load on the port that shifts every in-band resonance by a fraction
+of its linewidth. This is why "adequate $N$" felt high: at $\gamma/\mathrm{FSR}
+\approx 0.83$ and $f \approx 6\,\mathrm{FSR}$, 5 % accuracy needs $N \approx 250$.
+
+### 8.2 Closing the tail exactly
+
+But the *full* sum is known in closed form. A one-port line's reflection depends
+on its modes only through the scalar $\chi(f) = \sum_n \kappa_n^2/(f - f_n)$,
+$S = (i\chi/2 - 1)/(i\chi/2 + 1)$ — and that scalar is the line's input impedance,
+
+$$
+\chi(f) = -\frac{2i}{Z_0}\,Z_\mathrm{in}(f),\qquad
+Z_\mathrm{in}^{\text{open–open}} = iZ_\mathrm{tx}\cot(k\ell)
+\;\Rightarrow\; \chi = \frac{\gamma}{F}\,\pi\cot\!\big(\pi f/F\big),
+$$
+
+whose partial sums *are* the comb. So the tail is simply $\chi_\text{exact} -
+\chi_\text{kept}$, for the unloaded line, the loaded line (ABCD with the
+reactance), a lossy line ($f \to f + iB_\text{int}/2$), and a port at the loaded
+end ($Z_L \parallel Z_\text{line}$) alike — no asymptotics, no digamma.
+
+Eliminating the tail modes from the coupled-mode equations is then a Schur
+complement, exact because they touch the rest of the graph only through the hub
+column. With $u \equiv \kappa^\dagger a$ the port field and $\chi_t$ the tail
+sum, the tail equation gives $\kappa_t^\dagger a_t = \chi_t\,(b_\mathrm{in} -
+\tfrac{i}{2}u)$, and everything collapses into one scalar per channel,
+
+$$
+\lambda(f) = \frac{1}{1 + i\chi_t(f)/2}:\qquad
+\big[D_k + \tfrac{i}{2}\lambda\,\kappa_k\kappa_k^\dagger\big]a_k = \lambda\,\kappa_k\,b_\mathrm{in},\qquad
+S = -\frac{1 - i\chi_t/2}{1 + i\chi_t/2} + i\,\lambda^2\,\kappa_k^\dagger
+\big[D_k + \tfrac{i}{2}\lambda\,\kappa_k\kappa_k^\dagger\big]^{-1}\kappa_k .
+$$
+
+The hub's damper in $M$ is scaled by $\lambda$, its $K$ column by $\lambda$ on
+both sides, and the direct reflection acquires a phase. $\operatorname{Re}\lambda
+< 1$ says the tail *steals* part of the port coupling; $\operatorname{Im}\lambda$
+is the reactive shift of §8.1, now carried exactly. Channels without a tail have
+$\lambda = 1$ identically, so graphs without lines are assembled bit-for-bit as
+before (the golden suite pins this).
+
+**It is an identity.** With the closure, against exact ABCD:
+
+| | $N{=}2$ | $N{=}4$ | $N{=}10$ | raw comb at $N{=}10$ |
+|---|---|---|---|---|
+| open–open | 1.5e-15 | 1.7e-15 | 2.0e-15 | 1.11 |
+| inductive load, $f_Z = 0.5\,\mathrm{FSR}$ | 1.2e-15 | — | 2.1e-15 | 1.21 |
+| inductive load, $f_Z = 0.15\,\mathrm{FSR}$ | 9.0e-16 | — | 2.1e-15 | 1.25 |
+| port at the loaded end | 8.0e-16 | — | 2.3e-15 | 1.24 |
+
+and the dilated $S_\text{full}$ stays unitary to $10^{-15}$. Two ends of
+different lines on one hub close both tails into the one channel (`tests/test_tail_closure.py`).
+One numerical care point: exactly on a kept pole, $\chi_\text{exact}$ and
+$\chi_\text{kept}$ are both infinite while their difference is smooth, so within
+$10^{-5}\,\mathrm{FSR}$ of a kept pole the tail is taken as the mean of its two
+symmetric guard-band values (the linear term cancels; the residual is
+$\sim10^{-10}$, and on-pole sweep points come out at $9\times10^{-16}$).
+
+### 8.3 What the closure does not carry, and what $N$ is now for
+
+The tail modes also carry the *other* couplings — pump edges and taps onto modes
+beyond $N$. The closure drops those; they are second order in the coupling rate
+and fall with $N$ themselves. On the pumped line of §6 (oracle: `build_galvanic`
++ `hb_signal_idler`, gain peak 3.18), the relative gain error is
+
+| $N$ | 4 | 6 | 8 | 12 |
+|---|---|---|---|---|
+| raw comb | 7.4e-3 | 4.9e-3 | 4.0e-3 | 3.2e-3 |
+| tail closed | 3.3e-3 | 2.6e-3 | 2.3e-3 | 2.1e-3 |
+
+The closed residual sits on the $\sim 2\times10^{-3}$ floor of §6 — the oracle's
+pumped DC mode, which the macro excludes — from $N = 4$ on. So **$N$ no longer has
+to span the modes that load the port; it only has to span the modes whose pump
+or tap couplings matter**, and the honest way to know whether it does is to
+measure it: the Ports & Lines panel's *Check truncation (2× f_max)* re-solves the
+graph with every comb doubled and reports the largest change of each displayed
+trace over the window. For a plain terminated line that number is $10^{-15}$
+with the closure and $\sim 1$ without; for a pumped line it is the second-order
+tail above. The closure is on by default and can be switched off there to see
+the raw truncated comb — which is what every table in §6 and §7 measured.

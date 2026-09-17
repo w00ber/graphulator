@@ -136,8 +136,11 @@ def scene_line_pumped():
     # conjugate twin, its own port and the rank-one pump bus are all
     # created by set_line_pump (docs/pumped_line_termination.md)
     win = fresh_window()
+    # f_max = 9 -> N = 6. The port loading is exact at any N (the comb tail
+    # is closed analytically, docs sec. 8); N here sizes the PUMP couplings
+    # the closure does not carry -- check with 'Check truncation (2x f_max)'.
     tl = win.add_line_resonator(label='TL1', pos=(0.0, 2.0), FSR=1.5,
-                                Ztx=65.0, f_max=6.0, port_end='xL')
+                                Ztx=65.0, f_max=9.0, port_end='xL')
     win.set_line_pump(tl, 'x0', f_p=9.0, rate=0.05, n_ref=3,
                       twin_pos=(0.0, -2.0))
     save(win, "LINE_PUMPED_TERMINATION")
@@ -148,7 +151,7 @@ def scene_line_pumped_both():
     # 1.5+3 and difference pairs 6-1.5), so the bus draws three strokes
     win = fresh_window()
     tl = win.add_line_resonator(label='TL1', pos=(0.0, 2.0), FSR=1.5,
-                                Ztx=65.0, f_max=6.0, port_end='xL')
+                                Ztx=65.0, f_max=9.0, port_end='xL')
     win.set_line_pump(tl, 'x0', f_p=4.5, rate=0.05, n_ref=2,
                       twin_pos=(0.0, -2.0))
     save(win, "LINE_PUMPED_AMP_AND_CONV")

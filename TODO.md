@@ -19,7 +19,17 @@
   complex/mixed-sector hub weights (M_pumped + harmonic balance),
   band-limited comb expansion (low-side closure), two-port line macro
   (verified ABCD two-port reference), frequency-dependent hub weights /
-  connector embedding (free-Y_L-pole convention).
+  connector embedding (free-Y_L-pole convention). NOTE the comb tail
+  closure (docs sec. 8) IS a frequency-dependent hub weight -- a scalar
+  lambda_h(f) on the channel -- derived exactly for the one case of a
+  line's own truncated tail; the general connector embedding (a lumped
+  reactance between port and line) would reuse the same assembly hook
+  (`GraphScatteringMatrix._build_tail_closure`, `_scatter`).
+- [ ] The programmatic `extract_from_pgraph` route builds port hubs from the
+  saved 'ports' entries only; a line END terminated on a port (the GUI's
+  `line['ends']`) is merged into the hub column by `_gui_hubs_payload` and
+  is NOT reproduced by that route (nor are its `tails`). Exported code and
+  the GUI are consistent; the pgraph-file route lags.
 - [x] **Node taps** (the conservative "reactive hub" fan-out) SHIPPED:
   one drawn line-end→node connection stands for the conservative couplings
   to every comb mode. Profile pinned exactly against the reference's
@@ -98,6 +108,11 @@
   build_galvanic + hb_signal_idler: rate = 2 FSR g / pi. Two core bugs fixed
   on the way (sorted-vs-traversal tree orientation; explicit 'sector' frame
   rule for pump edges onto a +-n comb).
+  - Tail closure SHIPPED (docs sec. 8): the port loading of the modes beyond
+    f_max is exact at any N; the remaining N-dependence is the tail modes'
+    pump coupling (second order) -- measured, not assumed, with the panel's
+    "Check truncation (2x f_max)". The old "tail closure (3e-2 residual at a
+    matched port)" item is this.
   - Remaining: the DC mode's pumped coupling on an UNLOADED line (with an
     inductive load the question is gone — that end shorts DC and the free
     mode with it; unloaded it is still the 2e-3 residual floor vs the
