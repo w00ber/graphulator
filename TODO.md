@@ -37,8 +37,47 @@
 - [x] Dragging + rotation of port/line glyphs (drag to move with grid
   snap; Ctrl+U/Ctrl+I rotate the selected glyph's orientation in 15-degree
   steps; angle persists in .pgraph).
+- [ ] **Port / txline glyphs in the drawing-code export.** `_export_code`
+  (graphulator_para.py, "Export graph as Python code", Ctrl+Shift+E) walks
+  `self.nodes` / `self.edges` and emits matplotlib calls that redraw the
+  figure; it has no representation for port or line glyphs, so it still
+  requires nodes and says so. To add them, emit the same geometry
+  `ExplicitPortsMixin._draw_ports_and_lines` draws: `_port_geometry` +
+  `_port_effective_angle` for the pentagon and lead, `_line_geometry` +
+  `_line_end_points` for the cylinder/caps/stubs, and the routed wires from
+  `_attachment_wire` / `_tap_wire` / `_line_end_port_wire` / `_pump_bus_wire`
+  (all sampled polylines already, so they emit as plain `plot` calls). The
+  per-glyph style keys (w_mult, h_mult, linewidth, color, fill) and the wire
+  style keys (color, linewidth_mult, label, label_size_mult) should come
+  along. Note the IMAGE exports (PNG/SVG/PDF/clipboard) already handle glyph
+  -only graphs — this item is only about the code export.
 - [ ] GUI conveniences still deferred: ghost placement previews for
   ports/lines, port glyphs in clipboard copy/paste.
+- [ ] **Loaded-line basis** (docs/pumped_line_termination.md sec. 7 — the
+  parameterization is settled and the inductive case is VERIFIED; this is the
+  implementation). Store the load per end as {type, f_Z} where f_Z is the
+  frequency at which |X_elem| = Ztx — one number, no reference frequency to
+  agree on, and an explicit type rather than a sign (the project's JAA
+  convention gives an inductor NEGATIVE reactance, so a bare sign field would
+  be a trap). Default None = open, so today's numbers and every golden stay
+  pinned. Then:
+  - loaded roots cot(kl) = x(w); u_n(l) = cos(k_n l); C_n = c*int u_n^2 (+
+    C_elem u_n(l)^2 for a capacitive load, whose energy is kinetic);
+    gamma_n = u_n(0)^2/(2 pi Z0 C_n), now MODE-DEPENDENT.
+  - every derived profile currently assumes the open-open basis (kappa_n, the
+    tap envelope, gamma, B_int per mode, the pump profile) and must be
+    re-derived on the loaded one; the existing tests stay valid as the
+    unloaded limit.
+  - "solve FSR for a target loaded resonance" helper in the line and pump
+    dialogs: FSR = pi f_t / (arccot(x(f_t)) + (n-1) pi), closed form, verified
+    to 1e-15 for both types and for modes 1 and 3.
+  - the DC mode differs by type: an inductive load shorts DC (free mode gone,
+    replaced by the quarter-wave mode), a capacitive one keeps it.
+  - REFUSE capacitive loads until sec. 7.5 is closed: with the DC mode and the
+    element's kinetic term included the ABCD error still PLATEAUS with N
+    (~0.94) instead of falling, i.e. an unresolved direct/Foster-at-infinity
+    term. The inductive case converges ~1/N exactly like the unloaded macro
+    (1.260/0.569/0.276/0.137 at N=10/20/40/80), so it is the one to ship.
 - [x] **Pumped line termination (gain)** SHIPPED as a macro: linked
   conjugate twin + one double-line pump bus = the rank-one block g g^T
   (`docs/pumped_line_termination.md`). Normalization pinned against

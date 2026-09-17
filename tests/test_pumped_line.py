@@ -399,3 +399,69 @@ def test_pump_rate_normalization_matches_oracle(para):
                                                        fs[-1], len(fs)))
     G_2 = np.abs(res2['S'][:, s, s]) ** 2
     assert np.max(np.abs(G_2 - G_o)) / G_o.max() > 0.1
+
+
+# ---------------------------------------------------------------------------
+# Pump-bus stroke count (PRXQ visual language, docs sec. 7.6)
+# ---------------------------------------------------------------------------
+
+def test_pump_bus_families_and_stroke_count(para):
+    """A single line is conversion, a double amplification; a pump bus draws
+    their union, so the stroke count IS the diagnosis. Comb here: FSR = 1.5,
+    N = 4, so harmonics 1.5 .. 6.0."""
+    from graphulator.para_features.explicit_ports import PUMP_BUS_STROKES
+    gp, win, config = para
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 2.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL')
+    win.set_line_pump(line, 'x0', f_p=9.0, rate=0.05, n_ref=3,
+                      twin_pos=(0.0, -2.0))
+
+    cases = {
+        # f_p below twice the fundamental: nothing sums into the band, but
+        # f_p + f_m does land there -> conversion only
+        1.5: ({'conversion'}, 1),
+        # 1.5+3 = 4.5 sums in AND 6-1.5 = 4.5 differs in -> both
+        4.5: ({'amplification', 'conversion'}, 3),
+        # 9-3 = 6 and 9-4.5 = 4.5 sum in; 9+f_m is always above 6 -> amp only
+        9.0: ({'amplification'}, 2),
+        # beyond everything reachable
+        20.0: (set(), 1),
+    }
+    for f_p, (expected_fams, expected_strokes) in cases.items():
+        line['pump']['f_p'] = f_p
+        fams = win.pump_bus_families(line)
+        assert fams == expected_fams, (f_p, fams)
+        assert PUMP_BUS_STROKES[frozenset(fams)] == expected_strokes, f_p
+
+    # an unpumped line has no bus at all
+    other = win.add_line_resonator(label='TL2', pos=(9.0, 0.0), FSR=1.0,
+                                   Ztx=65.0, f_max=4.0, port_end=None)
+    assert win.pump_bus_families(other) == set()
+    assert win._pump_bus_wire(other) is None
+
+
+def test_multi_wire_draws_requested_stroke_count(para):
+    """The strokes are offset along the curve normal, so the count survives
+    curvature — and each stroke stays close to the path."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    gp, win, config = para
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 2.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL')
+    win.set_line_pump(line, 'x0', f_p=4.5, rate=0.05, n_ref=2,
+                      twin_pos=(0.0, -2.0))
+    pts = win._pump_bus_wire(line)
+    assert pts is not None
+
+    for n in (1, 2, 3):
+        fig, ax = plt.subplots()
+        win._draw_multi_wire(ax, pts, n, 'black', 1.5)
+        drawn = [ln for ln in ax.lines]
+        assert len(drawn) == n, (n, len(drawn))
+        for ln in drawn:
+            xy = np.column_stack(ln.get_data())
+            assert xy.shape == pts.shape
+            # every stroke hugs the routed path
+            assert np.max(np.hypot(*(xy - pts).T)) < 0.4 * win.node_radius
+        plt.close(fig)

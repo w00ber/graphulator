@@ -323,3 +323,170 @@ pumped line (the tapped mode would need its own idler-sector copy — the "is
 the same port connected to signal and conjugate?" question); and the
 $\det M$ / Routh–Hurwitz stability flag, which the near-threshold row above
 shows is not optional.
+
+## 7. Parameterizing the loaded line
+
+§4 showed the termination *disperses* the comb; §6 measured the cost of ignoring
+it. This section settles how the load is specified, and reports what is verified
+so far. Numbers here come from `misc/loaded_line_checks.py`.
+
+### 7.1 Why the reactance is the right handle, and why not its sign
+
+Whatever the element, the source-free condition at a shunt termination is
+
+$$
+Z_\mathrm{line}(\ell) + Z_\mathrm{elem} = 0
+\quad\Longleftrightarrow\quad
+\cot(k\ell) = \frac{\omega L}{Z_\mathrm{tx}}\ \ \text{(inductive)},\qquad
+\cot(k\ell) = -\frac{1}{\omega C\,Z_\mathrm{tx}}\ \ \text{(capacitive)},
+$$
+
+verified against the raw admittance $Y_\mathrm{line} + Y_\mathrm{elem}$ to
+$\sim10^{-14}$ for both types. So *one* frequency-dependent number, the
+normalized reactance, sets the whole basis.
+
+It is tempting — and it was the first proposal — to let the **sign** of that
+reactance pick the element type. Two reasons not to:
+
+1. **The project's sign convention is not the textbook one.** `cmtline_core`
+   declares `Z_ind = -1j*w*L` and `Z_cap = +1j/(w*C)` (JAA, $e^{+i\omega t}$),
+   so here an *inductor* has negative reactance and a *capacitor* positive —
+   the opposite of the usual reading. A bare signed field would be a standing
+   trap. (The resonance condition above is of course convention-independent.)
+2. A sign only works for a *one-element* reactance. The moment the termination
+   is a series LC or any richer Foster network, sign no longer determines the
+   frequency dependence, and that is the Phase-2 $\lambda(\omega)$ /
+   connector-embedding item.
+
+So the load is stored as **an explicit type plus one magnitude**, and for a
+pumped termination the type is already known: the modulated element *is* the
+load, so `pump['coupling']` names it.
+
+### 7.2 The magnitude: one frequency
+
+Store the magnitude as $f_Z$, **the frequency at which $\lvert X_\mathrm{elem}\rvert = Z_\mathrm{tx}$**
+($f_Z = Z_\mathrm{tx}/2\pi L$ inductive, $1/2\pi C Z_\mathrm{tx}$ capacitive). Then
+
+$$
+x(f) \equiv \frac{X_\mathrm{elem}}{Z_\mathrm{tx}} = \frac{f}{f_Z}\ \ \text{(inductive)},
+\qquad -\frac{f_Z}{f}\ \ \text{(capacitive)},
+$$
+
+in absolute frequency with **no reference frequency to agree on**. That matters:
+the obvious alternative — "the reactance at the fundamental" — is circular once
+the user wants to specify a *target* resonance, because the loaded fundamental
+is what we are solving for. $f_Z$ has no such loop, and it is physically
+readable: an inductor looks like a short below $f_Z$ and an open above it.
+
+### 7.3 Solving for the length from a target resonance
+
+This is the ergonomic request: specify the **loaded** resonance and let the app
+find the line. Evaluating the condition *at* the target gives a closed form —
+no iteration:
+
+$$
+\boxed{\ \mathrm{FSR} = \frac{\pi f_\mathrm{target}}{\operatorname{arccot}\big(x(f_\mathrm{target})\big) + (n-1)\pi}\ }
+\qquad \operatorname{arccot} \in (0,\pi),
+$$
+
+for putting the $n$-th loaded mode at $f_\mathrm{target}$ ($n = 1$ is the
+quarter-wave-like fundamental). Verified to $<10^{-15}$ for both element types
+across $f_Z$ spanning two decades. The resulting ratio $f_1/\mathrm{FSR}$ shows
+where you are between the two limits:
+
+| | $f_Z \to \infty$ | $f_Z$ moderate | $f_Z \to 0$ |
+|---|---|---|---|
+| inductive | $f_1/\mathrm{FSR} \to 1/2$ (quarter-wave, end shorted) | 0.15–0.47 | $\to 0$ (end open; the mode becomes the free DC mode) |
+| capacitive | $f_1/\mathrm{FSR} \to 1$ (open–open half-wave) | 0.55–0.97 | $\to 1/2$ (end shorted) |
+
+Note FSR then means *the geometric parameter* $v/2\ell$, not the literal mode
+spacing — the loaded spacings are not uniform. The UI should say so.
+
+### 7.4 The loaded mode quantities
+
+With the port at the open end $x = 0$ and the element at $x = \ell$, the modes
+are still $u_n(x) = \cos(k_n x)$, now at the loaded roots, and three things
+change together:
+
+$$
+\omega_n:\ \cot(k_n\ell) = x(\omega_n), \qquad
+u_n(\ell) = \cos(k_n\ell), \qquad
+C_n = \frac{1}{Z_\mathrm{tx}v}\!\left[\frac{\ell}{2} + \frac{\sin 2k_n\ell}{4k_n}\right] + C_\mathrm{elem}\,u_n(\ell)^2 ,
+$$
+
+the last term present **only for a capacitive load**: a shunt capacitor's energy
+$\tfrac12 C\dot\Phi(\ell)^2$ is *kinetic*, so it adds to the mode's mass, while
+an inductor's $\tfrac12\Phi(\ell)^2/L$ is potential and is already accounted for
+by the eigenvalue. The port rate follows from the same normalization,
+
+$$
+\gamma_n = \frac{u_n(0)^2}{2\pi Z_0 C_n},
+$$
+
+which reproduces the open–open result $\gamma/\mathrm{FSR} = (2/\pi)(Z_\mathrm{tx}/Z_0)$
+exactly, and is now **mode-dependent** — one more thing the open–open basis gets
+wrong.
+
+The DC mode differs by type, which resolves the §6 open item: an **inductive**
+load shorts DC, so the free $n=0$ mode is *gone* (replaced by the quarter-wave
+mode); a **capacitive** load is an open at DC, so it *survives*, with
+$C_0 = c\ell + C_\mathrm{elem}$.
+
+### 7.5 Status: inductive verified, capacitive not yet
+
+Feeding these quantities into the ordinary hub pipeline and comparing the
+complex $S_{11}$ against exact ABCD (JAA convention, matched port), the
+**inductive** case converges exactly like the open–open macro does:
+
+| | $N=10$ | $N=20$ | $N=40$ | $N=80$ | ratios |
+|---|---|---|---|---|---|
+| open–open (existing test, for reference) | 1.112 | 0.537 | 0.268 | 0.134 | ~2 |
+| inductive, $\omega_Z = \pi$ | 1.260 | 0.569 | 0.276 | 0.137 | 2.21 / 2.06 / 2.02 |
+| inductive, $\omega_Z = 0.3\pi$ | 1.256 | 0.567 | 0.275 | 0.136 | 2.22 / 2.06 / 2.02 |
+
+i.e. $\sim 1/N$, residual = the truncated tail, same as the unloaded macro. The
+loaded inductive basis is therefore **ready to implement** — and it is the case
+the pumped termination needs, since a modulated inductor is the device.
+
+The **capacitive** case is not closed: adding the surviving DC mode took the
+error from 1.78 to 1.28 and the element's kinetic term took it to 0.94, but it
+**plateaus** with $N$ instead of falling. A residual that does not shrink with
+mode count is a *direct* (non-resonant) term — a Foster pole at infinity that no
+finite sum of resonators reproduces — so something in the capacitive termination
+must be represented outside the comb. That is an open item, not a mystery in
+principle, but it is not verified and must not ship as if it were.
+
+**Recommended staging.** Add the load as a per-end, opt-in parameter
+(`{type, f_Z}`, default `None` = open, which reproduces today's numbers
+bit-for-bit and keeps every golden and profile test pinned as the
+$f_Z \to 0$ inductive limit); implement the inductive basis with the ABCD
+convergence test above as its gate; expose the "solve FSR for a target loaded
+resonance" helper from §7.3 in the line and pump dialogs; leave the capacitive
+load refused with a message pointing here until its direct term is understood.
+
+### 7.6 Visual language: how many strokes?
+
+The PRXQ graph language reserves a **single line** for conversion
+(beam-splitter) coupling and a **double line** for amplification (two-mode
+squeezing). A pump bus is ambiguous under that scheme because one pump on a comb
+can drive either or both — and silently getting conversion when you meant only
+to amplify is a common and costly surprise.
+
+Resolution: the bus draws the **union**, so the stroke count *is* the diagnosis.
+
+| families reachable in band | strokes |
+|---|---|
+| conversion only | 1 |
+| amplification only | 2 |
+| both | 3 |
+| neither (no resonant partner) | 1, labelled *no resonant pair* |
+
+This keeps every existing meaning — one stroke still reads "conversion", two
+still reads "amplification" — and makes three mean exactly "both at once",
+rather than introducing an unrelated symbol. It is computed, not declared: a
+signal at $\omega$ pairs with the twin's $+m$ member at $\omega = \omega_p - \omega_m$
+(amplification) and with its $-m$ member at $\omega = \omega_p + \omega_m$
+(conversion), and a family counts when some partner lands the signal inside the
+comb band. So a pump below twice the fundamental cannot amplify at all (one
+stroke), and the bus label carries the same verdict in words
+(`amp`, `conv`, `amp+conv`). See `pump_bus_families`.

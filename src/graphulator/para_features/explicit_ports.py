@@ -107,7 +107,20 @@ WIRE_COLOR = 'dimgray'
 WIRE_COLOR_INVERTED = 'firebrick'   # default for a sign = -1 attachment
 WIRE_COLOR_TAP = 'teal'             # conservative node tap
 WIRE_LINEWIDTH = 1.4                # data-unit base, scaled by linewidth_mult
-PUMP_BUS_COLOR = 'black'            # the double-line pump bus (crosses sectors)
+PUMP_BUS_COLOR = 'black'            # the pump bus (crosses sectors)
+
+# Stroke count of a pump bus, in the PRXQ visual language: a SINGLE line is
+# conversion (beam-splitter) coupling and a DOUBLE line is amplification
+# (two-mode squeezing). One pump on a comb can reach either or both, so the
+# bus draws their union -- three strokes when it carries both, which is the
+# case that is easy to miss when you only meant to amplify. An empty set
+# (no resonant partner in band) still draws one stroke.
+PUMP_BUS_STROKES = {
+    frozenset(): 1,
+    frozenset({'conversion'}): 1,
+    frozenset({'amplification'}): 2,
+    frozenset({'amplification', 'conversion'}): 3,
+}
 
 
 def _line_extractor_id(line):
@@ -1593,6 +1606,35 @@ class ExplicitPortsMixin:
         return bool(primary and primary.get('pump')
                     and primary['pump'].get('end') == end)
 
+    def pump_bus_families(self, line):
+        """Which parametric families this pump actually reaches in-band.
+
+        Returns a set from {'amplification', 'conversion'}. In the two-cluster
+        picture a signal at omega pairs with the twin's +m member at
+        omega = f_p - f_m (sum-frequency: amplification) and with its -m
+        member at omega = f_p + f_m (difference-frequency: conversion). A
+        family is present when some partner puts the signal inside the comb
+        band -- so a pump below twice the fundamental has no amplification
+        pair at all, and a pump beyond the comb's span has no conversion one.
+
+        This is what the bus's stroke count draws (see the PRXQ visual
+        language note in docs/pumped_line_termination.md).
+        """
+        pump = line.get('pump')
+        if not pump:
+            return set()
+        res = self.line_resonator_for(line)
+        f_p = float(pump['f_p'])
+        harmonics = [n * res.FSR for n in range(1, res.N + 1)]
+        lo, hi = res.FSR, res.N * res.FSR
+        families = set()
+        for f_m in harmonics:
+            if lo <= f_p - f_m <= hi:
+                families.add('amplification')
+            if lo <= f_p + f_m <= hi:
+                families.add('conversion')
+        return families
+
     def _pump_bus_wire(self, line):
         """Sampled wire of the pump bus from `line`'s pumped end into its
         twin's, or None."""
@@ -2509,6 +2551,39 @@ class ExplicitPortsMixin:
             linestyle=linestyle, zorder=zorder, alpha=alpha,
             solid_capstyle='round'))
 
+    def _draw_multi_wire(self, ax, pts, n_strokes, color, linewidth,
+                         selected=False, zorder=4):
+        """Draw a wire as `n_strokes` parallel strokes.
+
+        The PRXQ visual language reserves a single line for conversion
+        (beam-splitter) coupling and a double line for amplification
+        (two-mode squeezing). A pump bus can carry either or both, so the
+        stroke count says which: 1 = conversion only, 2 = amplification
+        only, 3 = both. Strokes are offset along the curve normal so the
+        count reads at any curvature.
+        """
+        if n_strokes <= 1:
+            self._draw_wire(ax, pts, color, linewidth, selected=selected,
+                            zorder=zorder)
+            return
+        tang = np.gradient(pts, axis=0)
+        norm = np.stack([-tang[:, 1], tang[:, 0]], axis=1)
+        length = np.hypot(norm[:, 0], norm[:, 1])
+        length[length == 0.0] = 1.0
+        norm = norm / length[:, None]
+        gap = 0.075 * self.node_radius
+        offsets = (np.arange(n_strokes) - (n_strokes - 1) / 2.0) * gap
+        if selected:                      # one halo around the whole bundle
+            self._draw_wire(ax, pts + norm * offsets[0], color, linewidth,
+                            selected=True, zorder=zorder)
+            self._draw_wire(ax, pts + norm * offsets[-1], color, linewidth,
+                            selected=True, zorder=zorder)
+        for off in offsets:
+            ax.add_line(mlines.Line2D(
+                (pts + norm * off)[:, 0], (pts + norm * off)[:, 1],
+                color=color, linewidth=linewidth, zorder=zorder,
+                alpha=0.9, solid_capstyle='round'))
+
     def _draw_wire_label(self, ax, pts, conn, ppdu, color, fallback=None):
         """Label a wire at its midpoint, node-style (edge-label parity).
 
@@ -2844,16 +2919,17 @@ class ExplicitPortsMixin:
             pump = line['pump']
             selected = line in getattr(self, 'selected_pump_buses', [])
             color, lw = self.wire_style(pump, PUMP_BUS_COLOR)
-            outer = max(3.0 * lw, lw + 2.4)
-            self._draw_wire(ax, pts, color, outer, selected=selected,
-                            zorder=4)
-            ax.add_line(mlines.Line2D(
-                pts[:, 0], pts[:, 1], color='white', linewidth=outer - 2.0 * lw,
-                zorder=4.1, solid_capstyle='butt'))
+            n_strokes = PUMP_BUS_STROKES[
+                frozenset(self.pump_bus_families(line))]
+            self._draw_multi_wire(ax, pts, n_strokes, color, lw,
+                                  selected=selected, zorder=4)
             n_ref, m_ref = self._pump_reference_pair(line)
+            tag = {1: 'conv', 2: 'amp', 3: 'amp+conv'}.get(n_strokes, '')
+            if not self.pump_bus_families(line):
+                tag = 'no resonant pair'
             self._draw_wire_label(
                 ax, pts, pump, ppdu, color,
-                fallback=f"f_p={pump['f_p']:g}  ({n_ref},{m_ref})")
+                fallback=f"f_p={pump['f_p']:g}  ({n_ref},{m_ref})  {tag}")
 
     # ---- serialization fragments ----
 

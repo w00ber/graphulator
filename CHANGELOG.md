@@ -153,6 +153,16 @@
   use it, hand-drawn edges keep the heuristic.
 
 ### Added (continued)
+  - **Pump bus stroke count.** In the PRXQ visual language a single line is
+    conversion (beam-splitter) coupling and a double line is amplification
+    (two-mode squeezing); one pump on a comb can drive either or both, so the
+    bus now draws their union and the stroke count is the diagnosis:
+    1 = conversion only, 2 = amplification only, 3 = both (label: `conv`,
+    `amp`, `amp+conv`). It is computed, not declared — a family counts when
+    some partner lands the signal inside the comb band — so a pump below
+    twice the fundamental cannot amplify and says so, and silently getting
+    conversion when you only meant to amplify is now visible. See
+    `pump_bus_families` and `docs/pumped_line_termination.md` §7.6.
   - Phase-2 items are explicitly blocked pending derivations (complex /
     mixed-sector hub weights, band-limited combs, two-port lines,
     frequency-dependent weights); attachments enforce real signed weights

@@ -142,6 +142,17 @@ def scene_line_pumped():
     save(win, "LINE_PUMPED_TERMINATION")
 
 
+def scene_line_pumped_both():
+    # f_p = 4.5 on an FSR=1.5, N=4 comb reaches BOTH families (sum pairs
+    # 1.5+3 and difference pairs 6-1.5), so the bus draws three strokes
+    win = fresh_window()
+    tl = win.add_line_resonator(label='TL1', pos=(0.0, 2.0), FSR=1.5,
+                                Ztx=65.0, f_max=6.0, port_end='xL')
+    win.set_line_pump(tl, 'x0', f_p=4.5, rate=0.05, n_ref=2,
+                      twin_pos=(0.0, -2.0))
+    save(win, "LINE_PUMPED_AMP_AND_CONV")
+
+
 if __name__ == '__main__':
     os.makedirs(OUT_DIR, exist_ok=True)
     print("Generating test scenes:")
@@ -153,4 +164,5 @@ if __name__ == '__main__':
     scene_line_tap_2nodes()
     scene_node_2lines_tap()
     scene_line_pumped()
+    scene_line_pumped_both()
     print("done.")
