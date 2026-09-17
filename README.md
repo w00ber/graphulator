@@ -125,6 +125,18 @@ results to machine precision (pinned by a golden-file regression suite).
   always fits; stretching it by hand takes over. The **File → Test** menu
   ships canonical scenes for trying all of this.
 
+- **Pumped termination** (right-click a line → *Add pumped termination…*):
+  a line end terminated in a modulated inductor (or capacitor) pumped at
+  `f_p`. The app draws a linked **conjugate twin** of the line — hollow, its
+  own layout and port, physics mirrored — joined at the pumped ends by a
+  **double-line pump bus**, which stands for the rank-one parametric block
+  between the comb and its twin: one pump amplifies every harmonic pair
+  summing to `f_p` and converts every pair differing by it. The rate is
+  entered at a reference harmonic and its idler partner (shown live in the
+  dialog); see `docs/pumped_line_termination.md` for the derivation, the
+  normalization, and what remains open (loaded-line dispersion, the DC
+  mode, stability).
+
 **Wires** carry the same per-wire controls as ordinary graph edges — line
 width, color, label text and label size — editable in the Properties panel
 when a wire is selected, alongside its physics (rate, sign, and a tap's

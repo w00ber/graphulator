@@ -1,0 +1,151 @@
+{
+  "version": "3.0",
+  "format": "pgraph",
+  "metadata": {
+    "created": "2026-09-16T23:52:38.524460",
+    "modified": "2026-09-16T23:52:38.524467"
+  },
+  "view": {
+    "grid_type": "square",
+    "grid_rotation": 0,
+    "zoom_level": 1.0,
+    "xlim": [
+      -10.0,
+      10.0
+    ],
+    "ylim": [
+      -10.0,
+      10.0
+    ],
+    "use_latex": false
+  },
+  "nodes": [],
+  "edges": [],
+  "node_properties": {},
+  "edge_properties": {},
+  "code_properties": {
+    "imports": [],
+    "node_code": {},
+    "edge_code": {},
+    "global_code": {}
+  },
+  "ports": [
+    {
+      "port_id": 0,
+      "label": "TL1",
+      "pos": [
+        3.774,
+        2.0
+      ],
+      "angle": 180.0,
+      "angle_pinned": true,
+      "monitored": true,
+      "w_mult": 1.0,
+      "h_mult": 1.0,
+      "linewidth": 2.0,
+      "color": "black",
+      "fill": "white",
+      "attachments": []
+    },
+    {
+      "port_id": 1,
+      "label": "TL1*",
+      "pos": [
+        3.774,
+        -2.0
+      ],
+      "angle": 0.0,
+      "angle_pinned": false,
+      "monitored": true,
+      "w_mult": 1.0,
+      "h_mult": 1.0,
+      "linewidth": 2.0,
+      "color": "black",
+      "fill": "white",
+      "attachments": []
+    }
+  ],
+  "line_resonators": [
+    {
+      "line_id": 0,
+      "label": "TL1",
+      "pos": [
+        0.0,
+        2.0
+      ],
+      "angle": 0.0,
+      "w_mult": 1.0,
+      "h_mult": 1.0,
+      "linewidth": 1.6,
+      "color": "black",
+      "fill": "#cccccc",
+      "FSR": 1.5,
+      "Ztx": 65.0,
+      "f_max": 6.0,
+      "ends": {
+        "x0": [],
+        "xL": [
+          {
+            "kind": "port",
+            "port_id": 0
+          }
+        ]
+      },
+      "end_coupling": {
+        "x0": "capacitive",
+        "xL": "capacitive"
+      },
+      "port_end": "xL",
+      "Z0_port": 50.0,
+      "alpha_uniform": 0.0,
+      "pump": {
+        "end": "x0",
+        "f_p": 9.0,
+        "rate": 0.05,
+        "phase": 0.0,
+        "n_ref": 3,
+        "coupling": "inductive",
+        "twin_id": 1
+      },
+      "conj": false,
+      "twin_of": null
+    },
+    {
+      "line_id": 1,
+      "label": "TL1*",
+      "pos": [
+        0.0,
+        -2.0
+      ],
+      "angle": 0.0,
+      "w_mult": 1.0,
+      "h_mult": 1.0,
+      "linewidth": 1.6,
+      "color": "black",
+      "fill": "white",
+      "FSR": 1.5,
+      "Ztx": 65.0,
+      "f_max": 6.0,
+      "ends": {
+        "x0": [],
+        "xL": [
+          {
+            "kind": "port",
+            "port_id": 1
+          }
+        ]
+      },
+      "end_coupling": {
+        "x0": "capacitive",
+        "xL": "capacitive"
+      },
+      "port_end": null,
+      "Z0_port": 50.0,
+      "alpha_uniform": 0.0,
+      "pump": null,
+      "conj": true,
+      "twin_of": 0
+    }
+  ],
+  "notes": ""
+}
