@@ -101,7 +101,8 @@ def test_autograph_s11_matches_reference_matrix():
                             'points': len(f_phys)},
         line_resonators=[line],
     )
-    gsm = autograph.GraphScatteringMatrix(extractor, f_phys)
+    # comparing against the oracle's TRUNCATED comb matrix: closure off
+    gsm = autograph.GraphScatteringMatrix(extractor, f_phys, tail_closure=False)
     assert gsm.num_ports == 1
     assert gsm.num_modes == 2 * N + 1
     # root defaults to the first attachment of the (only) port hub

@@ -955,6 +955,10 @@ class ExplicitPortsMixin:
         self.selected_attachments = []     # [(port, attachment), ...]
         self.selected_taps = []            # [(line, end, conn), ...]
         self.selected_pump_buses = []   # lines whose pump bus is selected
+        # comb tail closure (autograph "COMB TAIL CLOSURE"): fold the modes
+        # beyond f_max back into the port channel analytically. On by
+        # default; the Ports & Lines panel toggles it.
+        self.line_tail_closure = True
         self._attach_pending_port = None   # port awaiting a node click (edge mode)
         self._attach_pending_line_end = None  # (line, end) awaiting a port
         self._place_loss_hub_next = False  # next port placement is a loss hub
@@ -1210,6 +1214,10 @@ class ExplicitPortsMixin:
             for line, end in terms:
                 resonator = LineResonator(**line_payload(line))
                 hub['attachments'].extend(resonator.end_couplings(end))
+                # the comb beyond N is closed analytically into this channel
+                # (autograph: "comb tail closure")
+                hub.setdefault('tails', []).append(
+                    {'line': resonator.to_dict(), 'end': end})
             payload.append(hub)
         return payload
 

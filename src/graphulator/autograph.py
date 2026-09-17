@@ -194,6 +194,11 @@ class DissipationHub:
     label: str = ''
     attachments: List[Tuple[Any, float, float]] = field(default_factory=list)
     monitored: bool = True
+    #: Transmission-line ends terminated on this hub whose comb is truncated
+    #: at N: ``[{'line': LineResonator.to_dict(), 'end': 'x0'|'xL'}, ...]``.
+    #: The modes beyond N are closed analytically into the channel (see the
+    #: "comb tail closure" comment on GraphScatteringMatrix).
+    tails: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -201,6 +206,7 @@ class DissipationHub:
             'label': self.label,
             'attachments': [tuple(a) for a in self.attachments],
             'monitored': self.monitored,
+            'tails': [dict(t) for t in self.tails],
         }
 
 
@@ -230,6 +236,17 @@ def _normalize_hub(hub) -> Dict[str, Any]:
         hub = hub.to_dict()
     if 'hub_id' not in hub:
         raise ValueError(f"Hub {hub!r} is missing 'hub_id'")
+    tails = []
+    for spec in (hub.get('tails') or []):
+        end = spec.get('end')
+        if end not in LINE_LOAD_ENDS:
+            raise ValueError(
+                f"Hub {hub['hub_id']!r}: tail end must be one of "
+                f"{LINE_LOAD_ENDS!r}, got {end!r}")
+        line = spec['line']
+        tails.append({'line': (line.to_dict() if isinstance(line, LineResonator)
+                               else dict(line)),
+                      'end': end})
     return {
         'hub_id': hub['hub_id'],
         'label': hub.get('label', str(hub['hub_id'])),
@@ -237,6 +254,7 @@ def _normalize_hub(hub) -> Dict[str, Any]:
             _normalize_attachment(a) for a in hub.get('attachments', [])
         ],
         'monitored': bool(hub.get('monitored', True)),
+        'tails': tails,
     }
 
 
@@ -741,6 +759,104 @@ class LineResonator:
             for i, node_id in enumerate(self.comb_mode_ids())
         ]
 
+    # ---- the comb's port susceptibility, exactly and as kept ----
+    #
+    # A one-port line's reflection depends on its modes only through the
+    # scalar chi(f) = sum_n kappa_n^2 / (f - f_n): S = (i chi/2 - 1)/(i chi/2 + 1)
+    # (cmtline_core.s11_graph_chi). Truncating the comb at N drops the tail
+    # of that sum, and the tail is NOT small: it is a reactive term
+    # ~ -2 gamma f / (FSR^2 N) that shifts every in-band resonance, which is
+    # why the macro converges only like 1/N (tests/test_line_macro_vs_abcd).
+    # But the FULL sum is known in closed form -- it is the line's exact
+    # input impedance, chi = -2i Z_in/Z0 (open-open: 2 (Ztx/Z0) cot(k ell),
+    # the Mittag-Leffler expansion of cot) -- so the tail is simply
+    # exact minus kept, and GraphScatteringMatrix folds it back into the
+    # hub channel (see its "comb tail closure" comment). ABCD in the JAA
+    # convention, mirroring tests/cmtline_core.py operation for operation.
+
+    def _load_impedance(self, z):
+        """Z of the end load at complex linear frequency z (JAA: -i w L)."""
+        if self.load is None:
+            return None
+        f_Z = self.load['f_Z']
+        if self.load['type'] == 'inductive':
+            # -i w L with L = Ztx / (2 pi f_Z)
+            return -1j * z * self.Ztx / f_Z
+        # +i/(w C) with C = 1/(2 pi f_Z Ztx)
+        return 1j * f_Z * self.Ztx / z
+
+    def input_impedance(self, end, z):
+        """Exact Z_in seen at `end` (the other end open or loaded), at complex
+        linear frequency z (an array), lossless line, JAA convention."""
+        if end not in LINE_LOAD_ENDS:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': end must be 'x0' or 'xL'")
+        z = np.asarray(z, dtype=complex)
+        theta = np.pi * z / self.FSR                    # k ell
+        cos, sin = np.cos(theta), np.sin(theta)
+        A, B, C, D = cos, -1j * self.Ztx * sin, -1j * sin / self.Ztx, cos
+        Z_open = A / C                                  # = i Ztx cot(k ell)
+        if self.load is None:
+            return Z_open
+        ZL = self._load_impedance(z)
+        if self.load['end'] == end:
+            # the port shares the loaded end: the reactance shunts the line
+            return 1.0 / (1.0 / ZL + 1.0 / Z_open)
+        return (A * ZL + B) / (C * ZL + D)
+
+    def exact_susceptibility(self, end, z):
+        """chi(z) of the FULL (untruncated) line at `end`: -2i Z_in / Z0."""
+        return -2j * self.input_impedance(end, z) / self.Z0_port
+
+    def kept_susceptibility(self, end, z):
+        """chi(z) carried by the N pole pairs the comb keeps, with EXACTLY the
+        poles and residues the extractor places in M and K."""
+        z = np.asarray(z, dtype=complex)
+        freqs, _, _, _ = self.expand_arrays()
+        kap = np.array([mag * (1.0 if ph == 0.0 else -1.0)
+                        for _, mag, ph in self.end_couplings(end)])
+        return np.sum(kap[None, :] ** 2 / (z[:, None] - freqs[None, :]), axis=1)
+
+    #: Half-width (in FSR) of the guard band around a KEPT pole inside which
+    #: exact - kept is evaluated on the two symmetric edge points instead.
+    TAIL_POLE_GUARD = 1e-5
+
+    def tail_susceptibility(self, end, z):
+        """chi(z) of the modes BEYOND N: exact minus kept, in closed form.
+
+        exact and kept share every kept pole with the same residue, so their
+        difference is analytic there -- but numerically both blow up and the
+        subtraction loses all its digits (and is NaN exactly on a pole,
+        which a lossless sweep grid hits whenever a point lands on n*FSR).
+        Within TAIL_POLE_GUARD*FSR of a kept pole the tail is therefore taken
+        as the mean of its values on the two symmetric edges of the guard
+        band: the linear term cancels, leaving an O(guard^2) ~ 1e-10
+        interpolation error against a ~1e-11 cancellation error -- both far
+        below anything else in the model. Away from the kept poles the
+        subtraction is direct and exact to rounding.
+        """
+        z = np.asarray(z, dtype=complex)
+        freqs, _, _, _ = self.expand_arrays()
+        d = z[:, None] - freqs[None, :]
+        near = np.abs(d).min(axis=1) < self.TAIL_POLE_GUARD * self.FSR
+        out = np.empty_like(z)
+        safe = ~near
+        if np.any(safe):
+            out[safe] = (self.exact_susceptibility(end, z[safe])
+                         - self.kept_susceptibility(end, z[safe]))
+        if np.any(near):
+            pole = freqs[np.abs(d[near]).argmin(axis=1)]
+            # keep the (possibly complex) offset from the pole, e.g. the loss
+            # shift i B_int/2, and step along the real axis
+            off = z[near] - pole
+            step = self.TAIL_POLE_GUARD * self.FSR
+            zp = pole + off + step
+            zm = pole + off - step
+            tail = lambda zz: (self.exact_susceptibility(end, zz)  # noqa: E731
+                               - self.kept_susceptibility(end, zz))
+            out[near] = 0.5 * (tail(zp) + tail(zm))
+        return out
+
     #: Conservative ("reactive") tap coupling profiles, VERIFIED against the
     #: reference by extracting the exact a-basis couplings of a device tapped
     #: onto the comb (cmtline_core.a_basis_A over the build_capacitive /
@@ -866,6 +982,8 @@ class LineResonator:
                 'label': self.label,
                 'attachments': attachments,
                 'monitored': True,
+                # the comb beyond N, closed analytically into the channel
+                'tails': [{'line': self.to_dict(), 'end': self.port_end}],
             })
         return nodes, hubs
 
@@ -2754,18 +2872,23 @@ class GraphScatteringMatrix:
     PORT_LABEL_X_MULT = 0.55     # X offset for port labels (× font width)
     XLABEL_EXTRA_MULT = -0.75    # Extra offset for xlabel below freq rows (× row_spacing)    
 
-    def __init__(self, extractor: GraphExtractor, f_root_s: np.ndarray, verbose: bool = False):
+    def __init__(self, extractor: GraphExtractor, f_root_s: np.ndarray,
+                 verbose: bool = False, tail_closure: bool = True):
         self.extractor = extractor
-        self.verbose = verbose  
+        self.verbose = verbose
         self.f_root_s = f_root_s
+        self.tail_closure = bool(tail_closure)
         self.num_modes = len(extractor.graph_data['nodes'])
         self.M = np.zeros((len(self.f_root_s), self.num_modes, self.num_modes), dtype=complex)
 
         # K is built before M: the external anti-Hermitian part of M is
         # computed FROM K_full ((i/2) K_full K_full^dagger), so M and S share
-        # a single source of truth for external dissipation.
+        # a single source of truth for external dissipation. The comb tail
+        # closure (per-channel lambda(f), see _build_tail_closure) is built
+        # between them because it scales that same term.
         self._build_f_drivesignals()
         self._build_K_matrix()
+        self._build_tail_closure()
         self._build_M_matrix()
         self._build_S_matrix()
         self._build_det_M()
@@ -2856,6 +2979,72 @@ class GraphScatteringMatrix:
         if self.K_full.size:
             gram = self.K_full @ self.K_full.conj().T
             self.M += 0.5j * gram[None, :, :]
+            if self.has_tail_closure:
+                # comb tail closure: channel h's damper is scaled by
+                # lambda_h(f) = 1/(1 + i chi_t,h/2). Added as the DIFFERENCE
+                # from the plain Gram above, so channels without a tail
+                # (lambda = 1) contribute exact zeros and legacy graphs stay
+                # bit-identical.
+                self.M += 0.5j * np.einsum(
+                    'fh,ih,jh->fij', self.lam - 1.0,
+                    self.K_full, self.K_full.conj())
+
+    def _build_tail_closure(self):
+        """Close each channel's truncated comb tail into a scalar lambda_h(f).
+
+        COMB TAIL CLOSURE. A transmission-line macro keeps N pole pairs; the
+        modes beyond N still load the port, and their effect is a reactive
+        term ~ -2 gamma f/(FSR^2 N) that shifts every in-band resonance -- the
+        1/N convergence of tests/test_line_macro_vs_abcd.py is exactly this
+        tail. Eliminating those modes exactly (a Schur complement; they touch
+        the rest of the graph only through the hub column) collapses them
+        into ONE scalar per channel,
+
+            chi_t,h(f) = sum_{tail} kappa_n^2 / (f - f_n)   (closed form:
+                         LineResonator.tail_susceptibility = exact - kept),
+            lambda_h(f) = 1 / (1 + i chi_t,h / 2),
+
+        and the assembly becomes
+
+            M   = D + sum_edges + (i/2) sum_h lambda_h kappa_h kappa_h^dagger
+            S   = -Lambda_d + i diag(lambda) K^dagger M^-1 K diag(lambda)
+            Lambda_d,h = (1 - i chi_t,h/2) / (1 + i chi_t,h/2)   (a phase).
+
+        The identity is exact: for a one-port line at N = 2 this reproduces
+        the ABCD reflection to 1e-14 (tests/test_tail_closure.py), because
+        the kept comb plus its analytic tail IS the line. What the closure
+        drops is only the tail modes' OTHER couplings -- pump edges and taps
+        onto modes beyond N -- which are second order in those rates and
+        fall off with N themselves. So N need only span the modes whose
+        couplings matter, not the modes that load the port.
+
+        Channels with no tail get lambda = 1 and Lambda_d = 1 exactly, so
+        graphs without lines are assembled bit-for-bit as before.
+        """
+        port_hubs, loss_hubs = self.port_hubs, self.loss_hubs
+        n_chan = len(port_hubs) + len(loss_hubs)
+        n_f = len(self.f_root_s)
+        self.chi_tail = np.zeros((n_f, n_chan), dtype=complex)
+        self.has_tail_closure = False
+        if self.tail_closure:
+            for h, hub in enumerate(port_hubs + loss_hubs):
+                tails = hub.get('tails') or []
+                if not tails:
+                    continue
+                # the channel's frame: that of the modes it damps
+                first = next((a[0] for a in hub['attachments']
+                              if a[0] in self.drive_signals), None)
+                f_d = (self.drive_signals[first] if first is not None
+                       else self.f_root_s)
+                for spec in tails:
+                    line = _normalize_line(spec['line'])
+                    # the kept modes sit at f_d - f_n + (i/2) B_int; the tail
+                    # is evaluated at the same complex argument
+                    z = np.asarray(f_d, dtype=complex) + 0.5j * line.B_int_per_mode
+                    self.chi_tail[:, h] += line.tail_susceptibility(spec['end'], z)
+                self.has_tail_closure = True
+        self.lam = 1.0 / (1.0 + 0.5j * self.chi_tail)
+        self.direct = (1.0 - 0.5j * self.chi_tail) / (1.0 + 0.5j * self.chi_tail)
 
     def _build_K_matrix(self):
         """Build the coupling matrices from the effective dissipation hubs.
@@ -2874,6 +3063,7 @@ class GraphScatteringMatrix:
         basis = self.extractor.graph_data['basis_order']
         port_hubs, loss_hubs = self.extractor.get_effective_hubs()
         self.port_hubs = port_hubs
+        self.loss_hubs = loss_hubs
         self.loss_hubs = loss_hubs
         self.num_ports = len(port_hubs)
         self.num_loss_hubs = len(loss_hubs)
@@ -2950,7 +3140,7 @@ class GraphScatteringMatrix:
         # but exposes no channel. Minv is NOT retained (line-macro graphs
         # make it large); S_full recomputes it on demand.
         Minv = np.linalg.inv(self.M)
-        self.S = 1j * (self.K.conj().T @ Minv @ self.K) - np.eye(self.num_ports)
+        self.S = self._scatter(self.K, Minv, self.num_ports)
         self.SdB = 20 * np.log10(np.abs(self.S))
 
         # Initialize empty trace list for plotting
@@ -2972,8 +3162,22 @@ class GraphScatteringMatrix:
         """
         n_chan = self.K_full.shape[1]
         Minv = np.linalg.inv(self.M)
-        return (1j * (self.K_full.conj().T @ Minv @ self.K_full)
-                - np.eye(n_chan))
+        return self._scatter(self.K_full, Minv, n_chan)
+
+    def _scatter(self, K, Minv, n_chan):
+        """S over the first n_chan channels: i K^dagger M^-1 K - I, with the
+        comb tail closure's per-channel lambda on both sides and its direct
+        phase on the diagonal when a channel closes a tail (see
+        _build_tail_closure). Without tails this is the historical
+        expression, evaluated identically."""
+        core = 1j * (K.conj().T @ Minv @ K)
+        if not self.has_tail_closure:
+            return core - np.eye(n_chan)
+        lam = self.lam[:, :n_chan]
+        S = lam[:, :, None] * core * lam[:, None, :]
+        idx = np.arange(n_chan)
+        S[:, idx, idx] -= self.direct[:, :n_chan]
+        return S
 
     @property
     def absorption(self):

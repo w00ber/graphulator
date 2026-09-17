@@ -170,6 +170,16 @@ its `n=…` reference harmonic until you give it a label of your own).
   validated against exact ABCD at ~1/N; capacitive ones are refused pending
   a missing direct term (`docs/pumped_line_termination.md` §7).
 
+  **Comb tail closure (on by default).** The modes beyond `f_max` still load
+  the port — a reactive tail ~ 2γf/(FSR²N) that shifts every resonance and
+  converges only as 1/N — so the app folds them back into the port channel
+  in closed form (the line's exact input impedance minus the kept comb). The
+  port loading is then exact at *any* N; what `f_max` still truncates is the
+  pump/tap couplings onto modes beyond it, which are second order. Use
+  *Check truncation (2× f_max)* in the Ports & Lines panel to measure that for
+  your graph, and the panel's checkbox to see the raw truncated comb
+  (`docs/pumped_line_termination.md` §8).
+
   **The comb stays inside the macro.** A line is connected by its **end
   leads**: click a lead with the edge tool (`E`), then a port glyph, and
   that end is terminated — the whole comb joins that port's single hub

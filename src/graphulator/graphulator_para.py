@@ -1145,21 +1145,46 @@ class PropertiesPanel(QWidget):
         show_s_layout.addStretch()
         nodes_layout.addLayout(show_s_layout)
 
-        # --- LEFT: vertical split Nodes (top) / Ports & Lines (bottom) ---
-        # The Ports pane is the third parameter set (external port coupling
-        # rates); it is only visible in Explicit Ports mode.
-        left_splitter = QSplitter(Qt.Orientation.Vertical)
-        left_splitter.addWidget(nodes_frame)
+        assignment_splitter.addWidget(nodes_frame)
 
+        # --- Ports & Lines: the third parameter set, spanning the FULL width
+        # under Nodes | Edges (its rows are wide: a line's five physics
+        # spinboxes, a pump's four). Only visible in Explicit Ports mode.
         self.ports_frame = QFrame()
         self.ports_frame.setFrameStyle(QFrame.Shape.StyledPanel)
-        self.ports_frame.setMinimumWidth(280)
         ports_layout = QVBoxLayout()
         self.ports_frame.setLayout(ports_layout)
 
+        ports_title_row = QHBoxLayout()
         ports_title = QLabel("Ports && Lines")
         ports_title.setStyleSheet("font-weight: bold;")
-        ports_layout.addWidget(ports_title)
+        ports_title_row.addWidget(ports_title)
+        ports_title_row.addStretch()
+        # comb tail closure toggle: the modes beyond f_max still load the
+        # port; closing them analytically makes the port loading exact at
+        # any N (autograph "COMB TAIL CLOSURE"). Off = the raw truncated comb.
+        self.tail_closure_check = QCheckBox("close comb tail analytically")
+        self.tail_closure_check.setChecked(True)
+        self.tail_closure_check.setToolTip(
+            "A line's comb is truncated at f_max, but the modes beyond it "
+            "still load the port: a reactive tail ~ 2\u03b3f/(FSR\u00b2N) "
+            "that shifts every resonance and converges only as 1/N. "
+            "Checked, that tail is folded back into the port channel in "
+            "closed form (exact for the port loading at ANY N; what remains "
+            "is the tail modes' own pump/tap couplings, second order). "
+            "Unchecked, you see the raw truncated comb.")
+        self.tail_closure_check.toggled.connect(self._on_tail_closure_toggled)
+        ports_title_row.addWidget(self.tail_closure_check)
+        self.truncation_check_button = QPushButton("Check truncation (2\u00d7 f_max)")
+        self.truncation_check_button.setToolTip(
+            "Re-solve every component with all lines' f_max doubled and "
+            "report the largest change of each displayed S trace over the "
+            "current window. The honest way to know whether N is enough for "
+            "THIS graph -- including the pump/tap couplings the analytic "
+            "closure does not carry.")
+        self.truncation_check_button.clicked.connect(self._check_truncation)
+        ports_title_row.addWidget(self.truncation_check_button)
+        ports_layout.addLayout(ports_title_row)
 
         self.ports_scroll = QScrollArea()
         self.ports_scroll.setWidgetResizable(True)
@@ -1177,13 +1202,8 @@ class PropertiesPanel(QWidget):
         self.ports_scroll.setWidget(self.ports_param_widget)
         ports_layout.addWidget(self.ports_scroll)
 
-        left_splitter.addWidget(self.ports_frame)
-        left_splitter.setStretchFactor(0, 2)
-        left_splitter.setStretchFactor(1, 1)
         # Hidden until Explicit Ports mode is on and scattering mode active
         self.ports_frame.setVisible(False)
-
-        assignment_splitter.addWidget(left_splitter)
 
         # --- RIGHT: Edges Section ---
         edges_frame = QFrame()
@@ -1242,7 +1262,13 @@ class PropertiesPanel(QWidget):
         # Set initial splitter sizes (66/34 split - nodes get more space)
         assignment_splitter.setSizes([200, 300])
 
-        scattering_layout.addWidget(assignment_splitter, stretch=1)
+        # Nodes | Edges on top, Ports & Lines full-width below
+        params_splitter = QSplitter(Qt.Orientation.Vertical)
+        params_splitter.addWidget(assignment_splitter)
+        params_splitter.addWidget(self.ports_frame)
+        params_splitter.setStretchFactor(0, 2)
+        params_splitter.setStretchFactor(1, 1)
+        scattering_layout.addWidget(params_splitter, stretch=1)
 
         # Add tab and store index for later show/hide
         self.scattering_tab_index = self.tabs.addTab(scattering_tab, "Scattering")
@@ -4536,9 +4562,19 @@ class PropertiesPanel(QWidget):
 
         # If not in scattering mode or no nodes, show placeholder
         if not self.graphulator.scattering_mode or not self.graphulator.nodes:
-            placeholder = QLabel("Enter Scattering mode to assign parameters")
+            if not self.graphulator.scattering_mode:
+                text = "Enter Scattering mode to assign parameters"
+            elif getattr(self.graphulator, 'line_resonators', None):
+                # a glyph-only graph (e.g. a pumped line): everything
+                # tunable lives in the Ports & Lines panel below
+                text = ("No graph nodes \u2014 line, port and pump "
+                        "parameters are in Ports && Lines below")
+            else:
+                text = "No graph nodes"
+            placeholder = QLabel(text)
             placeholder.setStyleSheet("color: gray; font-style: italic;")
             placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            placeholder.setWordWrap(True)
             self.nodes_param_layout.addWidget(placeholder, 0, 0, 1, 4)
             return
 
@@ -4737,8 +4773,16 @@ class PropertiesPanel(QWidget):
         if not (g.explicit_ports_enabled and g.scattering_mode):
             return
 
-        from .para_features.explicit_ports import (ALPHA_TOOLTIP,
+        from .para_features.explicit_ports import (ALPHA_TOOLTIP,  # noqa: F401
                                                    PHASE2_PHASE_TOOLTIP)
+        self._comb_notes = []
+        self._pump_partner_label = None
+        self._pump_partner_line = None
+        if hasattr(self, 'tail_closure_check'):
+            self.tail_closure_check.blockSignals(True)
+            self.tail_closure_check.setChecked(
+                bool(getattr(g, 'line_tail_closure', True)))
+            self.tail_closure_check.blockSignals(False)
 
         node_by_id = {n['node_id']: n for n in g.nodes}
         row = 0
@@ -4851,53 +4895,30 @@ class PropertiesPanel(QWidget):
                 row += 1
 
         for line in g.line_resonators:
+            if line.get('twin_of') is not None:
+                # a conjugate twin mirrors its primary's physics: one set of
+                # controls, on the primary
+                primary = g.line_primary(line)
+                header(f"{line['label']}  (conjugate twin of "
+                       f"{primary['label'] if primary else '?'})",
+                       "Same physical line seen in the idler sector; edit "
+                       "FSR, Ztx, f_max, Z0, \u03b1 and the load on the "
+                       "primary.")
+                row = self._add_line_end_rows(line, row)
+                continue
             header(f"{line['label']}  (transmission line)")
+            row = self._add_line_physics_row(line, row)
             load = line.get('load')
-            load_text = (
-                f", load: {load['type']} @ {load['end']}, f_Z={load['f_Z']:g}"
-                if load else "")
-            summary = QLabel(
-                f"FSR={line['FSR']:g}, Ztx={line['Ztx']:g}, "
-                f"f_max={line['f_max']:g}, port@{line.get('port_end')}, "
-                f"Z0={line.get('Z0_port', 50):g}, "
-                f"\N{GREEK SMALL LETTER ALPHA}={line.get('alpha_uniform', 0):g}"
-                + load_text)
-            summary.setStyleSheet("color: dimgray;")
-            summary.setToolTip(
-                ALPHA_TOOLTIP + ("\n\nAn end load disperses the comb: the "
-                                 "modes leave n\u00b7FSR, so FSR here is the "
-                                 "geometric parameter v/2\u2113, not the mode "
-                                 "spacing (docs sec. 7)." if load else ""))
-            self.ports_param_layout.addWidget(summary, row, 0, 1, 3)
-            edit_btn = QPushButton("Edit\N{HORIZONTAL ELLIPSIS}")
-            edit_btn.setMaximumWidth(60)
-            edit_btn.clicked.connect(lambda _=False, l=line: g._edit_line(l))
-            self.ports_param_layout.addWidget(edit_btn, row, 3)
-            row += 1
+            if load:
+                row = self._add_line_load_row(line, row)
+            row = self._add_line_comb_note(line, row)
 
             # end connections: terminating ports and node taps
             resonator = g.line_resonator_for(line)
             couplings = (line.get('end_coupling')
                          or {'x0': 'capacitive', 'xL': 'capacitive'})
             if line.get('pump'):
-                pump = line['pump']
-                n_ref, m_ref = g._pump_reference_pair(line)
-                lab = QLabel(
-                    f"pump@{pump['end']} \N{RIGHTWARDS ARROW} twin: "
-                    f"f_p={pump['f_p']:g}, rate={pump['rate']*1000:.3g} mau "
-                    f"@ ({n_ref},{m_ref})")
-                lab.setStyleSheet("color: dimgray;")
-                tip = ("Pumped termination (select the triple-line bus on "
-                       "the canvas to edit).")
-                gaps = g.pump_truncation_gaps(line)
-                if gaps:
-                    lab.setText(lab.text() + "  \u26a0 f_max low")
-                    tip += ("\nf_max is too small for this pump: "
-                            + " and ".join(sorted(gaps))
-                            + " partners fall outside the modelled comb.")
-                lab.setToolTip(tip)
-                self.ports_param_layout.addWidget(lab, row, 0, 1, 4)
-                row += 1
+                row = self._add_pump_row(line, row)
             for end in ('x0', 'xL'):
                 for conn in g._end_conns(line, end):
                     if conn.get('kind') == 'port':
@@ -4972,6 +4993,350 @@ class PropertiesPanel(QWidget):
         self.ports_param_layout.setColumnStretch(0, 0)
         self.ports_param_layout.setColumnStretch(1, 1)
         self.ports_param_layout.setRowStretch(row + 1, 1)
+
+    # ---- Ports & Lines: inline controls for a line, its load and its pump ----
+    #
+    # These rows are the reason a glyph-only graph (a pumped line and its
+    # twin, no graph node) is tunable at all from the Scattering tab. Each
+    # spinbox edits the live dict and reschedules the sweep; the channel
+    # structure (ports) does not change, so no invalidation is needed and
+    # the S plot updates in place like the node parameters do.
+
+    def _physics_spin(self, value, lo, hi, decimals, step, tooltip, on_change,
+                      width=78, prefix=''):
+        box = FineControlSpinBox()
+        box.setRange(lo, hi)
+        box.setDecimals(decimals)
+        box.setSingleStep(step)
+        box.setValue(float(value))
+        box.setMaximumWidth(width)
+        box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        box.setToolTip(tooltip)
+        if prefix:
+            box.setPrefix(prefix)
+        box.valueChanged.connect(on_change)
+        return box
+
+    def _line_param_changed(self, line, key, value):
+        g = self.graphulator
+        candidate = dict(line)
+        candidate[key] = float(value)
+        try:
+            from .para_features.explicit_ports import (LineResonator,
+                                                       line_payload)
+            LineResonator(**line_payload(candidate))
+        except ValueError as exc:
+            self.graphulator._status_message(str(exc), 6000)
+            return
+        line[key] = float(value)
+        g._sync_all_twins()
+        self._schedule_scattering_update()
+        g._update_plot()
+        if hasattr(self, '_refresh_comb_notes'):
+            self._refresh_comb_notes()
+
+    def _add_line_physics_row(self, line, row):
+        from .para_features.explicit_ports import ALPHA_TOOLTIP
+        g = self.graphulator
+        hbox = QHBoxLayout()
+        hbox.setSpacing(6)
+
+        def add(label, key, lo, hi, decimals, step, tip, width=78):
+            lab = QLabel(label)
+            lab.setToolTip(tip)
+            hbox.addWidget(lab)
+            hbox.addWidget(self._physics_spin(
+                line.get(key, 0.0), lo, hi, decimals, step, tip,
+                lambda v, l=line, k=key: self._line_param_changed(l, k, v),
+                width=width))
+
+        add("FSR", 'FSR', 1e-9, 1e9, 4, 0.1,
+            "Free spectral range [a.u.]. With an end load this is the "
+            "geometric parameter v/2\u2113, not the mode spacing.")
+        add("Ztx", 'Ztx', 1e-6, 1e6, 1, 1.0, "Line characteristic impedance",
+            width=64)
+        add("f_max", 'f_max', 1e-9, 1e12, 3, 1.0,
+            "Comb extent: the modes kept explicitly (N pairs). The modes "
+            "beyond are closed into the port analytically when the tail "
+            "closure is on, so N need only span the couplings that matter.")
+        add("Z0", 'Z0_port', 1e-6, 1e6, 1, 1.0, "Port termination impedance",
+            width=64)
+        add("\N{GREEK SMALL LETTER ALPHA}", 'alpha_uniform', 0.0, 100.0, 4,
+            0.001, ALPHA_TOOLTIP, width=72)
+        hbox.addStretch()
+        edit_btn = QPushButton("Edit\N{HORIZONTAL ELLIPSIS}")
+        edit_btn.setMaximumWidth(60)
+        edit_btn.setToolTip("Label, tap coupling types, end load, target "
+                            "resonance and appearance")
+        edit_btn.clicked.connect(lambda _=False, l=line: g._edit_line(l))
+        hbox.addWidget(edit_btn)
+        holder = QWidget()
+        holder.setLayout(hbox)
+        self.ports_param_layout.addWidget(holder, row, 0, 1, 4)
+        return row + 1
+
+    def _add_line_load_row(self, line, row):
+        load = line['load']
+        hbox = QHBoxLayout()
+        hbox.setSpacing(6)
+        lab = QLabel(f"end load: {load['type']} @ {load['end']}   f_Z")
+        lab.setToolTip(
+            "Shunt reactance terminating this end; f_Z is the frequency at "
+            "which |X_elem| = Ztx. It disperses the comb (docs sec. 7).")
+        hbox.addWidget(lab)
+
+        def set_fz(v, l=line):
+            g = self.graphulator
+            new_load = dict(l['load'])
+            new_load['f_Z'] = float(v)
+            try:
+                g.set_line_load(l, new_load)
+            except ValueError as exc:
+                g._status_message(str(exc), 6000)
+                return
+            self._schedule_scattering_update()
+            g._update_plot()
+            if hasattr(self, '_refresh_comb_notes'):
+                self._refresh_comb_notes()
+
+        hbox.addWidget(self._physics_spin(load['f_Z'], 1e-9, 1e12, 4, 0.1,
+                                          "f_Z [a.u.]", set_fz, width=84))
+        hbox.addStretch()
+        holder = QWidget()
+        holder.setLayout(hbox)
+        self.ports_param_layout.addWidget(holder, row, 0, 1, 4)
+        return row + 1
+
+    def _comb_note_text(self, line):
+        """N, the closure state and the truncation estimate for one line."""
+        g = self.graphulator
+        try:
+            res = g.line_resonator_for(line)
+        except ValueError as exc:
+            return f"invalid: {exc}"
+        n_modes = len(res.comb_mode_ids())
+        text = f"N = {res.N} pole pairs ({n_modes} comb modes"
+        text += ", DC shorted by the load)" if res.loaded else ")"
+        f_hi = 0.0
+        if hasattr(self, 'freq_center_spin') and hasattr(self, 'freq_span_spin'):
+            f_hi = abs(self.freq_center_spin.value()) + 0.5 * abs(
+                self.freq_span_spin.value())
+        if getattr(g, 'line_tail_closure', True):
+            text += ("; comb tail closed analytically \u2014 the port loading "
+                     "is exact at this N")
+        else:
+            # the measured law (misc/comb_truncation_checks.py):
+            # |dS| ~ 2.5 (gamma/FSR)(f/FSR)/N, all of it in the phase
+            gam = res.gamma if not res.loaded else res.mode_gamma(1)
+            gam = float(np.max(gam)) if np.ndim(gam) else float(gam)
+            est = 2.5 * (gam / res.FSR) * (f_hi / res.FSR) / max(res.N, 1)
+            text += (f"; raw truncated comb: |\u0394S| \u2248 {est:.2g} at "
+                     f"f = {f_hi:g} (tail ~ 2\u03b3f/(FSR\u00b2N))")
+        if line.get('pump'):
+            gaps = g.pump_truncation_gaps(line)
+            if gaps:
+                text += ("  \u26a0 f_max too small for this pump: "
+                         + " and ".join(sorted(gaps))
+                         + " partners fall outside the modelled comb")
+        return text
+
+    def _add_line_comb_note(self, line, row):
+        note = QLabel(self._comb_note_text(line))
+        note.setStyleSheet("color: dimgray; font-style: italic;")
+        note.setWordWrap(True)
+        note.setToolTip(
+            "The analytic closure carries the tail's PORT loading exactly; "
+            "the tail modes' pump and tap couplings are what f_max still "
+            "truncates -- use 'Check truncation' to measure that.")
+        self.ports_param_layout.addWidget(note, row, 0, 1, 4)
+        self._comb_notes = getattr(self, '_comb_notes', [])
+        self._comb_notes.append((line, note))
+        return row + 1
+
+    def _refresh_comb_notes(self):
+        for line, note in list(getattr(self, '_comb_notes', [])):
+            try:
+                note.setText(self._comb_note_text(line))
+            except RuntimeError:
+                pass           # widget already deleted by a table rebuild
+
+    def _add_pump_row(self, line, row):
+        g = self.graphulator
+        pump = line['pump']
+        resonator = g.line_resonator_for(line)
+        n_ref, m_ref = g._pump_reference_pair(line)
+        twin = g.line_twin(line)
+        hbox = QHBoxLayout()
+        hbox.setSpacing(6)
+        head = QLabel(f"pump@{pump['end']} \N{RIGHTWARDS ARROW} "
+                      f"{twin['label'] if twin else 'twin'}:")
+        head.setToolTip("Pumped termination: one rank-one block between the "
+                        "comb and its conjugate twin (select the triple-line "
+                        "bus on the canvas for phase/appearance).")
+        hbox.addWidget(head)
+
+        def pump_changed(key, value):
+            pump[key] = value
+            self._schedule_scattering_update()
+            g._update_plot()
+            self._refresh_partner_label()
+            if hasattr(self, '_refresh_comb_notes'):
+                self._refresh_comb_notes()
+
+        hbox.addWidget(QLabel("f_p"))
+        hbox.addWidget(self._physics_spin(
+            pump['f_p'], 1e-9, 1e9, 4, 0.1,
+            "Pump frequency [a.u.]: amplifies every pair with f_n + f_m = f_p "
+            "and converts every pair with |f_n - f_m| = f_p.",
+            lambda v: pump_changed('f_p', float(v)), width=84))
+        hbox.addWidget(QLabel("rate"))
+        hbox.addWidget(self._physics_spin(
+            pump['rate'] * 1000.0, 0.0, 1e6, 3, 1.0,
+            "Parametric coupling between mode n of the line and its idler "
+            "partner m in the twin [milli-arb. units]; other pairs follow "
+            "the verified profile.",
+            lambda v: pump_changed('rate', float(v) / 1000.0), width=78))
+        hbox.addWidget(QLabel("\N{GREEK SMALL LETTER PHI}"))
+        hbox.addWidget(self._physics_spin(
+            pump.get('phase', 0.0), -360.0, 360.0, 1, 15.0,
+            "Pump phase [degrees]",
+            lambda v: pump_changed('phase', float(v)), width=70))
+        nref = FineControlSpinBox()
+        nref.setDecimals(0)
+        nref.setRange(1, max(1, resonator.N))
+        nref.setSingleStep(1)
+        nref.setPrefix("n=")
+        nref.setMaximumWidth(54)
+        nref.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        nref.setValue(int(pump.get('n_ref', 1)))
+        nref.setToolTip("Signal mode the rate is defined at; its idler "
+                        "partner is the mode nearest f_p - f_n.")
+        nref.valueChanged.connect(lambda v: pump_changed('n_ref', int(v)))
+        hbox.addWidget(nref)
+        self._pump_partner_label = QLabel()
+        self._pump_partner_label.setStyleSheet("color: dimgray; font-style: italic;")
+        self._pump_partner_line = line
+        hbox.addWidget(self._pump_partner_label)
+        hbox.addStretch()
+        holder = QWidget()
+        holder.setLayout(hbox)
+        self.ports_param_layout.addWidget(holder, row, 0, 1, 4)
+        self._refresh_partner_label()
+        return row + 1
+
+    def _refresh_partner_label(self):
+        line = getattr(self, '_pump_partner_line', None)
+        label = getattr(self, '_pump_partner_label', None)
+        if line is None or label is None or not line.get('pump'):
+            return
+        try:
+            n_ref, m_ref = self.graphulator._pump_reference_pair(line)
+            label.setText("degenerate" if m_ref == n_ref
+                          else f"idler partner m = {m_ref}")
+        except (ValueError, RuntimeError):
+            pass
+
+    def _add_line_end_rows(self, line, row):
+        """The terminating-port lines of a (twin) line, read-only."""
+        g = self.graphulator
+        for end in ('x0', 'xL'):
+            for conn in g._end_conns(line, end):
+                if conn.get('kind') == 'port':
+                    conn_port = next((p for p in g.ports
+                                      if p['port_id'] == conn['port_id']), None)
+                    lab = QLabel(f"{end} \N{RIGHTWARDS ARROW} port "
+                                 f"'{conn_port['label'] if conn_port else '?'}'")
+                    lab.setStyleSheet("color: dimgray;")
+                    self.ports_param_layout.addWidget(lab, row, 0, 1, 4)
+                    row += 1
+        return row
+
+    def _on_tail_closure_toggled(self, checked):
+        g = self.graphulator
+        g.line_tail_closure = bool(checked)
+        self._refresh_comb_notes()
+        self._truncation_result = None
+        if hasattr(self, 'truncation_check_button'):
+            self.truncation_check_button.setText("Check truncation (2\u00d7 f_max)")
+        self._schedule_scattering_update()
+
+    def _check_truncation(self):
+        """Re-solve with every line's f_max doubled and report max |dS|.
+
+        Synchronous (one extra sweep) and honest: it measures what THIS
+        graph's S-parameters do when the comb is extended -- including the
+        pump and tap couplings onto the modes the analytic closure does not
+        carry -- over the current window, per displayed trace.
+        """
+        g = self.graphulator
+        if not g.line_resonators or not g.scattering_mode:
+            g._status_message("Nothing to check: no transmission lines", 4000)
+            return
+        f_center = self.freq_center_spin.value()
+        f_span = self.freq_span_spin.value()
+        n_pts = int(self.freq_points_spin.value())
+        f_start, f_stop = f_center - f_span / 2, f_center + f_span / 2
+        f = np.linspace(f_start, f_stop, n_pts)
+        comps = (g.scattering_components if len(g.scattering_components) > 1
+                 else [None])
+
+        def solve():
+            out = []
+            for comp in comps:
+                job = g._build_sparams_job(comp, f, f_start, f_stop, n_pts,
+                                           multi_component=len(comps) > 1)
+                if job is None:
+                    continue
+                res = _compute_sparams_job(job)      # module-level worker fn
+                if res is not None:
+                    out.append(res)
+            return out
+
+        base = solve()
+        saved = [(l, l['f_max']) for l in g.line_resonators]
+        try:
+            for l in g.line_resonators:
+                l['f_max'] = 2.0 * l['f_max']
+            g._sync_all_twins()
+            doubled = solve()
+        finally:
+            for l, fm in saved:
+                l['f_max'] = fm
+            g._sync_all_twins()
+
+        if not base or len(base) != len(doubled):
+            g._status_message("Truncation check: could not solve", 5000)
+            return
+        worst, lines = 0.0, []
+        for b, d in zip(base, doubled):
+            labels = [b['port_dict'][p]['label'] for p in b['port_ids']]
+            if b['S'].shape != d['S'].shape:
+                lines.append(f"{b['component_label'] or 'graph'}: channel "
+                             "set changed, cannot compare")
+                continue
+            dS = np.abs(d['S'] - b['S'])
+            for j, lj in enumerate(labels):
+                for k, lk in enumerate(labels):
+                    m = float(np.max(dS[:, j, k]))
+                    worst = max(worst, m)
+                    ref = float(np.max(np.abs(b['S'][:, j, k])))
+                    db = (20 * np.log10(1 + m / ref) if ref > 0 else 0.0)
+                    lines.append(f"  {lj} \u2190 {lk}: max|\u0394S| = {m:.3g}"
+                                 f"  (\u2264 {db:.2f} dB of |S|)")
+        verdict = ("N is adequate" if worst < 1e-3 else
+                   "consider raising f_max" if worst < 5e-2 else
+                   "raise f_max: the comb is too short for this graph")
+        report = (f"Doubling f_max on every line changes the displayed S by at "
+                  f"most {worst:.3g} over the window \u2014 {verdict}.\n"
+                  + "\n".join(lines))
+        print("Truncation check:\n" + report)
+        g._status_message(f"Truncation check: max |\u0394S| = {worst:.3g} "
+                          f"\u2014 {verdict}", 12000)
+        self._truncation_result = worst
+        if hasattr(self, 'truncation_check_button'):
+            self.truncation_check_button.setText(
+                f"Check truncation (2\u00d7 f_max): |\u0394S| \u2264 {worst:.2g}")
+            self.truncation_check_button.setToolTip(report)
 
     def _on_tap_param_changed(self, conn, key, value):
         conn[key] = value
@@ -6165,9 +6530,18 @@ class PropertiesPanel(QWidget):
                 atts = ', '.join(
                     f"({node_id!r}, {mag!r}, {phase!r})"
                     for node_id, mag, phase in hub['attachments'])
+                # a terminated line end also closes its comb tail into the
+                # channel (autograph "comb tail closure"); emit it so the
+                # exported script reproduces the GUI's S exactly
+                tails = hub.get('tails') or []
+                tails_code = (
+                    ", 'tails': [" + ', '.join(
+                        f"{{'line': {t['line']!r}, 'end': {t['end']!r}}}"
+                        for t in tails) + "]") if tails else ""
                 entries.append(
                     f"    {{'hub_id': {hub['hub_id']!r}, 'label': {hub['label']!r}, "
-                    f"'monitored': {hub['monitored']}, 'attachments': [{atts}]}}")
+                    f"'monitored': {hub['monitored']}, 'attachments': [{atts}]"
+                    f"{tails_code}}}")
             return _join_list(entries)
 
         def _emit_lines(line_ids=None):
@@ -6781,8 +7155,10 @@ def _compute_sparams_job(job):
         f_calc = -f_root_s
         logger.info(f"  {comp_name}: Injection node is conjugated - using negative frequencies")
 
-    # Compute S-matrix
-    scattering_calc = GraphScatteringMatrix(extractor, f_calc)
+    # Compute S-matrix (the comb tail closure is on unless the job says
+    # otherwise -- see autograph.GraphScatteringMatrix._build_tail_closure)
+    scattering_calc = GraphScatteringMatrix(
+        extractor, f_calc, tail_closure=job.get('tail_closure', True))
 
     logger.info(f"  {comp_name}: {scattering_calc.num_ports} ports computed")
 
@@ -11385,6 +11761,9 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             'freq_start': freq_start,
             'freq_stop': freq_stop,
             'freq_points': freq_points,
+            # comb tail closure (autograph "COMB TAIL CLOSURE"): on unless the
+            # user switched it off in the Ports & Lines panel
+            'tail_closure': bool(getattr(self, 'line_tail_closure', True)),
         }
 
     def _start_sparams_worker(self, jobs, f_root_s):
