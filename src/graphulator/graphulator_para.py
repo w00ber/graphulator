@@ -3711,13 +3711,7 @@ class PropertiesPanel(QWidget):
         def refresh_partner():
             # re-read the resonator: an end load (edited on the line's own
             # page) moves every mode frequency this line depends on
-            res = g.line_resonator_for(line)
-            n_ref, m_ref = g._pump_reference_pair(line)
-            f_partner = float(pump['f_p']) - res.mode_freq(n_ref)
-            mismatch = f_partner - res.mode_freq(m_ref)
-            partner.setText(
-                ("degenerate" if m_ref == n_ref else f"idler partner m = {m_ref}")
-                + f"  (off mode by {mismatch:+g})")
+            partner.setText(g.pump_pair_description(line))
 
         form.addRow("Pump frequency f_p:", spin(
             'f_p', 1e-9, 1e9, 4, 0.1,
@@ -3732,9 +3726,9 @@ class PropertiesPanel(QWidget):
         nref.setPrefix("n=")
         nref.setValue(int(pump.get('n_ref', 1)))
         nref.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        nref.setToolTip("Signal mode the rate is defined at; its idler "
-                        "partner is the mode nearest f_p - f_n (the LOADED "
-                        "f_n when an end is loaded).")
+        from .para_features.explicit_ports import PUMP_NREF_TOOLTIP
+        nref.setToolTip(PUMP_NREF_TOOLTIP)
+        partner.setToolTip(PUMP_NREF_TOOLTIP)
 
         def set_nref(v):
             pump['n_ref'] = int(v)
@@ -5221,11 +5215,12 @@ class PropertiesPanel(QWidget):
         nref.setMaximumWidth(54)
         nref.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         nref.setValue(int(pump.get('n_ref', 1)))
-        nref.setToolTip("Signal mode the rate is defined at; its idler "
-                        "partner is the mode nearest f_p - f_n.")
+        from .para_features.explicit_ports import PUMP_NREF_TOOLTIP
+        nref.setToolTip(PUMP_NREF_TOOLTIP)
         nref.valueChanged.connect(lambda v: pump_changed('n_ref', int(v)))
         hbox.addWidget(nref)
         self._pump_partner_label = QLabel()
+        self._pump_partner_label.setToolTip(PUMP_NREF_TOOLTIP)
         self._pump_partner_label.setStyleSheet("color: dimgray; font-style: italic;")
         self._pump_partner_line = line
         hbox.addWidget(self._pump_partner_label)
@@ -5242,9 +5237,7 @@ class PropertiesPanel(QWidget):
         if line is None or label is None or not line.get('pump'):
             return
         try:
-            n_ref, m_ref = self.graphulator._pump_reference_pair(line)
-            label.setText("degenerate" if m_ref == n_ref
-                          else f"idler partner m = {m_ref}")
+            label.setText(self.graphulator.pump_pair_description(line))
         except (ValueError, RuntimeError):
             pass
 

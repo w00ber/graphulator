@@ -207,6 +207,43 @@ def line_payload(line):
 TWIN_MIRRORED_KEYS = ('FSR', 'Ztx', 'f_max', 'Z0_port', 'alpha_uniform')
 PUMP_COUPLINGS = ('inductive', 'capacitive')
 
+# The pump couples EVERY mode n of the line to EVERY mode m of its twin
+# (one rank-one block, rate_nm = rate * w_n * w_m). A single rate number
+# therefore needs a definition point -- the pair (n, m) it refers to. n is
+# the user's choice; m is derived: the twin mode nearest |f_p - f_n|, i.e.
+# the one the pump pairs resonantly with n.
+PUMP_NREF_TOOLTIP = (
+    "Reference mode n: the rate you enter is the coupling between mode n of "
+    "this line and its idler partner m in the twin, where m is the twin mode "
+    "nearest |f_p \u2212 f_n| (the LOADED f_n when an end is loaded). The "
+    "pump couples ALL pairs (n', m'); this only fixes what the number means "
+    "\u2014 every other pair follows the end profile from this anchor, so "
+    "changing n rescales the whole block, it does not choose which modes are "
+    "coupled. Pick the mode you want the rate quoted at, usually the signal "
+    "mode you are looking at.")
+
+
+def describe_pump_pair(n, m, f_n, f_m, f_p):
+    """One line saying which pair the rate is anchored to and how far that
+    pair is from the pump's resonance condition.
+
+    Amplification pairs satisfy f_n + f_m = f_p (the twin's +m member sits
+    at f_p - f_n); when f_p < f_n the nearest partner is a conversion pair,
+    f_n - f_m = f_p. The residual is what the pump has to bridge.
+    """
+    if f_p - f_n >= 0:
+        off = f_n + f_m - f_p
+        kind = "degenerate (n = m)" if m == n else f"idler partner m = {m}"
+        cond = f"f_n + f_m \u2212 f_p = {f_n:g} + {f_m:g} \u2212 {f_p:g} = {off:+.4g}"
+        tag = "amplification pair"
+    else:
+        off = f_n - f_m - f_p
+        kind = f"conversion partner m = {m}"
+        cond = f"f_n \u2212 f_m \u2212 f_p = {f_n:g} \u2212 {f_m:g} \u2212 {f_p:g} = {off:+.4g}"
+        tag = "conversion pair"
+    onres = "on resonance" if abs(off) < 1e-9 else "off resonance"
+    return f"{kind}: {tag}, {cond} ({onres})"
+
 
 def _color_button(initial, parent=None):
     """Small swatch button opening a QColorDialog; .color() reads it."""
@@ -690,9 +727,7 @@ class PumpInputDialog(QDialog):
         if n_ref is None:
             n_ref = int(round(0.5 * self.fp_spin.value() / self.FSR))
         self.nref_spin.setValue(int(min(max(int(n_ref), 1), max(1, self.N))))
-        self.nref_spin.setToolTip(
-            "Signal harmonic the rate is defined at. Its idler partner is "
-            "the harmonic nearest f_p - n*FSR (shown beside).")
+        self.nref_spin.setToolTip(PUMP_NREF_TOOLTIP)
         nref_row = QHBoxLayout()
         nref_row.addWidget(self.nref_spin)
         nref_row.addWidget(self.partner_label)
@@ -863,14 +898,13 @@ class PumpInputDialog(QDialog):
 
     def _refresh_partner(self):
         n = self.nref_spin.value()
-        f_partner = self.fp_spin.value() - self._mode_freq(n)
+        f_p = self.fp_spin.value()
+        f_partner = f_p - self._mode_freq(n)
         m = int(min(range(1, max(1, self.N) + 1),
                     key=lambda k: abs(self._mode_freq(k) - abs(f_partner))))
-        mismatch = f_partner - self._mode_freq(m)
-        tag = "degenerate" if m == n else f"idler partner m = {m}"
-        self.partner_label.setText(
-            f"{tag}  (f_p \N{MINUS SIGN} f_n = {f_partner:g}; "
-            f"off mode by {mismatch:+g})")
+        self.partner_label.setText(describe_pump_pair(
+            n, m, self._mode_freq(n), self._mode_freq(m), f_p))
+        self.partner_label.setToolTip(PUMP_NREF_TOOLTIP)
 
     def get_result(self):
         """Pump params, plus the load and FSR the load section settled on.
@@ -2472,6 +2506,14 @@ class ExplicitPortsMixin:
             "clamping. Raise f_max or re-enter the reference mode.",
             what, label, n, resonator.N)
         return int(min(max(n, 1), resonator.N))
+
+    def pump_pair_description(self, line):
+        """describe_pump_pair for a line's current pump (see that function)."""
+        pump = line['pump']
+        res = self.line_resonator_for(line)
+        n_ref, m_ref = self._pump_reference_pair(line)
+        return describe_pump_pair(n_ref, m_ref, res.mode_freq(n_ref),
+                                  res.mode_freq(m_ref), float(pump['f_p']))
 
     def _pump_reference_pair(self, line):
         """(n_ref, m_ref): the signal mode the rate is defined at and its
