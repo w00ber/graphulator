@@ -209,3 +209,37 @@ def test_ports_panel_appears_on_entering_scattering_mode(para, monkeypatch):
     # and the pump controls are there without any node in the graph
     assert not win.nodes
     assert any('Pump frequency' in s.toolTip() for s in _spins(panel))
+
+
+def test_pump_partner_label_explains_the_pair(para):
+    """The reference pair is a DEFINITION point for the rate, not a
+    selector; the label must say which pair, at what frequencies, and how
+    far it is from the pump's resonance condition."""
+    from graphulator.para_features.explicit_ports import describe_pump_pair
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 2.0), FSR=0.5,
+                                  Ztx=65.0, f_max=9.0, port_end='xL')
+    win.set_line_pump(line, 'x0', f_p=4.5, rate=0.05, n_ref=4,
+                      twin_pos=(0.0, -2.0))
+    text = win.pump_pair_description(line)
+    assert 'm = 5' in text and 'amplification' in text and 'on resonance' in text
+    assert '2 + 2.5' in text.replace('\N{MINUS SIGN}', '-')
+    # a pump below the reference mode names the CONVERSION partner
+    line['pump']['f_p'] = 1.0
+    text = win.pump_pair_description(line)
+    assert 'conversion' in text and 'm = 2' in text        # 2.0 - 1.0 = 1.0
+    # degenerate case
+    assert 'degenerate' in describe_pump_pair(3, 3, 1.5, 1.5, 3.0)
+
+
+def test_pump_row_labels_units_and_shows_the_modulation_depth(para):
+    from PySide6.QtWidgets import QLabel
+    win, line = _pumped_scene(para)
+    panel = win.properties_panel
+    texts = [w.text() for w in panel.ports_param_widget.findChildren(QLabel)]
+    assert '[mau]' in texts, texts          # the rate's units, app convention
+    assert '[au]' in texts                  # f_p
+    eps, symbol = win.pump_modulation_fraction(line)
+    assert any(symbol in t and '%' in t for t in texts), texts

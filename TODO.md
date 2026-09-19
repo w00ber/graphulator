@@ -139,6 +139,19 @@
 
 ## FEATURES: PARAGRAPHULATOR / autograph
 - [ ] **Autocompute stability.** Need to find the zeros of the M-matrix as we update coupling. Add experimental/optional setting to display the zeros in the complex plane. Since the determinant is always in the denominator of the scattering matrix, it tells us about stability via the Routh-Hurwitz criterion. We want to flag whether a set of given graph parameters is actually not stable and would like this to be highlighted in indianred or darkred at the top of the window (or wherever you think is the most effective for the user interface).
+- [x] **Mark line modes on the S-parameter plot** SHIPPED: a toggle beside
+  Conjugate Freqs draws each line's normal-mode frequencies (the LOADED ones
+  when an end load is set), labels them by index, and names line/index/freq
+  on hover; markers stop at the comb cutoff (mode N, heavier). Positions come
+  from inverting each channel's own drive frame out of the sweep's
+  drive_signals, so a pumped twin is marked at f_p - f_m where its idler
+  image actually resonates. Purpose: reading off which n to name in the
+  pump's reference pair. Gate: tests/test_sparams_mode_overlay.py.
+  - Natural follow-ons, not done: markers for graph-NODE frequencies too (the
+    same frame inversion applies, keyed on the node's drive_signals entry);
+    click-a-marker-to-set-n_ref; and folding this into the plot-panel
+    reconfiguration below as a per-plot overlay option rather than a global
+    toggle.
 - [ ] **Add group delay view*** 
 - [ ] **Add Smith chart view***
 - [ ] **plot panel reconfiguration** With more than just S-parameter and magnitude and phase, probably want to change over to a more flexible scheme where the user can add plots and configure what they display. Doesn't need to be vertically stacked; someone might prefer side-by-side (1,2) or (2,2) subplot layouts. We should keep the frequency axes locked. In the case of a Smith chart, we could reduce the opacity of points outside the displayed frequency axis limits in other plots and toggle a preference to zoom into selected points or lock the chart axes. The plot scaling preferences can be set up as tabs for each plot style at the bottom. Don't display a tab for a data plot unless it's displayed. I could use your advice in how to add/subtract plots and select their displayed data. It would be nice to have multiple views on the same data in different subplots, but I assume that we'd need to figure out whether the axis scaling tabs would need to be duplicated or if we just do subtabs within a particular data plot style. 

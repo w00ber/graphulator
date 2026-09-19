@@ -207,6 +207,99 @@ def line_payload(line):
 TWIN_MIRRORED_KEYS = ('FSR', 'Ztx', 'f_max', 'Z0_port', 'alpha_uniform')
 PUMP_COUPLINGS = ('inductive', 'capacitive')
 
+# The pump couples EVERY mode n of the line to EVERY mode m of its twin
+# (one rank-one block, rate_nm = rate * w_n * w_m). A single rate number
+# therefore needs a definition point -- the pair (n, m) it refers to. n is
+# the user's choice; m is derived: the twin mode nearest |f_p - f_n|, i.e.
+# the one the pump pairs resonantly with n.
+PUMP_NREF_TOOLTIP = (
+    "Reference mode n: the rate you enter is the coupling between mode n of "
+    "this line and its idler partner m in the twin, where m is the twin mode "
+    "nearest |f_p \u2212 f_n| (the LOADED f_n when an end is loaded). The "
+    "pump couples ALL pairs (n', m'); this only fixes what the number means "
+    "\u2014 every other pair follows the end profile from this anchor, so "
+    "changing n rescales the whole block, it does not choose which modes are "
+    "coupled. Pick the mode you want the rate quoted at, usually the signal "
+    "mode you are looking at.")
+
+
+#: Symbol for the modulation fraction, per element type.
+PUMP_MODULATION_SYMBOL = {
+    'inductive': "\u03b4L/L_tot",
+    'capacitive': "\u03b4C/C_tot",
+}
+
+PUMP_MODULATION_TOOLTIP = (
+    "Effective modulation fraction seen by the reference pair: the "
+    "participation-weighted depth\n\n"
+    "    \u03b5 = \u03b4L_J/L_tot = \u03b2 \u00b7 \u221a(p_n p_m),"
+    "    \u03b2 = \u03b4L_J/L_J,    p_n = u_n(end)\u00b2/(\u03c9_n\u00b2 C_n L_J)\n\n"
+    "i.e. the element's own fractional modulation \u03b2 times the geometric "
+    "mean of the two modes' participations in it \u2014 equivalently "
+    "\u03b4L_J divided by the mode's effective inductance referred to the "
+    "element. Degenerate pump (n = m): \u03b5 = \u03b2 p_n exactly.\n\n"
+    "Read it as the depth THIS PAIR sees. Like the rate, it is referred to "
+    "the reference pair and moves with it (p_n \u221d 1/n\u00b2 on an "
+    "open\u2013open comb, so \u03b5 \u221d 1/nm); what it adds is that it "
+    "is dimensionless and normalized to the mode's own inductance, so it "
+    "compares directly against a design target instead of an arb.-unit "
+    "rate. The element's own \u03b2 = \u03b4L_J/L_J is the re-anchoring "
+    "invariant, and needs L_J \u2014 known only when the end load is set "
+    "(f_Z).\n\n"
+    "For a modulated capacitor the same expression reads \u03b4C/C_tot.")
+
+
+def pump_modulation_fraction(rate, f_n, f_m):
+    """Effective fractional modulation seen by the pair (n, m).
+
+    The circuit normalization (docs sec. 6) is
+
+        g_nm = dK_nm / (4 sqrt(w_n C_n w_m C_m)),
+        dK_nm = d(1/L) u_n(end) u_m(end)                     [inductive]
+
+    which factorizes into single-mode participations. With
+    p_n = u_n(end)^2/(w_n^2 C_n L_J) and beta = d(1/L) L_J = dL_J/L_J,
+
+        4 g_nm / sqrt(w_n w_m) = beta sqrt(p_n p_m)  ==  dL_J / L_tot,
+
+    L_tot = L_J/p_n being mode n's effective inductance referred to the
+    element. The left side is dimensionless, so it may be evaluated in the
+    app's LINEAR units; with the app's off-diagonal g_lin = rate/2,
+
+        eps = 2 * rate / sqrt(f_n f_m).
+
+    Verified against build_galvanic's known (d(1/L), L_J, w_n, C_n) to 12
+    digits (tests/test_pumped_line.py). A modulated capacitor obeys the
+    same expression, then reading dC/C_tot: there g ~ sqrt(w_n w_m) and the
+    ratio comes out frequency-independent, as a capacitance ratio must.
+    """
+    denom = np.sqrt(abs(float(f_n)) * abs(float(f_m)))
+    if denom <= 0:
+        return float('nan')                 # a DC mode has no such ratio
+    return 2.0 * float(rate) / denom
+
+
+def describe_pump_pair(n, m, f_n, f_m, f_p):
+    """One line saying which pair the rate is anchored to and how far that
+    pair is from the pump's resonance condition.
+
+    Amplification pairs satisfy f_n + f_m = f_p (the twin's +m member sits
+    at f_p - f_n); when f_p < f_n the nearest partner is a conversion pair,
+    f_n - f_m = f_p. The residual is what the pump has to bridge.
+    """
+    if f_p - f_n >= 0:
+        off = f_n + f_m - f_p
+        kind = "degenerate (n = m)" if m == n else f"idler partner m = {m}"
+        cond = f"f_n + f_m \u2212 f_p = {f_n:g} + {f_m:g} \u2212 {f_p:g} = {off:+.4g}"
+        tag = "amplification pair"
+    else:
+        off = f_n - f_m - f_p
+        kind = f"conversion partner m = {m}"
+        cond = f"f_n \u2212 f_m \u2212 f_p = {f_n:g} \u2212 {f_m:g} \u2212 {f_p:g} = {off:+.4g}"
+        tag = "conversion pair"
+    onres = "on resonance" if abs(off) < 1e-9 else "off resonance"
+    return f"{kind}: {tag}, {cond} ({onres})"
+
 
 def _color_button(initial, parent=None):
     """Small swatch button opening a QColorDialog; .color() reads it."""
@@ -690,9 +783,7 @@ class PumpInputDialog(QDialog):
         if n_ref is None:
             n_ref = int(round(0.5 * self.fp_spin.value() / self.FSR))
         self.nref_spin.setValue(int(min(max(int(n_ref), 1), max(1, self.N))))
-        self.nref_spin.setToolTip(
-            "Signal harmonic the rate is defined at. Its idler partner is "
-            "the harmonic nearest f_p - n*FSR (shown beside).")
+        self.nref_spin.setToolTip(PUMP_NREF_TOOLTIP)
         nref_row = QHBoxLayout()
         nref_row.addWidget(self.nref_spin)
         nref_row.addWidget(self.partner_label)
@@ -863,14 +954,13 @@ class PumpInputDialog(QDialog):
 
     def _refresh_partner(self):
         n = self.nref_spin.value()
-        f_partner = self.fp_spin.value() - self._mode_freq(n)
+        f_p = self.fp_spin.value()
+        f_partner = f_p - self._mode_freq(n)
         m = int(min(range(1, max(1, self.N) + 1),
                     key=lambda k: abs(self._mode_freq(k) - abs(f_partner))))
-        mismatch = f_partner - self._mode_freq(m)
-        tag = "degenerate" if m == n else f"idler partner m = {m}"
-        self.partner_label.setText(
-            f"{tag}  (f_p \N{MINUS SIGN} f_n = {f_partner:g}; "
-            f"off mode by {mismatch:+g})")
+        self.partner_label.setText(describe_pump_pair(
+            n, m, self._mode_freq(n), self._mode_freq(m), f_p))
+        self.partner_label.setToolTip(PUMP_NREF_TOOLTIP)
 
     def get_result(self):
         """Pump params, plus the load and FSR the load section settled on.
@@ -2473,6 +2563,33 @@ class ExplicitPortsMixin:
             what, label, n, resonator.N)
         return int(min(max(n, 1), resonator.N))
 
+    def pump_modulation_fraction(self, line):
+        """(epsilon, symbol) for a line's pump at its reference pair.
+
+        epsilon is the depth seen by the REFERENCE PAIR (see
+        pump_modulation_fraction): dimensionless and normalized to the
+        mode's own inductance, but pair-referred like the rate itself. The
+        re-anchoring invariant is the element's own beta = dL_J/L_J, which
+        needs L_J and so is available only with an end load set.
+        """
+        pump = line['pump']
+        res = self.line_resonator_for(line)
+        n_ref, m_ref = self._pump_reference_pair(line)
+        eps = pump_modulation_fraction(float(pump['rate']),
+                                       res.mode_freq(n_ref),
+                                       res.mode_freq(m_ref))
+        symbol = PUMP_MODULATION_SYMBOL.get(
+            pump.get('coupling', 'inductive'), "\u03b4X/X_tot")
+        return eps, symbol
+
+    def pump_pair_description(self, line):
+        """describe_pump_pair for a line's current pump (see that function)."""
+        pump = line['pump']
+        res = self.line_resonator_for(line)
+        n_ref, m_ref = self._pump_reference_pair(line)
+        return describe_pump_pair(n_ref, m_ref, res.mode_freq(n_ref),
+                                  res.mode_freq(m_ref), float(pump['f_p']))
+
     def _pump_reference_pair(self, line):
         """(n_ref, m_ref): the signal mode the rate is defined at and its
         idler partner, the mode nearest f_p - f_(n_ref).
@@ -2638,10 +2755,36 @@ class ExplicitPortsMixin:
     def _gui_pump_edges(self, line_ids=None):
         """Synthesized (edge_dict, params) pairs for every pump bus.
 
-        One drawn bus stands for the rank-one block: rate_nm = rate * w_n *
-        w_m with w the end profile relative to the reference pair, phase =
-        pump phase + the sign pattern u_n(end) u_m(end). The extractor sees
-        ordinary pumped edges from the signal comb into the conjugate comb.
+        One drawn bus stands for the whole rank-one block. The user's number
+        is the rate AT THE REFERENCE PAIR (n_ref, m_ref): tap_couplings
+        normalizes each comb's profile to weight 1 there, so
+
+            rate_nm = rate * w_n * w_m,   w_n_ref = w_m_ref = 1
+                   => rate at (n_ref, m_ref) IS the entered rate, exactly.
+
+        The profile is a GEOMETRIC MEAN of per-mode participations. For a
+        modulated element at one end,
+
+            g_nm = dK_nm / (4 sqrt(w_n C_n w_m C_m)),
+            dK_nm = d(1/L) u_n(end) u_m(end)          (inductive)
+
+        so with p_n = u_n(end)^2 / (w_n C_n) the participation of mode n in
+        the element,
+
+            rate_nm / rate_ref = sqrt[ (p_n p_m) / (p_n_ref p_m_ref) ].
+
+        On the open-open comb p_n ~ 1/n (inductive) or ~ w_n (capacitive),
+        giving the readable rate * sqrt(n_ref m_ref / (n m)) and its inverse.
+        On a loaded line the p_n use the dispersed C_n, which is why the
+        general form above is what tap_couplings evaluates.
+
+        NOTE the anchor is a PAIR, so the invariant under re-anchoring is the
+        device (d(1/L)), not the number: changing n_ref with the rate box
+        untouched rescales the whole block, i.e. re-specifies the physical
+        modulation depth.
+
+        phase = pump phase + the sign pattern u_n(end) u_m(end). The
+        extractor sees ordinary pumped edges from the comb into its twin.
         """
         out = []
         for line in self.line_resonators:

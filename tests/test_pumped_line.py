@@ -493,3 +493,119 @@ def test_multi_wire_draws_requested_stroke_count(para):
             # every stroke hugs the routed path
             assert np.max(np.hypot(*(xy - pts).T)) < 0.4 * win.node_radius
         plt.close(fig)
+
+
+def test_rate_is_the_coupling_at_the_reference_pair(para):
+    """The entered rate is the rate AT (n_ref, m_ref) exactly -- the
+    profiles are normalized to weight 1 there on both combs -- and every
+    other pair follows the geometric mean of per-mode participations,
+    sqrt(p_n p_m / p_nref p_mref) with p_n = u_n^2/(w_n C_n). On the
+    open-open comb that is rate*sqrt(n_ref*m_ref/(n*m)).
+    """
+    gp, win, config = para
+    RATE = 0.05
+    line = win.add_line_resonator(label='TL', pos=(0, 0), FSR=0.5, Ztx=65.0,
+                                  f_max=9.0, port_end='xL')
+    win.set_line_pump(line, 'x0', f_p=4.5, rate=RATE, n_ref=4)
+    n_ref, m_ref = win._pump_reference_pair(line)
+    res = win.line_resonator_for(line)
+
+    rates = {(abs(int(e['from_node_id'].rsplit('n', 1)[1])),
+              abs(int(e['to_node_id'].rsplit('n', 1)[1]))): p['rate']
+             for e, p in win._gui_pump_edges()}
+
+    # the anchor itself, to the last bit
+    assert rates[(n_ref, m_ref)] == RATE
+
+    # geometric mean of participations, in the general (loaded-capable) form
+    def participation(n):
+        return res.mode_profile(n, 'x0') ** 2 / (res.mode_freq(n)
+                                                 * res.mode_mass(n))
+
+    p_ref = participation(n_ref) * participation(m_ref)
+    for (n, m), got in rates.items():
+        want = RATE * np.sqrt(participation(n) * participation(m) / p_ref)
+        assert abs(got - want) < 1e-12 * max(want, 1e-3), ((n, m), got, want)
+        # and the open-open shorthand agrees
+        assert abs(got - RATE * np.sqrt(n_ref * m_ref / (n * m))) < 1e-12
+
+    # re-anchoring rescales the whole block: the DEVICE is the invariant,
+    # not the number in the box
+    win.set_line_pump(line, 'x0', f_p=4.5, rate=RATE, n_ref=2)
+    n2, m2 = win._pump_reference_pair(line)
+    rates2 = {(abs(int(e['from_node_id'].rsplit('n', 1)[1])),
+               abs(int(e['to_node_id'].rsplit('n', 1)[1]))): p['rate']
+              for e, p in win._gui_pump_edges()}
+    scale = np.sqrt(p_ref / (participation(n2) * participation(m2)))
+    assert abs(scale - 1.0) > 0.05                      # a real rescaling
+    for key, got in rates2.items():
+        assert abs(got - rates[key] * scale) < 1e-12 * max(got, 1e-3)
+
+
+def test_modulation_fraction_is_the_device_behind_the_rate(para):
+    """eps = 2 rate / sqrt(f_n f_m) = beta sqrt(p_n p_m) = dL_J/L_tot.
+
+    Checked against build_galvanic, where d(1/L), L_J, w_n and C_n are all
+    known independently of the app -- and against the property that makes
+    it worth displaying: it is INVARIANT when the rate is re-anchored to a
+    different pair at fixed physical device.
+    """
+    from graphulator.para_features.explicit_ports import (
+        pump_modulation_fraction)
+    gp, win, config = para
+
+    # --- against the circuit, in the oracle's own units (FSR = 1) ---
+    LJ, dK, n = 1e4, 1.0, 3
+    w_n, C_n, u_n = n * np.pi, 0.5, 1.0
+    beta = dK * LJ                                   # dL_J/L_J
+    p_n = u_n ** 2 / (LJ * w_n ** 2 * C_n)           # participation of mode n
+    g = dK / (4 * np.sqrt((w_n * C_n) ** 2))
+    rate = 2 * g / np.pi                             # rate = 2 FSR g / pi
+    assert abs(pump_modulation_fraction(rate, n, n) - beta * p_n) < 1e-14
+
+    # --- through the app, and invariant under re-anchoring ---
+    line = win.add_line_resonator(label='TL', pos=(0, 0), FSR=0.5, Ztx=65.0,
+                                  f_max=9.0, port_end='xL')
+    win.set_line_pump(line, 'x0', f_p=4.5, rate=0.05, n_ref=4)
+    eps, symbol = win.pump_modulation_fraction(line)
+    res = win.line_resonator_for(line)
+    n_ref, m_ref = win._pump_reference_pair(line)
+    assert symbol.startswith('\N{GREEK SMALL LETTER DELTA}L')
+    assert abs(eps - 2 * 0.05 / np.sqrt(res.mode_freq(n_ref)
+                                        * res.mode_freq(m_ref))) < 1e-14
+
+    # epsilon is PAIR-REFERRED, not a re-anchoring invariant: holding the
+    # device fixed and re-anchoring, it tracks sqrt(p_n p_m) with
+    # p_n = u_n^2/(w_n^2 C_n L_J) -- so ~1/(n m) on an open-open comb,
+    # where the rate itself tracks only 1/sqrt(n m). (The invariant is the
+    # element's own beta = dL_J/L_J, which needs L_J.)
+    rates = {(abs(int(e['from_node_id'].rsplit('n', 1)[1])),
+              abs(int(e['to_node_id'].rsplit('n', 1)[1]))): p['rate']
+             for e, p in win._gui_pump_edges()}
+    win.set_line_pump(line, 'x0', f_p=4.5, rate=0.05, n_ref=2)
+    n2, m2 = win._pump_reference_pair(line)
+    win.set_line_pump(line, 'x0', f_p=4.5, rate=rates[(n2, m2)], n_ref=2)
+    eps2, _ = win.pump_modulation_fraction(line)
+    assert abs(rates[(n2, m2)] - 0.05) > 1e-3          # the rate moved
+
+    def participation(n):        # u_n^2/(w_n^2 C_n), the 1/L_J dropping out
+        return (res.mode_profile(n, 'x0') ** 2
+                / (res.mode_freq(n) ** 2 * res.mode_mass(n)))
+
+    want = np.sqrt(participation(n2) * participation(m2)
+                   / (participation(n_ref) * participation(m_ref)))
+    assert abs(eps2 / eps - want) < 1e-12, (eps, eps2, want)
+    assert abs(eps2 / eps - np.sqrt((n_ref * m_ref) ** 2
+                                    / (n2 * m2) ** 2)) < 1e-12
+
+
+def test_capacitive_pump_reports_a_capacitance_ratio(para):
+    from graphulator.para_features.explicit_ports import (
+        PUMP_MODULATION_SYMBOL)
+    gp, win, config = para
+    line = win.add_line_resonator(label='TL', pos=(0, 0), FSR=0.5, Ztx=65.0,
+                                  f_max=9.0, port_end='xL')
+    win.set_line_pump(line, 'x0', f_p=4.5, rate=0.05, n_ref=4,
+                      coupling='capacitive')
+    _, symbol = win.pump_modulation_fraction(line)
+    assert symbol == PUMP_MODULATION_SYMBOL['capacitive']

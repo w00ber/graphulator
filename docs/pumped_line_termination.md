@@ -250,7 +250,7 @@ right-click a line → *Add pumped termination…*). The app then holds a linked
 **conjugate twin** — the same physical line seen in the idler sector: its own
 position, rotation and appearance, physics mirrored from the primary — with its
 own port glyph(s) mirroring the primary's terminations, and draws one
-**double-line pump bus** between the pumped ends. At extraction the bus becomes
+**triple-line pump bus** between the pumped ends (§7.6). At extraction the bus becomes
 the rank-one block: every signal-comb mode $n$ to every twin mode $m$ with
 
 $$
@@ -260,11 +260,83 @@ w_n = \Big(\tfrac{n}{n_\mathrm{ref}}\Big)^{\mp 1/2},\qquad
 $$
 
 the exponent $-\tfrac12$ for a modulated inductor (flux couples, $g_n \propto
-1/\sqrt{\omega_n}$) and $+\tfrac12$ for a modulated capacitor. The user's
-`rate` is the coupling at the reference pair $(n_\mathrm{ref}, m_\mathrm{ref})$,
-$m_\mathrm{ref}$ being the harmonic nearest $\omega_p - \omega_{n_\mathrm{ref}}$
-(the idler partner; the dialog shows it and its mismatch). The DC comb mode is
-excluded on both combs, as for taps. Ports stay one hub column per sector.
+1/\sqrt{\omega_n}$) and $+\tfrac12$ for a modulated capacitor. The DC comb mode
+is excluded on both combs, as for taps. Ports stay one hub column per sector.
+
+**What the number means: a pair anchor, and a geometric mean.** The profiles
+are normalized to weight 1 at the reference mode on each comb, so
+$w_{n_\mathrm{ref}} = w_{m_\mathrm{ref}} = 1$ and the user's `rate` **is** the
+coupling at the pair $(n_\mathrm{ref}, m_\mathrm{ref})$ exactly — not a bare
+coefficient. ($m_\mathrm{ref}$ is derived: the twin mode nearest
+$|\omega_p - \omega_{n_\mathrm{ref}}|$, i.e. the one the pump pairs resonantly
+with $n_\mathrm{ref}$; the panel names it and gives the residual detuning.)
+
+The scaling to every other pair is a **geometric mean of per-mode
+participations**, as the circuit form below requires. Writing
+$\tilde w_n = u_n(x_0)/\sqrt{\omega_n C_n}$, the normalization result
+$g_{nm} = \tfrac14\,\delta(1/L)\,\tilde w_n\tilde w_m$ factorizes, so with
+$p_n \equiv \tilde w_n^2 = u_n(x_0)^2/(\omega_n C_n)$ — mode $n$'s participation
+in the modulated element —
+
+$$
+\frac{\text{rate}_{nm}}{\text{rate}_{n_\mathrm{ref}m_\mathrm{ref}}}
+= \sqrt{\frac{p_n\,p_m}{p_{n_\mathrm{ref}}\,p_{m_\mathrm{ref}}}} .
+$$
+
+On the open–open comb $C_n$ is $n$-independent, so $p_n \propto 1/n$ (inductive)
+or $\propto \omega_n$ (capacitive) and this collapses to
+$\text{rate}\,\sqrt{n_\mathrm{ref}m_\mathrm{ref}/(nm)}$ and its inverse — the
+$w_n w_m$ shorthand above. On a **loaded** line the $p_n$ carry the dispersed
+$C_n$ and $u_n(x_0) = \cos k_n\ell$, which is why the code evaluates the general
+form rather than the harmonic ratio (§7.4).
+
+One consequence worth stating: the anchor is a *pair*, so the quantity invariant
+under re-anchoring is the **device** $\delta(1/L)$, not the number in the box.
+Changing $n_\mathrm{ref}$ while holding `rate` fixed rescales the entire block by
+$\sqrt{p_{n_\mathrm{ref}}p_{m_\mathrm{ref}}/p_{n'_\mathrm{ref}}p_{m'_\mathrm{ref}}}$
+— i.e. it re-specifies the modulation depth. Parameterizing by $\delta(1/L)$
+directly would remove the anchor at the cost of a number less comparable to an
+ordinary graph edge's rate; the app keeps the pair anchor and reports the pair.
+
+**The modulation depth behind the rate.** A rate in arb. units says little about
+how hard the element is driven. The physically readable version is the
+participation-weighted *fractional* modulation. Writing $\beta = \delta(1/L)L_J
+= \delta L_J/L_J$ for the element's own modulation and
+
+$$
+p_n \;=\; \frac{u_n(x_0)^2}{\omega_n^2 C_n L_J}
+\;=\; \frac{\text{inductive energy of mode }n\text{ in }L_J}{\text{its total inductive energy}}
+$$
+
+for mode $n$'s participation in the element, the same factorization gives
+
+$$
+\boxed{\ \varepsilon_{nm} \;\equiv\; \frac{4\,g_{nm}}{\sqrt{\omega_n\omega_m}}
+\;=\; \beta\,\sqrt{p_n\,p_m} \;=\; \frac{\delta L_J}{L_\mathrm{tot}},
+\qquad L_\mathrm{tot} \equiv \frac{L_J}{\sqrt{p_np_m}}\ }
+$$
+
+$L_\mathrm{tot}$ being the pair's effective inductance referred to the element,
+and $\varepsilon = \beta p_n$ exactly for a degenerate pump. Because the left
+side is dimensionless it may be evaluated in the app's linear units, where
+$g_\mathrm{lin} = \text{rate}/2$:
+
+$$
+\varepsilon = \frac{2\,\text{rate}}{\sqrt{f_n f_m}} .
+$$
+
+Verified against `build_galvanic`'s independently known $(\delta(1/L), L_J,
+\omega_n, C_n)$ to twelve digits. The panel and the bus Properties page report
+it beside the rate as $\delta L/L_\mathrm{tot}$ (a modulated capacitor gives the
+same expression read as $\delta C/C_\mathrm{tot}$, frequency-independent as a
+capacitance ratio must be).
+
+Note $\varepsilon$ is *pair-referred*, like the rate: $p_n \propto 1/n^2$ on the
+open–open comb, so $\varepsilon \propto 1/nm$ while the rate goes as
+$1/\sqrt{nm}$. What it buys is dimensionlessness — it compares against a design
+target directly. The genuinely anchor-free number is $\beta$ itself, which
+requires $L_J$ and is therefore available only once the end load is specified
+(§7.2 gives $L_J = Z_\mathrm{tx}/2\pi f_Z$).
 
 **Two core fixes the macro forced.** (i) The spanning tree stored each hop as
 its canonically *sorted* pair while the frame accumulation read it as

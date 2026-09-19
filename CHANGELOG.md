@@ -153,6 +153,18 @@
   use it, hand-drawn edges keep the heuristic.
 
 ### Added (continued)
+  - **Mode-frequency overlay on the S-parameter plot** (*Mark Line Modes*,
+    beside *Conjugate Freqs*). Marks every transmission line's normal-mode
+    frequencies — the **loaded** ones when an end load is set — labels them
+    by index, and reports line, index and frequency on hover. Markers run to
+    the comb cutoff (mode N), which is drawn heavier because beyond it the
+    model keeps no explicit modes. Positions are not simply f_n: each
+    channel is read in its own drive frame, so a pumped line's conjugate
+    twin is marked at `f_p − f_m`, where its idler image actually resonates.
+    The frame is inverted from the sweep's own `drive_signals` rather than
+    re-derived per topology, which keeps plain, loaded, conjugated and
+    pumped lines all correct. Intended use: read off which `n` to name in
+    the pump's reference pair. Persists in the `.pgraph` plot settings.
   - **Worked transmission-line examples** under File → Examples (`TL_1` …
     `TL_5`), each with a Notes tab explaining the drawing, what to look at
     in S and which knob does what: an open line on a port; a mode tapped
