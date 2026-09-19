@@ -202,7 +202,8 @@
 - [ ] in the full port-inclusive graph picture, we need to understand what it means to drive a system a little more thoughtfully. When we conjugate a set of modes, is the same port connected to both the signal and the conjugate?
   - [ ] Corollary: can we plot phase-sensitive scattering? 
 
-- [ ] need to decide what we should do about the M matrix (symbolic) display. Add and M_super tab? What about sympy code export?
+- [ ] need to decide what we should do about the M matrix (symbolic) display. Add and M_super tab? What about sympy code export? 
+  - for a transmission line, I'm thinking that we can have options to show a mode block (square in the displayed matrix) that just says M_\mathrm{tx} or show a more explicit block that shows the structure of the elements with a minimal set showing diagonal and off-diagonal KK^T coupling with the rest indicated by \dots, \vdots
 
 - can our code actually handle resonant coupling in chained transmission lines like a stepped impedance resonator (multiple sections of different impedance transmission line)? Can we just kluge it from a cascade of ABCD matrices and then compute the loaded normal modes from there? What about a transmission line set up as a stub? Can we actually create a shorted stub filter (set L load to zero?) if we wanted?
   - Partial answer (docs sec. 8): the comb tail closure already takes an
