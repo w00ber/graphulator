@@ -3749,8 +3749,17 @@ class PropertiesPanel(QWidget):
 
         def refresh_modulation():
             try:
+                alpha, over = g.pump_alpha(line)
                 eps, symbol = g.pump_modulation_fraction(line)
-                modulation.setText(f"{symbol} = {eps * 100:.4g}%")
+                modulation.setText(
+                    (f"\u26a0 \N{GREEK SMALL LETTER ALPHA} = {alpha:.4g} "
+                     f"\u2265 1 \u2014 unphysical  ({symbol} = {eps*100:.4g}%)")
+                    if over else
+                    (f"\N{GREEK SMALL LETTER ALPHA} = {alpha:.4g}"
+                     f"   ({symbol} = {eps * 100:.4g}%)"))
+                modulation.setStyleSheet(
+                    "color: #8b0000; font-weight: bold;" if over
+                    else "color: #666;")
             except (ValueError, RuntimeError):
                 pass
 
@@ -3760,10 +3769,10 @@ class PropertiesPanel(QWidget):
             "idler partner m in the twin [milli-arb. units]; other pairs "
             "follow the verified profile.", scale=1000.0,
             refresh=refresh_modulation))
-        from .para_features.explicit_ports import PUMP_MODULATION_TOOLTIP
-        modulation.setToolTip(PUMP_MODULATION_TOOLTIP)
-        mod_label = QLabel("Modulation depth:")
-        mod_label.setToolTip(PUMP_MODULATION_TOOLTIP)
+        from .para_features.explicit_ports import PUMP_ALPHA_TOOLTIP
+        modulation.setToolTip(PUMP_ALPHA_TOOLTIP)
+        mod_label = QLabel("Pump strength \N{GREEK SMALL LETTER ALPHA}:")
+        mod_label.setToolTip(PUMP_ALPHA_TOOLTIP)
         form.addRow(mod_label, modulation)
         refresh_modulation()
         form.addRow("Pump phase:", spin(
@@ -5085,8 +5094,11 @@ class PropertiesPanel(QWidget):
             "closure is on, so N need only span the couplings that matter.")
         add("Z0", 'Z0_port', 1e-6, 1e6, 1, 1.0, "Port termination impedance",
             width=64)
-        add("\N{GREEK SMALL LETTER ALPHA}", 'alpha_uniform', 0.0, 100.0, 4,
-            0.001, ALPHA_TOOLTIP, width=72)
+        # 'alpha_loss', not 'alpha': the pump row below reports the PRXQ
+        # pump strength alpha, and two different alphas in adjacent rows is
+        # exactly the sort of collision that gets misread
+        add("\N{GREEK SMALL LETTER ALPHA}_loss", 'alpha_uniform', 0.0, 100.0,
+            4, 0.001, ALPHA_TOOLTIP, width=72)
         hbox.addStretch()
         edit_btn = QPushButton("Edit\N{HORIZONTAL ELLIPSIS}")
         edit_btn.setMaximumWidth(60)
@@ -5185,19 +5197,21 @@ class PropertiesPanel(QWidget):
                 pass           # widget already deleted by a table rebuild
 
     def _add_pump_row(self, line, row):
+        """Three narrow rows rather than one very wide one.
+
+        A single horizontal strip of header + four spinboxes + the pair
+        description forced the Ports & Lines pane past 1400 px, so the
+        panel grew a horizontal scrollbar and the plot could not be kept at
+        half the window. Split: a header carrying the device parameter
+        alpha, an indented control strip, and a word-WRAPPED description.
+        Nothing here sets a wide minimum, so the pane follows the splitter.
+        """
+        from .para_features.explicit_ports import (PUMP_NREF_TOOLTIP,
+                                                   PUMP_ALPHA_TOOLTIP)
         g = self.graphulator
         pump = line['pump']
         resonator = g.line_resonator_for(line)
-        n_ref, m_ref = g._pump_reference_pair(line)
         twin = g.line_twin(line)
-        hbox = QHBoxLayout()
-        hbox.setSpacing(6)
-        head = QLabel(f"pump@{pump['end']} \N{RIGHTWARDS ARROW} "
-                      f"{twin['label'] if twin else 'twin'}:")
-        head.setToolTip("Pumped termination: one rank-one block between the "
-                        "comb and its conjugate twin (select the triple-line "
-                        "bus on the canvas for phase/appearance).")
-        hbox.addWidget(head)
 
         def pump_changed(key, value):
             pump[key] = value
@@ -5207,68 +5221,118 @@ class PropertiesPanel(QWidget):
             if hasattr(self, '_refresh_comb_notes'):
                 self._refresh_comb_notes()
 
-        hbox.addWidget(QLabel("f_p"))
-        hbox.addWidget(self._physics_spin(
+        # --- header: what the bus is, and how hard it is driven ---
+        head_box = QHBoxLayout()
+        head_box.setContentsMargins(0, 0, 0, 0)
+        head_box.setSpacing(10)
+        head = QLabel(f"pump@{pump['end']} \N{RIGHTWARDS ARROW} "
+                      f"{twin['label'] if twin else 'twin'}")
+        head.setStyleSheet("font-weight: bold;")
+        head.setToolTip("Pumped termination: one rank-one block between the "
+                        "comb and its conjugate twin (select the "
+                        "triple-line bus on the canvas for appearance).")
+        head_box.addWidget(head)
+        self._pump_modulation_label = QLabel()
+        self._pump_modulation_label.setToolTip(PUMP_ALPHA_TOOLTIP)
+        head_box.addWidget(self._pump_modulation_label)
+        head_box.addStretch()
+        head_holder = QWidget()
+        head_holder.setLayout(head_box)
+        self.ports_param_layout.addWidget(head_holder, row, 0, 1, 4)
+        row += 1
+
+        # --- controls, indented under the header ---
+        ctl = QHBoxLayout()
+        ctl.setContentsMargins(14, 0, 0, 0)
+        ctl.setSpacing(5)
+        ctl.addWidget(QLabel("f_p"))
+        ctl.addWidget(self._physics_spin(
             pump['f_p'], 1e-9, 1e9, 4, 0.1,
-            "Pump frequency [a.u.]: amplifies every pair with f_n + f_m = f_p "
-            "and converts every pair with |f_n - f_m| = f_p.",
-            lambda v: pump_changed('f_p', float(v)), width=84))
-        hbox.addWidget(QLabel("[au]"))
-        hbox.addWidget(QLabel("rate"))
-        hbox.addWidget(self._physics_spin(
+            "Pump frequency [a.u.]: amplifies every pair with "
+            "f_n + f_m = f_p and converts every pair with |f_n - f_m| = f_p.",
+            lambda v: pump_changed('f_p', float(v)), width=76))
+        ctl.addWidget(QLabel("au"))
+        ctl.addWidget(QLabel("rate"))
+        self._pump_rate_spin = self._physics_spin(
             pump['rate'] * 1000.0, 0.0, 1e6, 3, 1.0,
             "Parametric coupling between mode n of the line and its idler "
             "partner m in the twin [milli-arb. units]; other pairs follow "
             "the verified profile.",
-            lambda v: pump_changed('rate', float(v) / 1000.0), width=78))
-        hbox.addWidget(QLabel("[mau]"))
-        # the DEVICE behind the rate: what stays fixed under re-anchoring
-        from .para_features.explicit_ports import PUMP_MODULATION_TOOLTIP
-        self._pump_modulation_label = QLabel()
-        self._pump_modulation_label.setToolTip(PUMP_MODULATION_TOOLTIP)
-        self._pump_modulation_label.setStyleSheet("color: dimgray;")
-        hbox.addWidget(self._pump_modulation_label)
-        hbox.addWidget(QLabel("\N{GREEK SMALL LETTER PHI}"))
-        hbox.addWidget(self._physics_spin(
+            lambda v: pump_changed('rate', float(v) / 1000.0), width=72)
+        ctl.addWidget(self._pump_rate_spin)
+        ctl.addWidget(QLabel("mau"))
+        ctl.addWidget(QLabel("\N{GREEK SMALL LETTER PHI}"))
+        ctl.addWidget(self._physics_spin(
             pump.get('phase', 0.0), -360.0, 360.0, 1, 15.0,
             "Pump phase [degrees]",
-            lambda v: pump_changed('phase', float(v)), width=70))
-        hbox.addWidget(QLabel("[\N{DEGREE SIGN}]"))
+            lambda v: pump_changed('phase', float(v)), width=58))
+        ctl.addWidget(QLabel("\N{DEGREE SIGN}"))
+        ctl.addWidget(QLabel("n"))
         nref = FineControlSpinBox()
         nref.setDecimals(0)
         nref.setRange(1, max(1, resonator.N))
         nref.setSingleStep(1)
-        nref.setPrefix("n=")
-        nref.setMaximumWidth(54)
+        nref.setMaximumWidth(46)
         nref.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         nref.setValue(int(pump.get('n_ref', 1)))
-        from .para_features.explicit_ports import PUMP_NREF_TOOLTIP
         nref.setToolTip(PUMP_NREF_TOOLTIP)
         nref.valueChanged.connect(lambda v: pump_changed('n_ref', int(v)))
-        hbox.addWidget(nref)
+        ctl.addWidget(nref)
+        self._pump_partner_short = QLabel()
+        self._pump_partner_short.setToolTip(PUMP_NREF_TOOLTIP)
+        self._pump_partner_short.setStyleSheet("color: dimgray;")
+        ctl.addWidget(self._pump_partner_short)
+        ctl.addStretch()
+        ctl_holder = QWidget()
+        ctl_holder.setLayout(ctl)
+        self.ports_param_layout.addWidget(ctl_holder, row, 0, 1, 4)
+        row += 1
+
+        # --- the pair, spelled out; wrapped so it never widens the pane ---
         self._pump_partner_label = QLabel()
+        self._pump_partner_label.setWordWrap(True)
         self._pump_partner_label.setToolTip(PUMP_NREF_TOOLTIP)
-        self._pump_partner_label.setStyleSheet("color: dimgray; font-style: italic;")
+        self._pump_partner_label.setStyleSheet(
+            "color: dimgray; font-style: italic; margin-left: 14px;")
         self._pump_partner_line = line
-        hbox.addWidget(self._pump_partner_label)
-        hbox.addStretch()
-        holder = QWidget()
-        holder.setLayout(hbox)
-        self.ports_param_layout.addWidget(holder, row, 0, 1, 4)
+        self.ports_param_layout.addWidget(self._pump_partner_label,
+                                          row, 0, 1, 4)
         self._refresh_partner_label()
         return row + 1
+
+    #: Rate box styling while alpha is past its physical limit.
+    PUMP_OVER_LIMIT_SPIN_CSS = "background-color: rgba(200, 0, 0, 0.25);"
 
     def _refresh_partner_label(self):
         line = getattr(self, '_pump_partner_line', None)
         label = getattr(self, '_pump_partner_label', None)
         if line is None or label is None or not line.get('pump'):
             return
+        g = self.graphulator
         try:
-            label.setText(self.graphulator.pump_pair_description(line))
+            label.setText(g.pump_pair_description(line))
+            short = getattr(self, '_pump_partner_short', None)
+            if short is not None:
+                n_ref, m_ref = g._pump_reference_pair(line)
+                short.setText(f"\N{RIGHTWARDS ARROW} m = {m_ref}")
             mod = getattr(self, '_pump_modulation_label', None)
+            spin = getattr(self, '_pump_rate_spin', None)
             if mod is not None:
-                eps, symbol = self.graphulator.pump_modulation_fraction(line)
-                mod.setText(f"({symbol} = {eps * 100:.3g}%)")
+                alpha, over = g.pump_alpha(line)
+                eps, symbol = g.pump_modulation_fraction(line)
+                if over:
+                    # alpha >= 1: the drive has outrun the element, and
+                    # where that happens is not obvious on a loaded comb
+                    mod.setText(f"\u26a0 \N{GREEK SMALL LETTER ALPHA} = "
+                                f"{alpha:.3g} \u2265 1  (unphysical)")
+                    mod.setStyleSheet("color: #8b0000; font-weight: bold;")
+                else:
+                    mod.setText(f"\N{GREEK SMALL LETTER ALPHA} = {alpha:.3g}"
+                                f"   ({symbol} = {eps * 100:.3g}%)")
+                    mod.setStyleSheet("color: dimgray;")
+                if spin is not None:
+                    spin.setStyleSheet(
+                        self.PUMP_OVER_LIMIT_SPIN_CSS if over else "")
         except (ValueError, RuntimeError):
             pass
 
@@ -12719,8 +12783,10 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
     # rather than re-derived per topology -- which keeps this correct for
     # pumped, conjugated and plain lines alike.
 
-    #: Muted palette for mode markers, cycled per line.
-    MODE_MARKER_COLORS = ('#e8e8e8', '#ffd9a0', '#a8e0ff', '#ffc0cb')
+    #: Marker palette, cycled per line. These sit on the seaborn plot
+    #: ground (#EAEAF2) and must READ against it -- the first draft used
+    #: near-whites and drew a perfectly invisible overlay.
+    MODE_MARKER_COLORS = ('#3b3b4f', '#9c6b1f', '#1f6f8b', '#8b3a62')
     #: Don't print an index label if its neighbour is closer than this (px).
     MODE_LABEL_MIN_PX = 16.0
 
@@ -12785,12 +12851,21 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             return
         self._mode_markers = visible
 
-        # thin the index labels when markers crowd together
-        xs = sorted(m['x'] for m in visible)
         span_px = max(ax0.get_window_extent().width, 1.0)
         px_per_unit = span_px / max(hi - lo, 1e-12)
-        gaps = [(b - a) * px_per_unit for a, b in zip(xs, xs[1:])]
-        label_them = not gaps or min(gaps) >= self.MODE_LABEL_MIN_PX
+
+        # Group COINCIDENT markers first: a signal mode and a twin's idler
+        # image routinely land on the same frequency (mode n at f_n, image
+        # of m at f_p - f_m), and an all-or-nothing density test then sees a
+        # zero gap and suppresses every label on the plot -- which is
+        # exactly the overlay looking like it does nothing.
+        groups = []
+        for m in sorted(visible, key=lambda mm: mm['x']):
+            if groups and abs(m['x'] - groups[-1][0]['x']) * px_per_unit < 2.0:
+                groups[-1].append(m)
+            else:
+                groups.append([m])
+        self._mode_marker_groups = groups
 
         for ax in axes_list:
             for m in visible:
@@ -12799,14 +12874,31 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     linestyle='-' if m['is_cutoff'] else ':',
                     linewidth=1.6 if m['is_cutoff'] else 1.0,
                     alpha=0.85 if m['is_cutoff'] else 0.55, zorder=0)
-        if label_them:
-            for m in visible:
-                ax0.text(m['x'], 1.005, str(m['n']),
-                         transform=ax0.get_xaxis_transform(),
-                         ha='center', va='bottom', fontsize=7,
-                         fontfamily='sans-serif', color='#555555',
-                         fontweight='bold' if m['is_cutoff'] else 'normal',
-                         clip_on=False)
+        # Label greedily, left to right: a group too close to the last
+        # LABELLED one skips its own number, so crowding costs you that
+        # label and not the whole set. Coincident markers share one label,
+        # conjugate (idler-image) indices marked with a star.
+        last_px = None
+        for grp in groups:
+            x = grp[0]['x']
+            px = (x - lo) * px_per_unit
+            if last_px is not None and px - last_px < self.MODE_LABEL_MIN_PX:
+                continue
+            last_px = px
+            text = "/".join(f"{m['n']}*" if m['conj'] else str(m['n'])
+                            for m in grp)
+            # inside the axes on a small opaque chip: above them the text
+            # competes with the title/toolbar and tight_layout can clip it
+            ax0.text(x, 0.985, text,
+                     transform=ax0.get_xaxis_transform(),
+                     ha='center', va='top', fontsize=7.5,
+                     fontfamily='sans-serif', color=grp[0]['color'],
+                     fontweight='bold' if any(m['is_cutoff'] for m in grp)
+                                else 'normal',
+                     zorder=5,
+                     bbox=dict(boxstyle='square,pad=0.15',
+                               facecolor='white', alpha=0.75,
+                               edgecolor='none'))
         self._ensure_mode_marker_hover()
 
     def _ensure_mode_marker_hover(self):
@@ -12828,10 +12920,18 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         if abs(nearest['x'] - event.xdata) * px_per_unit > 6.0:
             self._hide_mode_marker_annotation()
             return
-        tag = " (idler image)" if nearest['conj'] else ""
-        cutoff = "  \u2014 comb cutoff" if nearest['is_cutoff'] else ""
-        text = (f"{nearest['line_label']}  mode {nearest['n']}{tag}\n"
-                f"f = {nearest['f_mode']:g}{cutoff}")
+        # report EVERY marker at this frequency: where a signal mode and an
+        # idler image coincide, naming only one of them is the misleading
+        # half of the answer
+        here = [m for m in markers
+                if abs(m['x'] - nearest['x']) * px_per_unit < 2.0]
+        lines = []
+        for m in here:
+            tag = " (idler image)" if m['conj'] else ""
+            cutoff = "  \u2014 comb cutoff" if m['is_cutoff'] else ""
+            lines.append(f"{m['line_label']}  mode {m['n']}{tag}"
+                         f"   f = {m['f_mode']:g}{cutoff}")
+        text = "\n".join(lines)
         ann = getattr(self, '_mode_marker_annotation', None)
         if ann is None or ann.axes is not ax:
             if ann is not None:

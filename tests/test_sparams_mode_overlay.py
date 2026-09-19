@@ -154,3 +154,79 @@ def test_toggle_persists_through_save_and_load(para, tmp_path):
     assert win._save_graph_to_file(str(path))
     data = json.loads(path.read_text())
     assert data['scattering']['sparams_plot']['mark_modes'] is True
+
+
+def _index_labels(win):
+    """(x, text) of the index chips drawn inside the axes."""
+    ax = win.sparams_canvas.ax
+    return sorted((round(t.get_position()[0], 3), t.get_text())
+                  for t in ax.texts
+                  if t.get_text() and t.get_position()[1] > 0.5)
+
+
+def test_index_labels_are_drawn_and_readable(para):
+    """The markers are useless without their indices -- and the first draft
+    drew them in near-white on the seaborn ground, i.e. invisibly."""
+    win, line = _terminated_line(para)
+    win.sparams_mark_modes.setChecked(True)
+    _plot(win, 0.3, 9.5)
+    labels = _index_labels(win)
+    assert labels, "no index labels drawn"
+    assert {t for _, t in labels} >= {'3', '4', '5'}
+    # and every marker colour has to contrast with the plot ground
+    import matplotlib.colors as mcolors
+    ground = np.array(mcolors.to_rgb('#EAEAF2'))
+    for m in win._mode_markers:
+        assert np.abs(np.array(mcolors.to_rgb(m['color'])) - ground).sum() > 0.6
+
+
+def test_coincident_markers_share_one_label_instead_of_killing_all(para):
+    """A signal mode and a twin's idler image land on the same frequency
+    (f_n and f_p - f_m). An all-or-nothing density test saw the zero gap
+    and suppressed EVERY label; they must merge instead."""
+    win, line = _terminated_line(para)
+    win.set_line_pump(line, 'x0', f_p=4.5, rate=0.05, n_ref=2,
+                      twin_pos=(0.0, -5.0))
+    win.sparams_mark_modes.setChecked(True)
+    _plot(win, 0.3, 9.5)
+    labels = dict((x, t) for x, t in _index_labels(win))
+    # signal mode 1 (1.5) coincides with the twin's image of mode 2
+    # (4.5 - 3.0); both indices appear, the conjugate one starred
+    assert labels.get(1.5) in ('1/2*', '2*/1'), labels
+    assert labels.get(3.0) in ('2/1*', '1*/2'), labels
+    # and the isolated modes still carry their own labels
+    assert labels.get(6.0) == '4' and labels.get(9.0) == '6'
+
+
+def test_hover_names_every_mode_at_a_shared_frequency(para):
+    import matplotlib.backend_bases as bb
+    win, line = _terminated_line(para)
+    win.set_line_pump(line, 'x0', f_p=4.5, rate=0.05, n_ref=2,
+                      twin_pos=(0.0, -5.0))
+    win.sparams_mark_modes.setChecked(True)
+    _plot(win, 0.3, 9.5)
+    ax = win.sparams_canvas.ax
+    px, py = ax.transData.transform((1.5, np.mean(ax.get_ylim())))
+    win._on_mode_marker_hover(
+        bb.MouseEvent('motion_notify_event', win.sparams_canvas, px, py))
+    text = win._mode_marker_annotation.get_text()
+    assert text.count('\n') >= 1, text          # both, not just one
+    assert 'idler image' in text and 'TL1' in text
+
+
+def test_crowding_costs_only_the_crowded_label(para):
+    """Thinning is greedy left-to-right: a marker too close to the last
+    LABELLED one skips its own number; the rest are unaffected."""
+    win, line = _terminated_line(para)
+    line['FSR'] = 0.05                      # ~180 modes across the window
+    win.sparams_mark_modes.setChecked(True)
+    _plot(win, 0.3, 9.5)
+    labels = _index_labels(win)
+    assert labels, "crowding suppressed every label"
+    assert len(labels) < len(win._mode_markers)      # some were skipped
+    ax = win.sparams_canvas.ax
+    lo, hi = sorted(ax.get_xlim())
+    ppu = ax.get_window_extent().width / (hi - lo)
+    xs = [x for x, _ in labels]
+    assert all((b - a) * ppu >= win.MODE_LABEL_MIN_PX - 1e-6
+               for a, b in zip(xs, xs[1:]))
