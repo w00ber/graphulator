@@ -152,6 +152,29 @@
     click-a-marker-to-set-n_ref; and folding this into the plot-panel
     reconfiguration below as a per-plot overlay option rather than a global
     toggle.
+- [ ] **Loaded-line internal loss is not derived.** B_int = (2/pi) alpha FSR
+  is applied uniformly to every comb mode; that uniformity follows from mode
+  orthogonality in the OPEN-OPEN basis (gated by tests/test_uniform_loss.py)
+  and does NOT carry over to a loaded line: a reactive termination stores
+  energy the loss does not act on, so the per-mode participation stops being
+  flat. Measured with the series-loss ratio INT sin^2 / INT cos^2, an
+  f_Z = 0.5*FSR line gives Gamma_n/Gamma_open = 0.566, 0.773, 0.892, 0.976
+  for n = 1,2,3,6 -- a factor ~2 on the fundamental, not a rounding effect.
+  (A perfectly shorted end returns to 1.000 for every n, which is the check
+  that the ratio is right.) Needs the same treatment the loaded basis got:
+  derive the per-mode participation for matched/uniform attenuation
+  (including the load's stored-energy share), gate it against lossy ABCD
+  with a load, then apply per-mode B_int instead of one number. Until then
+  the panel's B_int tooltip says a loaded line's loss is indicative.
+- [ ] **Pump reference pair: let the user choose m, not just n.** One pump
+  drives amplification, up-conversion and down-conversion at once, so there
+  are up to three partners for a given n; the app anchors the rate at the
+  one nearest |f_p - f_n| and now REPORTS the others (pump_partners), but m
+  is still derived. To "parameterize by the intended (m,n) pair" properly,
+  m should be directly settable (stored as pump['m_ref'], defaulting to the
+  derived one), with the description naming which condition the chosen pair
+  satisfies and its detuning -- which the code already computes
+  (pump_pair_family).
 - [ ] **Add group delay view*** 
 - [ ] **Add Smith chart view***
 - [ ] **plot panel reconfiguration** With more than just S-parameter and magnitude and phase, probably want to change over to a more flexible scheme where the user can add plots and configure what they display. Doesn't need to be vertically stacked; someone might prefer side-by-side (1,2) or (2,2) subplot layouts. We should keep the frequency axes locked. In the case of a Smith chart, we could reduce the opacity of points outside the displayed frequency axis limits in other plots and toggle a preference to zoom into selected points or lock the chart axes. The plot scaling preferences can be set up as tabs for each plot style at the bottom. Don't display a tab for a data plot unless it's displayed. I could use your advice in how to add/subtract plots and select their displayed data. It would be nice to have multiple views on the same data in different subplots, but I assume that we'd need to figure out whether the axis scaling tabs would need to be duplicated or if we just do subtabs within a particular data plot style. 
@@ -215,7 +238,17 @@
     normalization from the per-section energy integrals). That is the
     follow-on to the loaded-line basis, same recipe. A shorted stub is the
     inductive load with f_Z -> infinity (L -> 0); the dialog allows 1e12.
-- [ ] **Reference impedance / design language (open decision).** Proposal
+- [ ] **Reference impedance / design language (open decision).** MEASURED:
+  the model is scale-free in impedance -- scaling Ztx and Z0 together by
+  2x, 17.3x or 0.04x changes S by 0 to 2e-15, loaded or not. Only the RATIO
+  Ztx/Z0 is physical (gamma/FSR = (2/pi) Ztx/Z0; chi = -2i Z_in/Z0), and
+  even beta = dL_l/L_l is Ztx-independent because C_n L_l loses it. So a
+  Z_ref buys NOTHING numerically and the normalized-units instinct is
+  right. What IS a real defect is that Z0_port lives on the LINE, so two
+  lines terminated on one port can disagree about that port's impedance --
+  fix that (move Z0 to the port, migrate on load, keep reading the line
+  field for old files) rather than introducing a new global parameter.
+  Original proposal follows. Proposal
   from the impedance discussion: one graph-level reference impedance Z_ref
   (default 50) that every impedance in the graph is referred to -- ports
   are Z_ref unless overridden (moving Z0_port off the line, where a port

@@ -219,6 +219,17 @@ SETTINGS_PARAMS = {
         ('SPARAMS_XLABEL_Y_OFFSET', 'X-Label Y Offset', 'float', -0.2, 0.1, 0.01),
         ('SPARAMS_PLOT_BACKGROUND_COLOR', 'Background Color', 'color', None, None, None),
         ('SPARAMS_PLOT_GRID_COLOR', 'Grid Color', 'color', None, None, None),
+        ('SPARAMS_MODE_MARKER_COLOR', 'Mode Marker Color', 'color', None, None, None),
+        ('SPARAMS_MODE_MARKER_STYLE', 'Mode Marker Style', 'dropdown',
+         [('Dashed', 'dashed'), ('Dotted', 'dotted'),
+          ('Dash-dot', 'dashdot'), ('Solid', 'solid')], None, None),
+        ('SPARAMS_MODE_MARKER_LINEWIDTH_SCALE', 'Mode Marker Width (x trace)',
+         'float', 0.1, 3.0, 0.1),
+        ('SPARAMS_MODE_MARKER_ALPHA', 'Mode Marker Opacity', 'float', 0.05, 1.0, 0.05),
+        ('SPARAMS_MODE_MARKER_CUTOFF_SCALE', 'Mode Marker Cutoff Width (x)',
+         'float', 1.0, 4.0, 0.1),
+        ('SPARAMS_MODE_MARKER_LABEL_SIZE', 'Mode Marker Label Size', 'float',
+         4.0, 16.0, 0.5),
     ],
     'Export Scaling': [
         ('GUI_SELFLOOP_LABEL_SCALE', 'GUI Self-loop Label Distance', 'float', 0.1, 5.0, 0.1),
@@ -4809,6 +4820,7 @@ class PropertiesPanel(QWidget):
         from .para_features.explicit_ports import (ALPHA_TOOLTIP,  # noqa: F401
                                                    PHASE2_PHASE_TOOLTIP)
         self._comb_notes = []
+        self._mode_index_spins = []
         self._pump_partner_label = None
         self._pump_partner_line = None
         if hasattr(self, 'tail_closure_check'):
@@ -5013,6 +5025,7 @@ class PropertiesPanel(QWidget):
                         nref_spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
                         nref_spin.setValue(conn.get('n_ref', 1))
                         nref_spin.setPrefix("n=")
+                        self._mode_index_spins.append((nref_spin, line))
                         nref_spin.setToolTip(
                             "Reference harmonic the rate is defined at "
                             f"(1..{resonator.N}); nearest to the mode's "
@@ -5066,7 +5079,7 @@ class PropertiesPanel(QWidget):
         self._schedule_scattering_update()
         g._update_plot()
         if hasattr(self, '_refresh_comb_notes'):
-            self._refresh_comb_notes()
+            self._refresh_comb_notes()      # also re-ranges the n spinboxes
 
     def _add_line_physics_row(self, line, row):
         from .para_features.explicit_ports import ALPHA_TOOLTIP
@@ -5094,11 +5107,12 @@ class PropertiesPanel(QWidget):
             "closure is on, so N need only span the couplings that matter.")
         add("Z0", 'Z0_port', 1e-6, 1e6, 1, 1.0, "Port termination impedance",
             width=64)
-        # 'alpha_loss', not 'alpha': the pump row below reports the PRXQ
-        # pump strength alpha, and two different alphas in adjacent rows is
-        # exactly the sort of collision that gets misread
-        add("\N{GREEK SMALL LETTER ALPHA}_loss", 'alpha_uniform', 0.0, 100.0,
-            4, 0.001, ALPHA_TOOLTIP, width=72)
+        # Internal loss as a RATE, like every other rate in the app, rather
+        # than as the attenuation alpha*l it is stored as -- which also
+        # retires the alpha that collided with the pump's alpha below. The
+        # map B_int = (2/pi) alpha FSR is exact and linear, so this is a
+        # change of units and not of model; note it therefore TRACKS FSR.
+        self._add_line_loss_spin(hbox, line)
         hbox.addStretch()
         edit_btn = QPushButton("Edit\N{HORIZONTAL ELLIPSIS}")
         edit_btn.setMaximumWidth(60)
@@ -5110,6 +5124,45 @@ class PropertiesPanel(QWidget):
         holder.setLayout(hbox)
         self.ports_param_layout.addWidget(holder, row, 0, 1, 4)
         return row + 1
+
+    LOSS_RATE_TOOLTIP = (
+        "Internal loss rate of every comb mode [milli-arb. units].\n\n"
+        "Stored as the line's one-way attenuation \u03b1\u00b7\u2113 "
+        "(nepers) and shown here through the verified map\n"
+        "    B_int = (2/\u03c0)\u00b7\u03b1\u00b7FSR\n"
+        "so it is a change of UNITS, not of model \u2014 and it tracks FSR, "
+        "since a fixed attenuation per length is a different rate on a "
+        "different line.\n\n"
+        "ONE rate for the whole comb: spatially uniform loss damps every "
+        "mode of the OPEN\u2013OPEN basis identically (mode orthogonality), "
+        "which is what the gate in tests/test_uniform_loss.py pins. With an "
+        "end load that uniformity is NOT established: a reactive termination "
+        "stores energy the loss does not act on, so the per-mode "
+        "participation stops being flat (the fundamental of an f_Z = 0.5\u00b7"
+        "FSR line sits near half the open-open value). Treat a loaded line's "
+        "loss as indicative until that is derived and gated.")
+
+    def _add_line_loss_spin(self, hbox, line):
+        """Loss as B_int [mau], converting to/from the stored attenuation."""
+        lab = QLabel("B_int")
+        lab.setToolTip(self.LOSS_RATE_TOOLTIP)
+        hbox.addWidget(lab)
+
+        def to_rate(alpha, fsr):
+            return (2.0 / np.pi) * float(alpha) * float(fsr) * 1000.0
+
+        def from_rate(mau, fsr):
+            return (float(mau) / 1000.0) * np.pi / (2.0 * float(fsr))
+
+        def apply(value):
+            self._line_param_changed(
+                line, 'alpha_uniform', from_rate(value, line['FSR']))
+
+        spin = self._physics_spin(
+            to_rate(line.get('alpha_uniform', 0.0), line['FSR']),
+            0.0, 1e9, 3, 1.0, self.LOSS_RATE_TOOLTIP, apply, width=76)
+        hbox.addWidget(spin)
+        hbox.addWidget(QLabel("mau"))
 
     def _add_line_load_row(self, line, row):
         load = line['load']
@@ -5195,6 +5248,24 @@ class PropertiesPanel(QWidget):
                 note.setText(self._comb_note_text(line))
             except RuntimeError:
                 pass           # widget already deleted by a table rebuild
+        self._refresh_mode_index_ranges()
+
+    def _refresh_mode_index_ranges(self):
+        """Re-range every mode-index spinbox against its line's CURRENT N.
+
+        Editing f_max or the end load changes how many modes exist, but the
+        rows are not rebuilt on each keystroke (that would steal focus), so
+        the ranges have to be corrected in place or they stay stuck at the
+        value N had when the row was built.
+        """
+        g = self.graphulator
+        for spin, line in list(getattr(self, '_mode_index_spins', [])):
+            try:
+                n_max = max(1, g.line_resonator_for(line).N)
+                if spin.maximum() != n_max:
+                    spin.setRange(1, n_max)
+            except (ValueError, KeyError, RuntimeError):
+                pass
 
     def _add_pump_row(self, line, row):
         """Three narrow rows rather than one very wide one.
@@ -5272,12 +5343,18 @@ class PropertiesPanel(QWidget):
         nref.setDecimals(0)
         nref.setRange(1, max(1, resonator.N))
         nref.setSingleStep(1)
-        nref.setMaximumWidth(46)
+        # wide enough for the comb it actually indexes: N runs to hundreds
+        nref.setMaximumWidth(70)
         nref.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         nref.setValue(int(pump.get('n_ref', 1)))
         nref.setToolTip(PUMP_NREF_TOOLTIP)
         nref.valueChanged.connect(lambda v: pump_changed('n_ref', int(v)))
         ctl.addWidget(nref)
+        # f_max and the end load both move N, and neither rebuilds this row
+        # (that would steal focus mid-edit) -- so the range is refreshed in
+        # place instead. Without it the box kept whatever N it was BORN
+        # with: raise f_max from 3 to 20 and n still refused to pass 6.
+        self._mode_index_spins.append((nref, line))
         self._pump_partner_short = QLabel()
         self._pump_partner_short.setToolTip(PUMP_NREF_TOOLTIP)
         self._pump_partner_short.setStyleSheet("color: dimgray;")
@@ -5320,15 +5397,20 @@ class PropertiesPanel(QWidget):
             if mod is not None:
                 alpha, over = g.pump_alpha(line)
                 eps, symbol = g.pump_modulation_fraction(line)
+                beta, beta_sym = g.pump_load_modulation(line)
+                # beta is the DEVICE: what stays put when the rate is
+                # re-anchored. Only available with the end load set.
+                tail = (f"   {beta_sym} = {beta * 100:.3g}%"
+                        if beta is not None else "")
                 if over:
                     # alpha >= 1: the drive has outrun the element, and
                     # where that happens is not obvious on a loaded comb
                     mod.setText(f"\u26a0 \N{GREEK SMALL LETTER ALPHA} = "
-                                f"{alpha:.3g} \u2265 1  (unphysical)")
+                                f"{alpha:.3g} \u2265 1  (unphysical){tail}")
                     mod.setStyleSheet("color: #8b0000; font-weight: bold;")
                 else:
                     mod.setText(f"\N{GREEK SMALL LETTER ALPHA} = {alpha:.3g}"
-                                f"   ({symbol} = {eps * 100:.3g}%)")
+                                f"   ({symbol} = {eps * 100:.3g}%){tail}")
                     mod.setStyleSheet("color: dimgray;")
                 if spin is not None:
                     spin.setStyleSheet(
@@ -12783,10 +12865,11 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
     # rather than re-derived per topology -- which keeps this correct for
     # pumped, conjugated and plain lines alike.
 
-    #: Marker palette, cycled per line. These sit on the seaborn plot
-    #: ground (#EAEAF2) and must READ against it -- the first draft used
-    #: near-whites and drew a perfectly invisible overlay.
-    MODE_MARKER_COLORS = ('#3b3b4f', '#9c6b1f', '#1f6f8b', '#8b3a62')
+    #: Marker appearance comes from Settings -> S-Parameter Plot (which
+    #: already carries Reset to Defaults / Save as Defaults), so it is read
+    #: at draw time rather than fixed here. One style for every line: the
+    #: hover names which line a marker belongs to, and per-line colours
+    #: competed with the trace palette for no benefit.
     #: Don't print an index label if its neighbour is closer than this (px).
     MODE_LABEL_MIN_PX = 16.0
 
@@ -12822,7 +12905,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 offset = float(d[0] - slope * f_raw[0])
             # a conjugated comb resonates where its drive frame reaches -f_n
             sense = -1.0 if line.get('conj') else 1.0
-            color = self.MODE_MARKER_COLORS[idx % len(self.MODE_MARKER_COLORS)]
+            color = getattr(config, 'SPARAMS_MODE_MARKER_COLOR', 'black')
             for n in range(1, res.N + 1):
                 f_mode = res.mode_freq(n)
                 x = (sense * f_mode - offset) / slope
@@ -12831,7 +12914,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 out.append({'x': float(x), 'line_label': line['label'],
                             'n': n, 'f_mode': float(f_mode),
                             'is_cutoff': n == res.N,
-                            'conj': bool(line.get('conj')), 'color': color})
+                            'conj': bool(line.get('conj')), 'color': color,
+                            'line': line, 'pumped': bool(line.get('pump'))})
         return out
 
     def _draw_mode_markers(self, axes_list, frequencies, conjugate_mode):
@@ -12867,13 +12951,23 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 groups.append([m])
         self._mode_marker_groups = groups
 
+        base_lw = (config.SPARAMS_PLOT_LINEWIDTH
+                   * getattr(config, 'SPARAMS_MODE_MARKER_LINEWIDTH_SCALE', 0.5))
+        style = getattr(config, 'SPARAMS_MODE_MARKER_STYLE', 'dashed')
+        alpha = getattr(config, 'SPARAMS_MODE_MARKER_ALPHA', 0.8)
+        cutoff_scale = getattr(config, 'SPARAMS_MODE_MARKER_CUTOFF_SCALE', 1.6)
         for ax in axes_list:
             for m in visible:
-                ax.axvline(
+                ln = ax.axvline(
                     m['x'], color=m['color'],
-                    linestyle='-' if m['is_cutoff'] else ':',
-                    linewidth=1.6 if m['is_cutoff'] else 1.0,
-                    alpha=0.85 if m['is_cutoff'] else 0.55, zorder=0)
+                    # the cutoff goes SOLID: beyond it there are no modes,
+                    # so it is a different kind of statement from a mode
+                    linestyle='solid' if m['is_cutoff'] else style,
+                    linewidth=base_lw * (cutoff_scale if m['is_cutoff'] else 1.0),
+                    alpha=alpha, zorder=0)
+                # round caps so a dashed marker reads as annotation
+                ln.set_dash_capstyle('round')
+                ln.set_solid_capstyle('round')
         # Label greedily, left to right: a group too close to the last
         # LABELLED one skips its own number, so crowding costs you that
         # label and not the whole set. Coincident markers share one label,
@@ -12891,7 +12985,9 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             # competes with the title/toolbar and tight_layout can clip it
             ax0.text(x, 0.985, text,
                      transform=ax0.get_xaxis_transform(),
-                     ha='center', va='top', fontsize=7.5,
+                     ha='center', va='top',
+                     fontsize=getattr(config,
+                                      'SPARAMS_MODE_MARKER_LABEL_SIZE', 7.5),
                      fontfamily='sans-serif', color=grp[0]['color'],
                      fontweight='bold' if any(m['is_cutoff'] for m in grp)
                                 else 'normal',
@@ -12906,7 +13002,60 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             return
         self.sparams_canvas.mpl_connect('motion_notify_event',
                                         self._on_mode_marker_hover)
+        self.sparams_canvas.mpl_connect('button_press_event',
+                                        self._on_mode_marker_click)
         self._mode_hover_connected = True
+
+    def _markers_at(self, event):
+        """(markers at the clicked/hovered frequency, ok) within 6 px."""
+        markers = getattr(self, '_mode_markers', None)
+        if not markers or event.inaxes is None or event.xdata is None:
+            return [], False
+        ax = event.inaxes
+        lo, hi = sorted(ax.get_xlim())
+        ppu = max(ax.get_window_extent().width, 1.0) / max(hi - lo, 1e-12)
+        nearest = min(markers, key=lambda m: abs(m['x'] - event.xdata))
+        if abs(nearest['x'] - event.xdata) * ppu > 6.0:
+            return [], False
+        return [m for m in markers
+                if abs(m['x'] - nearest['x']) * ppu < 2.0], True
+
+    def _on_mode_marker_click(self, event):
+        """Click a signal-comb marker to anchor the pump's rate there.
+
+        Closes the loop the overlay exists for: read the index off the
+        plot, then use it. Deliberately inert while the navigation toolbar
+        is in pan/zoom -- a drag is not a choice of reference mode.
+        """
+        if getattr(getattr(self, 'sparams_toolbar', None), 'mode', ''):
+            return
+        here, ok = self._markers_at(event)
+        if not ok:
+            return
+        target = next((m for m in here if not m['conj'] and m['pumped']), None)
+        if target is None:
+            if any(m['conj'] for m in here):
+                self._status_message(
+                    "The idler partner m is DERIVED from f_p and n \u2014 "
+                    "click the signal comb's marker to set n instead.", 7000)
+            elif here:
+                self._status_message(
+                    f"'{here[0]['line_label']}' has no pumped termination "
+                    f"(right-click the line to add one).", 6000)
+            return
+        line = target['line']
+        if int(line['pump'].get('n_ref', 1)) == target['n']:
+            return
+        line['pump']['n_ref'] = int(target['n'])
+        n_ref, m_ref = self._pump_reference_pair(line)
+        self._status_message(
+            f"{line['label']}: pump rate now referred to mode "
+            f"{n_ref} (idler partner m = {m_ref})", 7000)
+        self._invalidate_scattering_data()
+        if hasattr(self, 'properties_panel'):
+            self.properties_panel._update_scattering_ports_table()
+            self.properties_panel._schedule_scattering_update()
+        self._update_plot()
 
     def _on_mode_marker_hover(self, event):
         markers = getattr(self, '_mode_markers', None)
@@ -12916,21 +13065,22 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         ax = event.inaxes
         lo, hi = sorted(ax.get_xlim())
         px_per_unit = max(ax.get_window_extent().width, 1.0) / max(hi - lo, 1e-12)
-        nearest = min(markers, key=lambda m: abs(m['x'] - event.xdata))
-        if abs(nearest['x'] - event.xdata) * px_per_unit > 6.0:
+        here, ok = self._markers_at(event)
+        if not ok:
             self._hide_mode_marker_annotation()
             return
+        nearest = here[0]
         # report EVERY marker at this frequency: where a signal mode and an
         # idler image coincide, naming only one of them is the misleading
         # half of the answer
-        here = [m for m in markers
-                if abs(m['x'] - nearest['x']) * px_per_unit < 2.0]
         lines = []
         for m in here:
             tag = " (idler image)" if m['conj'] else ""
             cutoff = "  \u2014 comb cutoff" if m['is_cutoff'] else ""
             lines.append(f"{m['line_label']}  mode {m['n']}{tag}"
                          f"   f = {m['f_mode']:g}{cutoff}")
+        if any(m['pumped'] and not m['conj'] for m in here):
+            lines.append("click: refer the pump rate to this mode")
         text = "\n".join(lines)
         ann = getattr(self, '_mode_marker_annotation', None)
         if ann is None or ann.axes is not ax:

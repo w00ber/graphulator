@@ -347,6 +347,19 @@ SPARAMS_PLOT_GRID_LINEWIDTH_SCALE = 0.6  # Grid line width relative to talk cont
 SPARAMS_PLOT_BACKGROUND_COLOR = '#EAEAF2'  # Light gray background
 SPARAMS_PLOT_GRID_COLOR = 'white'  # Grid line color
 SPARAMS_PLOT_FIGURE_BACKGROUND = 'white'  # Figure background color
+
+# --- "Mark Line Modes" overlay (transmission-line normal-mode markers) ---
+# Drawn behind the traces at each line's mode frequencies. Defaults: black
+# dashed with round dash caps, half the trace linewidth, so the markers read
+# as annotation rather than as data.
+SPARAMS_MODE_MARKER_COLOR = 'black'
+SPARAMS_MODE_MARKER_STYLE = 'dashed'     # solid | dashed | dotted | dashdot
+SPARAMS_MODE_MARKER_LINEWIDTH_SCALE = 0.5   # x SPARAMS_PLOT_LINEWIDTH
+SPARAMS_MODE_MARKER_ALPHA = 0.8
+#: The comb cutoff (mode N) is drawn solid at this multiple of the above,
+#: because beyond it the model keeps no explicit modes.
+SPARAMS_MODE_MARKER_CUTOFF_SCALE = 1.6
+SPARAMS_MODE_MARKER_LABEL_SIZE = 7.5
 SPARAMS_FONT_SCALE = 0.8  # Master scale for ALL plot fonts (axis labels, ticks, legend, port labels)
 SPARAMS_LEGEND_FONTSIZE_SCALE = 0.8  # Additional legend scale (multiplied with SPARAMS_FONT_SCALE)
 

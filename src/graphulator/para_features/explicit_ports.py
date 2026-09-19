@@ -270,6 +270,49 @@ PUMP_MODULATION_TOOLTIP = (
     "For a modulated capacitor the same expression reads \u03b4C/C_tot.")
 
 
+#: Symbol for the load element's OWN fractional modulation, per type.
+#: Subscript l for "load" -- the element is whatever reactance terminates
+#: the line, not necessarily a junction.
+PUMP_LOAD_MODULATION_SYMBOL = {
+    'inductive': "\u03b4L_\u2113/L_\u2113",
+    'capacitive': "\u03b4C_\u2113/C_\u2113",
+}
+
+PUMP_LOAD_MODULATION_TOOLTIP = (
+    "The LOAD's own fractional modulation \u2014 how hard the terminating "
+    "element itself is driven, as opposed to \u03b1/\u03b5 which are what "
+    "the mode PAIR sees:\n\n"
+    "    \u03b4L_\u2113/L_\u2113 = \u03b5 / \u221a(p_n p_m),"
+    "    p_n = u_n(end)\u00b2/(\u03c9_n\u00b2 C_n L_\u2113)\n\n"
+    "This is the number that does NOT move when the rate is re-anchored to "
+    "another pair: it describes the device. Shown only when the end load is "
+    "set, since it needs L_\u2113 = Ztx/2\u03c0f_Z, and only when the load "
+    "and the modulated element are the same thing (the self-consistent "
+    "configuration \u2014 the pumped element IS the termination).\n\n"
+    "A capacitive load reads \u03b4C_\u2113/C_\u2113 with the capacitive "
+    "participation p_n = C_\u2113 u_n(end)\u00b2/C_n: the same statement "
+    "with C for L.")
+
+
+def pump_load_modulation(resonator, coupling, rate, n_ref, m_ref, end):
+    """The load element's own fractional modulation, or None.
+
+    epsilon is what the PAIR sees; dividing out the pair's participations
+    leaves what the ELEMENT does, which is the quantity invariant under
+    re-anchoring. Needs L_l (or C_l), hence an end load.
+    """
+    load = resonator.load
+    if not load or load['type'] != coupling:
+        return None             # no load, or the pumped element is not it
+    p_n = resonator.load_participation(n_ref, end)
+    p_m = resonator.load_participation(m_ref, end)
+    if not (p_n > 0 and p_m > 0):
+        return None
+    eps = pump_modulation_fraction(rate, resonator.mode_freq(n_ref),
+                                   resonator.mode_freq(m_ref))
+    return eps / np.sqrt(p_n * p_m)
+
+
 def pump_alpha(rate, f_n, f_m):
     """Dimensionless pump strength alpha = epsilon/4 = g/sqrt(w_n w_m).
 
@@ -309,98 +352,57 @@ def pump_modulation_fraction(rate, f_n, f_m):
     return 2.0 * float(rate) / denom
 
 
-def describe_pump_pair(n, m, f_n, f_m, f_p):
-    """One line saying which pair the rate is anchored to and how far that
-    pair is from the pump's resonance condition.
+def pump_partners(resonator, n_ref, f_p):
+    """Every resonant partner of mode n under ONE pump, by family.
 
-    Amplification pairs satisfy f_n + f_m = f_p (the twin's +m member sits
-    at f_p - f_n); when f_p < f_n the nearest partner is a conversion pair,
-    f_n - f_m = f_p. The residual is what the pump has to bridge.
+    In the two-cluster picture the twin's +m member sits at f_p - f_m and
+    its -m member at f_p + f_m, so a single pump frequency satisfies THREE
+    conditions, not one:
+
+        f_n + f_m = f_p     amplification   (two-mode squeezing)
+        f_m - f_n = f_p     up-conversion   (always has a target)
+        f_n - f_m = f_p     down-conversion (only when f_n > f_p)
+
+    Reporting only the first -- which the panel used to do -- hides the
+    conversion processes that the same pump drives regardless, and those
+    are exactly what is missed when someone means to amplify (sec. 7.6).
+
+    Returns [{'family', 'm', 'f_m', 'target', 'detune', 'in_comb'}], the
+    entries whose target frequency is positive, ordered as above.
     """
-    if f_p - f_n >= 0:
-        off = f_n + f_m - f_p
-        kind = "degenerate (n = m)" if m == n else f"idler partner m = {m}"
-        cond = f"f_n + f_m \u2212 f_p = {f_n:g} + {f_m:g} \u2212 {f_p:g} = {off:+.4g}"
-        tag = "amplification pair"
-    else:
-        off = f_n - f_m - f_p
-        kind = f"conversion partner m = {m}"
-        cond = f"f_n \u2212 f_m \u2212 f_p = {f_n:g} \u2212 {f_m:g} \u2212 {f_p:g} = {off:+.4g}"
-        tag = "conversion pair"
-    onres = "on resonance" if abs(off) < 1e-9 else "off resonance"
-    return f"{kind}: {tag}, {cond} ({onres})"
+    f_n = resonator.mode_freq(n_ref)
+    out = []
+    for family, target in (('amplification', f_p - f_n),
+                           ('up-conversion', f_n + f_p),
+                           ('down-conversion', f_n - f_p)):
+        if target <= 0:
+            continue                    # no such pairing for this n and f_p
+        m = resonator.nearest_harmonic(target)
+        f_m = resonator.mode_freq(m)
+        out.append({'family': family, 'm': int(m), 'f_m': float(f_m),
+                    'target': float(target), 'detune': float(f_m - target),
+                    'in_comb': abs(f_m - target) <= 1e-9})
+    return out
 
 
-def _color_button(initial, parent=None):
-    """Small swatch button opening a QColorDialog; .color() reads it."""
-    from PySide6.QtWidgets import QPushButton, QColorDialog
-    from PySide6.QtGui import QColor
-    btn = QPushButton(parent)
-    btn.setFixedSize(46, 22)
+def pump_pair_family(n, m, f_n, f_m, f_p):
+    """Which condition the anchored pair (n, m) satisfies, and its residual.
 
-    def _apply(name):
-        btn._color = name
-        btn.setStyleSheet(
-            f"background-color: {name}; border: 1px solid #888;")
-
-    def _pick():
-        col = QColorDialog.getColor(QColor(btn._color), btn.window())
-        if col.isValid():
-            _apply(col.name())
-
-    btn.clicked.connect(_pick)
-    btn.color = lambda: btn._color
-    _apply(initial)
-    return btn
-
-
-def _mult_spin(value, tooltip=''):
-    box = QDoubleSpinBox()
-    box.setRange(GLYPH_SIZE_MIN, GLYPH_SIZE_MAX)
-    box.setDecimals(2)
-    box.setSingleStep(0.1)
-    box.setValue(value)
-    if tooltip:
-        box.setToolTip(tooltip)
-    return box
-
-
-def _add_appearance_rows(form, obj, default_lw, default_fill):
-    """Length/height/stroke/color rows shared by the port & line dialogs.
-    Returns the widget dict; read back with _appearance_result."""
-    widgets = {}
-    widgets['w_mult'] = _mult_spin(obj.get('w_mult', 1.0),
-                                   "Stretch the glyph length "
-                                   "(× default; "
-                                   "arrow keys ←/"
-                                   "→ when selected)")
-    form.addRow("Length ×:", widgets['w_mult'])
-    widgets['h_mult'] = _mult_spin(obj.get('h_mult', 1.0),
-                                   "Stretch the glyph height "
-                                   "(× default; "
-                                   "arrow keys ↑/"
-                                   "↓ when selected)")
-    form.addRow("Height ×:", widgets['h_mult'])
-    lw = QDoubleSpinBox()
-    lw.setRange(0.25, 8.0)
-    lw.setDecimals(2)
-    lw.setSingleStep(0.25)
-    lw.setValue(float(obj.get('linewidth', default_lw)))
-    widgets['linewidth'] = lw
-    form.addRow("Stroke width:", lw)
-    widgets['color'] = _color_button(obj.get('color', 'black'))
-    form.addRow("Stroke color:", widgets['color'])
-    widgets['fill'] = _color_button(obj.get('fill', default_fill))
-    form.addRow("Fill color:", widgets['fill'])
-    return widgets
-
-
-def _appearance_result(widgets):
-    return {'w_mult': widgets['w_mult'].value(),
-            'h_mult': widgets['h_mult'].value(),
-            'linewidth': widgets['linewidth'].value(),
-            'color': widgets['color'].color(),
-            'fill': widgets['fill'].color()}
+    Returns (family, condition string, detuning). The family is whichever
+    of the three conditions the pair comes closest to.
+    """
+    candidates = (
+        ('amplification', f_n + f_m - f_p,
+         f"f_n + f_m \u2212 f_p = {f_n:g} + {f_m:g} \u2212 {f_p:g}"),
+        ('up-conversion', f_m - f_n - f_p,
+         f"f_m \u2212 f_n \u2212 f_p = {f_m:g} \u2212 {f_n:g} \u2212 {f_p:g}"),
+        ('down-conversion', f_n - f_m - f_p,
+         f"f_n \u2212 f_m \u2212 f_p = {f_n:g} \u2212 {f_m:g} \u2212 {f_p:g}"),
+    )
+    family, off, cond = min(candidates, key=lambda c: abs(c[1]))
+    if family == 'amplification' and m == n:
+        family = 'amplification, degenerate (n = m)'
+    return family, f"{cond} = {off:+.4g}", off
 
 
 class PortInputDialog(QDialog):
@@ -988,8 +990,14 @@ class PumpInputDialog(QDialog):
         f_partner = f_p - self._mode_freq(n)
         m = int(min(range(1, max(1, self.N) + 1),
                     key=lambda k: abs(self._mode_freq(k) - abs(f_partner))))
-        self.partner_label.setText(describe_pump_pair(
-            n, m, self._mode_freq(n), self._mode_freq(m), f_p))
+        family, cond, off = pump_pair_family(
+            n, m, self._mode_freq(n), self._mode_freq(m), f_p)
+        onres = "on resonance" if abs(off) < 1e-9 else "off resonance"
+        extra = [p['family'] for p in pump_partners(self._probe(), n, f_p)
+                 if p['m'] != m]
+        self.partner_label.setText(
+            f"m = {m}: {family}, {cond} ({onres})"
+            + (f"; also drives {', '.join(extra)}" if extra else ""))
         self.partner_label.setToolTip(PUMP_NREF_TOOLTIP)
 
     def get_result(self):
@@ -2593,6 +2601,18 @@ class ExplicitPortsMixin:
             what, label, n, resonator.N)
         return int(min(max(n, 1), resonator.N))
 
+    def pump_load_modulation(self, line):
+        """(beta, symbol) for the load element itself, or (None, None)."""
+        pump = line['pump']
+        res = self.line_resonator_for(line)
+        coupling = pump.get('coupling', 'inductive')
+        n_ref, m_ref = self._pump_reference_pair(line)
+        beta = pump_load_modulation(res, coupling, float(pump['rate']),
+                                    n_ref, m_ref, pump['end'])
+        if beta is None:
+            return None, None
+        return beta, PUMP_LOAD_MODULATION_SYMBOL.get(coupling, "\u03b4X/X")
+
     def pump_alpha(self, line):
         """(alpha, over_limit) for a line's pump at its reference pair.
 
@@ -2624,12 +2644,34 @@ class ExplicitPortsMixin:
         return eps, symbol
 
     def pump_pair_description(self, line):
-        """describe_pump_pair for a line's current pump (see that function)."""
+        """What the anchored pair is, and what ELSE this pump drives.
+
+        One pump satisfies three resonance conditions (see pump_partners),
+        so naming only the amplification partner understates the device --
+        and understating the conversion the pump also drives is the error
+        the triple-line bus exists to prevent.
+        """
         pump = line['pump']
         res = self.line_resonator_for(line)
+        f_p = float(pump['f_p'])
         n_ref, m_ref = self._pump_reference_pair(line)
-        return describe_pump_pair(n_ref, m_ref, res.mode_freq(n_ref),
-                                  res.mode_freq(m_ref), float(pump['f_p']))
+        f_n, f_m = res.mode_freq(n_ref), res.mode_freq(m_ref)
+        family, cond, off = pump_pair_family(n_ref, m_ref, f_n, f_m, f_p)
+        onres = "on resonance" if abs(off) < 1e-9 else "off resonance"
+        head = (f"rate refers to (n={n_ref}, m={m_ref}): {family}, "
+                f"{cond} ({onres})")
+
+        others = []
+        for p in pump_partners(res, n_ref, f_p):
+            if p['m'] == m_ref and p['family'] in family:
+                continue                       # that is the anchored pair
+            note = ("on resonance" if p['in_comb']
+                    else f"nearest mode, off by {p['detune']:+.4g}")
+            others.append(f"{p['family']} with m = {p['m']} "
+                          f"(f = {p['f_m']:g}, {note})")
+        if others:
+            head += "\nsame pump also drives: " + ";  ".join(others)
+        return head
 
     def _pump_reference_pair(self, line):
         """(n_ref, m_ref): the signal mode the rate is defined at and its
