@@ -2680,10 +2680,36 @@ class ExplicitPortsMixin:
     def _gui_pump_edges(self, line_ids=None):
         """Synthesized (edge_dict, params) pairs for every pump bus.
 
-        One drawn bus stands for the rank-one block: rate_nm = rate * w_n *
-        w_m with w the end profile relative to the reference pair, phase =
-        pump phase + the sign pattern u_n(end) u_m(end). The extractor sees
-        ordinary pumped edges from the signal comb into the conjugate comb.
+        One drawn bus stands for the whole rank-one block. The user's number
+        is the rate AT THE REFERENCE PAIR (n_ref, m_ref): tap_couplings
+        normalizes each comb's profile to weight 1 there, so
+
+            rate_nm = rate * w_n * w_m,   w_n_ref = w_m_ref = 1
+                   => rate at (n_ref, m_ref) IS the entered rate, exactly.
+
+        The profile is a GEOMETRIC MEAN of per-mode participations. For a
+        modulated element at one end,
+
+            g_nm = dK_nm / (4 sqrt(w_n C_n w_m C_m)),
+            dK_nm = d(1/L) u_n(end) u_m(end)          (inductive)
+
+        so with p_n = u_n(end)^2 / (w_n C_n) the participation of mode n in
+        the element,
+
+            rate_nm / rate_ref = sqrt[ (p_n p_m) / (p_n_ref p_m_ref) ].
+
+        On the open-open comb p_n ~ 1/n (inductive) or ~ w_n (capacitive),
+        giving the readable rate * sqrt(n_ref m_ref / (n m)) and its inverse.
+        On a loaded line the p_n use the dispersed C_n, which is why the
+        general form above is what tap_couplings evaluates.
+
+        NOTE the anchor is a PAIR, so the invariant under re-anchoring is the
+        device (d(1/L)), not the number: changing n_ref with the rate box
+        untouched rescales the whole block, i.e. re-specifies the physical
+        modulation depth.
+
+        phase = pump phase + the sign pattern u_n(end) u_m(end). The
+        extractor sees ordinary pumped edges from the comb into its twin.
         """
         out = []
         for line in self.line_resonators:
