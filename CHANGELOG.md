@@ -153,6 +153,30 @@
   use it, hand-drawn edges keep the heuristic.
 
 ### Added (continued)
+  - **Pump strength α** (PRX Quantum convention, α = ε/4 = g/√(ω_nω_m))
+    reported beside the rate, with δL/L_tot alongside. **α ≥ 1 is flagged**
+    — the rate box takes a translucent red wash and the label turns dark
+    red and says "unphysical" — because where that limit sits is not
+    obvious on a loaded comb, whose participations move with the dispersed
+    roots. The line's uniform attenuation is relabelled **α_loss**: two
+    different αs in adjacent rows is exactly the collision that gets
+    misread.
+### Fixed (continued)
+  - **Mode markers were invisible.** The palette opened on `#e8e8e8`,
+    against a `#EAEAF2` plot ground — the overlay drew, and could not be
+    seen. Darker, contrast-checked colours now.
+  - **Index labels never appeared.** A signal mode and a twin's idler image
+    routinely coincide (f_n and f_p − f_m), so the all-or-nothing density
+    test saw a zero gap and suppressed *every* label. Coincident markers
+    now share one chip (`1/2*`, conjugate starred) and thinning is greedy
+    left-to-right, so crowding costs that one label rather than the set.
+    Hover names every mode at a shared frequency, not just one of them.
+  - **Ports & Lines no longer needs horizontal scrolling.** The pump was
+    one wide strip of header + four spinboxes + the full pair description,
+    pushing the pane's minimum past ~1400 px and stopping the plot being
+    kept at half the window. Split into a header (carrying α), an indented
+    control strip, and a word-wrapped description: minimum width now
+    639 px, measured in the tests.
   - **Mode-frequency overlay on the S-parameter plot** (*Mark Line Modes*,
     beside *Conjugate Freqs*). Marks every transmission line's normal-mode
     frequencies — the **loaded** ones when an end load is set — labels them

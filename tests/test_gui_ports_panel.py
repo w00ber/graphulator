@@ -235,11 +235,73 @@ def test_pump_partner_label_explains_the_pair(para):
 
 
 def test_pump_row_labels_units_and_shows_the_modulation_depth(para):
+    """Every pump box says what it is in. The brackets were dropped from
+    [mau]/[au] to buy horizontal space, but the units themselves stay."""
     from PySide6.QtWidgets import QLabel
     win, line = _pumped_scene(para)
     panel = win.properties_panel
     texts = [w.text() for w in panel.ports_param_widget.findChildren(QLabel)]
-    assert '[mau]' in texts, texts          # the rate's units, app convention
-    assert '[au]' in texts                  # f_p
+    assert 'mau' in texts, texts            # the rate
+    assert 'au' in texts                    # f_p
+    assert '\N{DEGREE SIGN}' in texts      # the phase
     eps, symbol = win.pump_modulation_fraction(line)
     assert any(symbol in t and '%' in t for t in texts), texts
+
+
+def test_pump_section_fits_without_horizontal_scrolling(para):
+    """The pane must follow the splitter so the plot can keep half the
+    window. One wide strip of header + four spinboxes + the full pair
+    description pushed the minimum past 1400 px and forced a horizontal
+    scrollbar; the three-row split has to stay well inside a half-window
+    pane."""
+    from PySide6.QtWidgets import QApplication
+    win, line = _pumped_scene(para)
+    win.resize(1800, 1100)
+    win.show()
+    QApplication.processEvents()
+    panel = win.properties_panel
+    need = panel.ports_param_widget.minimumSizeHint().width()
+    assert need <= 700, need
+    # and the wrapped description really does wrap rather than widen
+    from PySide6.QtWidgets import QLabel
+    desc = panel._pump_partner_label
+    assert isinstance(desc, QLabel) and desc.wordWrap()
+    assert desc.minimumSizeHint().width() < 400, desc.minimumSizeHint().width()
+
+
+def test_alpha_is_reported_and_flagged_past_its_limit(para):
+    from PySide6.QtWidgets import QLabel
+    from graphulator.para_features.explicit_ports import PUMP_ALPHA_LIMIT
+    win, line = _pumped_scene(para)
+    panel = win.properties_panel
+
+    alpha, over = win.pump_alpha(line)
+    assert not over and alpha < PUMP_ALPHA_LIMIT
+    assert '\N{GREEK SMALL LETTER ALPHA} =' in panel._pump_modulation_label.text()
+    assert panel._pump_rate_spin.styleSheet() == ''
+
+    # drive it past the limit: the label turns dark red and the rate box
+    # takes a translucent red wash
+    res = win.line_resonator_for(line)
+    n_ref, m_ref = win._pump_reference_pair(line)
+    over_rate = 2.5 * np.sqrt(res.mode_freq(n_ref) * res.mode_freq(m_ref))
+    panel._pump_rate_spin.setValue(over_rate * 1000.0)
+    alpha, over = win.pump_alpha(line)
+    assert over and alpha >= PUMP_ALPHA_LIMIT
+    text = panel._pump_modulation_label.text()
+    assert '\N{WARNING SIGN}' in text and 'unphysical' in text
+    assert '8b0000' in panel._pump_modulation_label.styleSheet()
+    assert 'rgba(200, 0, 0, 0.25)' in panel._pump_rate_spin.styleSheet()
+
+    # and it clears again when brought back under
+    panel._pump_rate_spin.setValue(50.0)
+    assert panel._pump_rate_spin.styleSheet() == ''
+
+
+def test_line_attenuation_is_labelled_alpha_loss(para):
+    """Two different alphas in adjacent rows would be misread."""
+    from PySide6.QtWidgets import QLabel
+    win, line = _pumped_scene(para)
+    panel = win.properties_panel
+    texts = [w.text() for w in panel.ports_param_widget.findChildren(QLabel)]
+    assert '\N{GREEK SMALL LETTER ALPHA}_loss' in texts, texts

@@ -229,6 +229,27 @@ PUMP_MODULATION_SYMBOL = {
     'capacitive': "\u03b4C/C_tot",
 }
 
+#: Dimensionless pump strength alpha = epsilon/4 = g/sqrt(w_n w_m), the
+#: PRX Quantum convention. Physically it must stay below 1.
+PUMP_ALPHA_LIMIT = 1.0
+
+PUMP_ALPHA_TOOLTIP = (
+    "\u03b1: the dimensionless pump strength at the reference pair,\n\n"
+    "    \u03b1 = g_nm/\u221a(\u03c9_n\u03c9_m) = \u03b5/4,"
+    "    \u03b5 = \u03b4L_J/L_tot = \u03b2\u221a(p_n p_m)\n\n"
+    "with \u03b2 = \u03b4L_J/L_J the element's own fractional modulation "
+    "and p_n = u_n(end)\u00b2/(\u03c9_n\u00b2 C_n L_J) mode n's "
+    "participation in it. In the app's linear units this is simply "
+    "\u03b1 = rate/(2\u221a(f_n f_m)).\n\n"
+    "\u03b1 \u2265 1 IS UNPHYSICAL and is flagged: the modulation has run "
+    "past what the element can supply, and the linearized coupled-mode "
+    "model no longer describes the device. Where that limit sits in "
+    "frequency is not obvious on a loaded comb \u2014 the participations "
+    "move with the dispersed roots \u2014 which is why it is reported "
+    "rather than left to be inferred.\n\n"
+    "Pair-referred like the rate itself. A modulated capacitor reads "
+    "\u03b5 = \u03b4C/C_tot.")
+
 PUMP_MODULATION_TOOLTIP = (
     "Effective modulation fraction seen by the reference pair: the "
     "participation-weighted depth\n\n"
@@ -247,6 +268,15 @@ PUMP_MODULATION_TOOLTIP = (
     "invariant, and needs L_J \u2014 known only when the end load is set "
     "(f_Z).\n\n"
     "For a modulated capacitor the same expression reads \u03b4C/C_tot.")
+
+
+def pump_alpha(rate, f_n, f_m):
+    """Dimensionless pump strength alpha = epsilon/4 = g/sqrt(w_n w_m).
+
+    The PRX Quantum convention. See pump_modulation_fraction for epsilon;
+    alpha must stay below PUMP_ALPHA_LIMIT to be physical.
+    """
+    return pump_modulation_fraction(rate, f_n, f_m) / 4.0
 
 
 def pump_modulation_fraction(rate, f_n, f_m):
@@ -2562,6 +2592,17 @@ class ExplicitPortsMixin:
             "clamping. Raise f_max or re-enter the reference mode.",
             what, label, n, resonator.N)
         return int(min(max(n, 1), resonator.N))
+
+    def pump_alpha(self, line):
+        """(alpha, over_limit) for a line's pump at its reference pair.
+
+        alpha = epsilon/4 is the PRXQ dimensionless pump strength; at or
+        above PUMP_ALPHA_LIMIT the drive has outrun the element and the
+        linearized model does not describe it, so callers flag it.
+        """
+        eps, _ = self.pump_modulation_fraction(line)
+        alpha = eps / 4.0
+        return alpha, alpha >= PUMP_ALPHA_LIMIT
 
     def pump_modulation_fraction(self, line):
         """(epsilon, symbol) for a line's pump at its reference pair.
