@@ -256,16 +256,43 @@ def test_pumped_line_is_one_component_with_consistent_frames(para):
 
 
 def test_pumped_line_amplifies_and_is_pseudo_unitary(para):
-    """Lossless: |S_ss|^2 - |S_is|^2 = 1 (Manley-Rowe / symplectic), with
-    real gain at the degenerate point."""
+    """Lossless: |S_ss|^2 - |S_is|^2 = 1 (Manley-Rowe / symplectic) to the
+    order of the two-rung truncation, with real gain at the degenerate point.
+
+    The residual is NOT machine precision and must not be pinned there. The
+    two-port relation assumes the idler port is the pure conjugate partner
+    of the signal port; on a +-n comb each port aggregates BOTH sigma_z
+    sectors (the +m members and the counter-rotating -m members), so it
+    holds only up to the rungs this truncation drops, at omega +- 2 omega_p
+    -- O(delta^2) (docs/pumped_line_termination.md sec. 4).
+
+    So the gate is the SCALING, which is the sharper statement: the residual
+    must fall as rate^2. Keying the coupling sector on the raw cluster flag
+    instead made the relation exact to 1e-15 -- exactly symplectic in the
+    CLUSTER metric, which is the wrong metric -- while sitting 2.1e-3 from
+    the harmonic-balance oracle; the sigma_z sector is 2.6e-4 from it
+    (docs/pump_sector_rule.md).
+    """
     gp, win, config = para
     build_pumped_line(win, f_p=9.0, rate=0.05, n_ref=3)
     S, labels, _ = live_S(win, 3.5, 5.5, 81)
     s, i = labels.index('TL1'), labels.index('TL1*')
     gain = np.abs(S[:, s, s]) ** 2
     conv = np.abs(S[:, i, s]) ** 2
-    assert np.max(np.abs(gain - conv - 1.0)) < 1e-12
+    assert np.max(np.abs(gain - conv - 1.0)) < 5e-3
     assert gain.max() > 1.005 and conv.max() > 0.005
+
+    # second order in the drive, measured: halving the rate quarters it
+    resid = []
+    for r in (0.0125, 0.025, 0.05):
+        win.line_resonators[0]['pump']['rate'] = r
+        win._invalidate_scattering_data()
+        Sr, _, _ = live_S(win, 3.5, 5.5, 81)
+        resid.append(np.max(np.abs(np.abs(Sr[:, s, s]) ** 2
+                                   - np.abs(Sr[:, i, s]) ** 2 - 1.0)))
+    for a, b in zip(resid, resid[1:]):
+        assert 3.6 < b / a < 4.4, resid
+
     # the roles are symmetric: pumping harder gives more gain
     win.line_resonators[0]['pump']['rate'] = 0.15
     win._invalidate_scattering_data()
@@ -399,6 +426,58 @@ def test_pump_rate_normalization_matches_oracle(para):
                                                        fs[-1], len(fs)))
     G_2 = np.abs(res2['S'][:, s, s]) ** 2
     assert np.max(np.abs(G_2 - G_o)) / G_o.max() > 0.1
+
+
+def test_conversion_band_matches_oracle(para):
+    """The same oracle, driven ABOVE the pump so the idler is negative.
+
+    With w_p = 6 pi and the signal on mode 7, w_i = w_p - w_s = -pi: the
+    classical idler comes out negative and the process is pure DOWN-
+    conversion, 7 -> 1. The circuit cannot amplify there and the harmonic
+    balance says so, |S_ss|^2 + (w_s/|w_i|)|S_is|^2 = 1 to 1e-15.
+
+    This is the case that keying the coupling sector on the raw cluster
+    flag got wrong: every cross-cluster edge came out anti-Hermitian, so
+    the graph returned max|S_ss|^2 = 4.58 against the circuit's 0.999 --
+    a parametric amplifier built out of a beam splitter. The sigma_z
+    sector (docs/pump_sector_rule.md) is what this gates.
+    """
+    import sys
+    sys.path.insert(0, os.path.join(HERE))
+    import cmtline_core as core
+    from graphulator.graphulator_para import _compute_sparams_job
+    gp, win, config = para
+
+    N, LJ, Cd, Z0, dK = 12, 1e4, 1e-8, 10.0, 1.0
+    Cm, Km, Rm, P, f = core.build_galvanic(N, LJ, Cd, ell=1.0, Ztx=1.0, v=1.0)
+    n_sig, m_idl = 7, 1
+    wp = 6 * np.pi
+    ws = np.linspace(6.8 * np.pi, 7.2 * np.pi, 81)
+    Sss_o, Sis_o = core.hb_signal_idler(ws, wp, dK * LJ, Cm, Km, Rm, P, f, Z0)
+    wi = wp - ws
+    assert np.all(wi < 0)                       # the conversion band
+    G_o = np.abs(Sss_o) ** 2
+    C_o = (ws / np.abs(wi)) * np.abs(Sis_o) ** 2
+    assert G_o.max() < 1.0                      # the circuit cannot amplify
+    assert np.max(np.abs(G_o + C_o - 1.0)) < 1e-12      # and conserves flux
+    assert C_o.max() > 0.5                      # with a real conversion peak
+
+    fs = ws / np.pi
+    line = win.add_line_resonator(label='TL', pos=(0, 0), FSR=1.0, Ztx=1.0,
+                                  f_max=N + 0.4, port_end='xL', Z0_port=Z0)
+    g = dK / (4 * np.sqrt((n_sig * np.pi * 0.5) * (m_idl * np.pi * 0.5)))
+    win.set_line_pump(line, 'x0', f_p=6.0, rate=2 * g / np.pi, n_ref=n_sig)
+    comps = win._find_connected_components()
+    res = _compute_sparams_job(win._build_sparams_job(comps[0], fs, fs[0],
+                                                      fs[-1], len(fs)))
+    lab = [res['port_dict'][p]['label'] for p in res['port_ids']]
+    s, i = lab.index('TL'), lab.index('TL*')
+    G_g = np.abs(res['S'][:, s, s]) ** 2
+    C_g = np.abs(res['S'][:, i, s]) ** 2
+
+    assert G_g.max() <= 1.0 + 1e-3, G_g.max()   # no gain, which is the point
+    assert np.max(np.abs(G_g - G_o)) / G_o.max() < 5e-2
+    assert np.max(np.abs(C_g - C_o)) / C_o.max() < 5e-2
 
 
 # ---------------------------------------------------------------------------
