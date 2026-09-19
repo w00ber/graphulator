@@ -651,6 +651,26 @@ class LineResonator:
         line_share = self.C_line * (0.5 + np.sin(2.0 * th) / (4.0 * th))
         return float(line_share + self.C_load * np.cos(th) ** 2)
 
+    def load_participation(self, n, end) -> float:
+        """p_n: mode n's share of its own energy stored in the END LOAD.
+
+        Inductive load: p_n = u_n(end)^2/(w_n^2 C_n L_l), the ratio of the
+        element's inductive energy to the mode's total inductive energy,
+        with L_l = Ztx/(2 pi f_Z). Capacitive load: the kinetic counterpart
+        p_n = C_l u_n(end)^2/C_n, the same statement with C for L.
+
+        0 when there is no load, or when `end` is not the loaded one -- a
+        mode participates in an element only where that element is.
+        """
+        if self.load is None or self.load['end'] != end:
+            return 0.0
+        u = self.mode_profile(n, end)
+        if self.load['type'] == 'capacitive':
+            return float(self.C_load * u ** 2 / self.mode_mass(n))
+        L_load = self.Ztx / (2.0 * np.pi * self.load['f_Z'])
+        w_n = 2.0 * np.pi * self.mode_freq(n)
+        return float(u ** 2 / (w_n ** 2 * self.mode_mass(n) * L_load))
+
     def mode_gamma(self, n) -> float:
         """gamma_n = 1/(2 pi Z0 C_n): the port rate for a UNIT profile (7.4).
 

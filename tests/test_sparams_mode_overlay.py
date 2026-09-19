@@ -230,3 +230,47 @@ def test_crowding_costs_only_the_crowded_label(para):
     xs = [x for x, _ in labels]
     assert all((b - a) * ppu >= win.MODE_LABEL_MIN_PX - 1e-6
                for a, b in zip(xs, xs[1:]))
+
+
+def test_marker_style_comes_from_settings(para):
+    """Appearance is config-driven, so it inherits the Settings dialog's
+    Reset to Defaults / Save as Defaults rather than needing its own."""
+    from graphulator import graphulator_para_config as config
+    win, line = _terminated_line(para)
+    win.sparams_mark_modes.setChecked(True)
+    _plot(win, 0.3, 9.5)
+    ax = win.sparams_canvas.ax
+    xs = {round(m['x'], 6) for m in win._mode_markers}
+    marks = [ln for ln in ax.lines
+             if len(set(np.round(ln.get_xdata(), 6))) == 1
+             and round(float(ln.get_xdata()[0]), 6) in xs]
+    assert marks, "no marker lines found"
+    want_lw = (config.SPARAMS_PLOT_LINEWIDTH
+               * config.SPARAMS_MODE_MARKER_LINEWIDTH_SCALE)
+    import matplotlib.colors as mcolors
+    black = mcolors.to_rgba(config.SPARAMS_MODE_MARKER_COLOR)
+    for ln in marks:
+        assert mcolors.to_rgba(ln.get_color()) == black
+        assert ln.get_dash_capstyle() == 'round'
+        assert abs(ln.get_linewidth() - want_lw) < 1e-9 or ln.get_linestyle() == '-'
+    # dashed for a mode, SOLID for the cutoff (a different statement)
+    styles = {ln.get_linestyle() for ln in marks}
+    assert '-' in styles and len(styles) > 1, styles
+
+
+def test_marker_style_is_listed_in_the_settings_table():
+    from graphulator.graphulator_para import SETTINGS_PARAMS
+    names = {p[0] for p in SETTINGS_PARAMS['S-Parameter Plot']}
+    assert {'SPARAMS_MODE_MARKER_COLOR', 'SPARAMS_MODE_MARKER_STYLE',
+            'SPARAMS_MODE_MARKER_LINEWIDTH_SCALE'} <= names
+
+
+def test_settings_dialog_offers_reset_and_save_defaults(para):
+    """The mechanic the marker style inherits."""
+    from PySide6.QtWidgets import QPushButton
+    gp, win, config = para
+    from graphulator.para_ui.settings_dialog import SettingsDialog
+    dlg = SettingsDialog(win)
+    labels = {b.text() for b in dlg.findChildren(QPushButton)}
+    assert {'Reset to Defaults', 'Save as Defaults', 'Apply'} <= labels, labels
+    dlg.deleteLater()

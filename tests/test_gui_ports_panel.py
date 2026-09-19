@@ -215,7 +215,7 @@ def test_pump_partner_label_explains_the_pair(para):
     """The reference pair is a DEFINITION point for the rate, not a
     selector; the label must say which pair, at what frequencies, and how
     far it is from the pump's resonance condition."""
-    from graphulator.para_features.explicit_ports import describe_pump_pair
+    from graphulator.para_features.explicit_ports import pump_pair_family
     gp, win, config = para
     config.EXPLICIT_PORTS_MODE = True
     win._apply_explicit_ports_mode()
@@ -224,14 +224,18 @@ def test_pump_partner_label_explains_the_pair(para):
     win.set_line_pump(line, 'x0', f_p=4.5, rate=0.05, n_ref=4,
                       twin_pos=(0.0, -2.0))
     text = win.pump_pair_description(line)
-    assert 'm = 5' in text and 'amplification' in text and 'on resonance' in text
+    assert '(n=4, m=5)' in text and 'amplification' in text
+    assert 'on resonance' in text
     assert '2 + 2.5' in text.replace('\N{MINUS SIGN}', '-')
     # a pump below the reference mode names the CONVERSION partner
     line['pump']['f_p'] = 1.0
     text = win.pump_pair_description(line)
-    assert 'conversion' in text and 'm = 2' in text        # 2.0 - 1.0 = 1.0
+    # f_p below f_n: the anchored pair is DOWN-conversion, and the same
+    # pump still drives up-conversion -- both must be named
+    assert 'down-conversion' in text and 'm=2' in text     # 2.0 - 1.0 = 1.0
+    assert 'up-conversion' in text
     # degenerate case
-    assert 'degenerate' in describe_pump_pair(3, 3, 1.5, 1.5, 3.0)
+    assert 'degenerate' in pump_pair_family(3, 3, 1.5, 1.5, 3.0)[0]
 
 
 def test_pump_row_labels_units_and_shows_the_modulation_depth(para):
@@ -298,10 +302,98 @@ def test_alpha_is_reported_and_flagged_past_its_limit(para):
     assert panel._pump_rate_spin.styleSheet() == ''
 
 
-def test_line_attenuation_is_labelled_alpha_loss(para):
-    """Two different alphas in adjacent rows would be misread."""
+def test_line_loss_no_longer_collides_with_the_pump_alpha(para):
+    """The line's attenuation is now entered as a RATE (B_int [mau]), so
+    the only alpha on screen is the pump strength."""
     from PySide6.QtWidgets import QLabel
     win, line = _pumped_scene(para)
     panel = win.properties_panel
     texts = [w.text() for w in panel.ports_param_widget.findChildren(QLabel)]
-    assert '\N{GREEK SMALL LETTER ALPHA}_loss' in texts, texts
+    assert 'B_int' in texts, texts
+    assert '\N{GREEK SMALL LETTER ALPHA}_loss' not in texts
+
+
+def test_mode_index_range_follows_f_max(para):
+    """Raise f_max and the n spinbox must follow. It used to keep whatever
+    N it was BORN with -- a line at f_max = 20 (N = 40) still refused to
+    let n past 6, because the row is not rebuilt on every keystroke."""
+    from PySide6.QtWidgets import QDoubleSpinBox
+    win, line = _pumped_scene(para)
+    panel = win.properties_panel
+    nref = next(s for s, l in panel._mode_index_spins if l is line)
+    assert nref.maximum() == win.line_resonator_for(line).N
+
+    fmax = _spin_with_tip(panel, "Comb extent")
+    fmax.setValue(20.0)
+    n_now = win.line_resonator_for(line).N
+    assert n_now > 6
+    assert nref.maximum() == n_now, (nref.maximum(), n_now)
+    nref.setValue(n_now)                       # reachable, not clamped
+    assert line['pump']['n_ref'] == n_now
+
+    # and shrinking f_max pulls the ceiling back down
+    fmax.setValue(6.0)
+    assert nref.maximum() == win.line_resonator_for(line).N
+
+
+def test_description_covers_conversion_as_well_as_amplification(para):
+    """One pump satisfies three conditions; reporting only the
+    amplification partner understates the device."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=0.5,
+                                  Ztx=65.0, f_max=20.0, port_end='xL')
+    win.set_line_pump(line, 'x0', f_p=12.0, rate=0.05, n_ref=6)
+    text = win.pump_pair_description(line)
+    # anchored pair: amplification, 3 + 9 = 12
+    assert 'n=6, m=18' in text and 'amplification' in text
+    # and the up-conversion the same pump drives, at m = 30 (15 - 3 = 12)
+    assert 'up-conversion' in text and 'm = 30' in text, text
+
+    # below the fundamental there is no amplification pair at all, and the
+    # description must not pretend otherwise
+    line['pump']['f_p'] = 0.25
+    line['pump']['n_ref'] = 6
+    text = win.pump_pair_description(line)
+    assert 'up-conversion' in text and 'down-conversion' in text, text
+
+
+def test_pump_partners_enumerates_the_three_conditions():
+    from graphulator import autograph as ag
+    from graphulator.para_features.explicit_ports import pump_partners
+    r = ag.LineResonator(line_id='TL', FSR=0.5, Ztx=65.0, f_max=20.0,
+                         port_end='xL')
+    fams = {p['family']: p for p in pump_partners(r, 6, 12.0)}
+    assert set(fams) == {'amplification', 'up-conversion'}
+    assert fams['amplification']['m'] == 18 and fams['amplification']['in_comb']
+    assert fams['up-conversion']['m'] == 30 and fams['up-conversion']['in_comb']
+    # f_n > f_p opens down-conversion and closes amplification
+    fams = {p['family']: p for p in pump_partners(r, 30, 2.0)}
+    assert 'down-conversion' in fams and 'up-conversion' in fams
+
+
+def test_loss_is_entered_as_a_rate_in_mau(para):
+    from PySide6.QtWidgets import QLabel
+    win, line = _pumped_scene(para)
+    panel = win.properties_panel
+    texts = [w.text() for w in panel.ports_param_widget.findChildren(QLabel)]
+    assert 'B_int' in texts and '\N{GREEK SMALL LETTER ALPHA}_loss' not in texts
+    spin = _spin_with_tip(panel, "Internal loss rate")
+    spin.setValue(20.0)                        # 20 mau
+    # stored as the attenuation, through B_int = (2/pi) alpha FSR
+    want = (20.0 / 1000.0) * np.pi / (2.0 * line['FSR'])
+    assert abs(line['alpha_uniform'] - want) < 1e-15
+    res = win.line_resonator_for(line)
+    assert abs(res.B_int_per_mode * 1000.0 - 20.0) < 1e-12
+
+
+def test_beta_reports_the_load_element_itself(para):
+    load = {'end': 'x0', 'type': 'inductive', 'f_Z': 3.0}
+    win, line = _pumped_scene(para, load=load)
+    beta, symbol = win.pump_load_modulation(line)
+    assert beta is not None and symbol == '\N{GREEK SMALL LETTER DELTA}L_ℓ/L_ℓ'
+    assert symbol in win.properties_panel._pump_modulation_label.text()
+    # unloaded: L_l is unknown, so it is withheld rather than guessed
+    win2, plain = _pumped_scene(para)
+    assert win2.pump_load_modulation(plain) == (None, None)

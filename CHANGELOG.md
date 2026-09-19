@@ -153,6 +153,41 @@
   use it, hand-drawn edges keep the heuristic.
 
 ### Added (continued)
+  - **Click a mode marker to anchor the pump's rate there** — closes the loop
+    the overlay exists for. Inert while the navigation toolbar is in
+    pan/zoom; clicking an idler image explains that *m* is derived from f_p
+    and n rather than silently doing nothing.
+  - **δL_ℓ/L_ℓ** (the load element's own fractional modulation) reported
+    beside α, when the end load is set and the pumped element *is* the
+    termination. This is the number invariant under re-anchoring — verified
+    to 12 digits through the real edge fan-out — where α and ε are
+    pair-referred. Subscript ℓ for "load": the element is whatever reactance
+    terminates the line, and a capacitive load reads δC_ℓ/C_ℓ, the same
+    statement with C for L.
+  - **Line loss is entered as a rate**, `B_int [mau]`, like every other rate
+    in the app, through the verified map B_int = (2/π)·α·FSR. Retires the
+    α that collided with the pump's α. Tooltip is explicit that the single
+    rate is derived and gated for the **open–open** comb only: a reactive
+    load stores energy the loss does not act on, so per-mode uniformity is
+    not established there (an f_Z = 0.5·FSR line's fundamental sits near
+    *half* the open–open value).
+  - **Mode-marker appearance is in Settings → S-Parameter Plot** (colour,
+    style, width × trace, opacity, cutoff width, label size), inheriting the
+    dialog's existing *Reset to Defaults* / *Save as Defaults*. New defaults:
+    black dashed with round dash caps at half the trace linewidth, and the
+    comb cutoff solid — a different kind of statement from a mode.
+### Fixed (continued)
+  - **The pump's mode index was capped at whatever N the row was built
+    with.** Raise f_max from 3 to 20 (N: 6 → 40) and `n` still refused to
+    pass 6, because the rows are not rebuilt per keystroke (that would steal
+    focus). Ranges are now re-ranged in place, for tap indices too. The
+    field was also one digit wide; widened.
+  - **The pump description named only the amplification partner.** One pump
+    satisfies *three* conditions — f_n + f_m = f_p, f_m − f_n = f_p
+    (up-conversion, which always has a target) and f_n − f_m = f_p
+    (down-conversion) — so the panel now names the anchored pair's family
+    and lists the others the same pump drives. Understating the conversion
+    is precisely the error the triple-line bus exists to prevent.
   - **Pump strength α** (PRX Quantum convention, α = ε/4 = g/√(ω_nω_m))
     reported beside the rate, with δL/L_tot alongside. **α ≥ 1 is flagged**
     — the rate box takes a translucent red wash and the label turns dark
