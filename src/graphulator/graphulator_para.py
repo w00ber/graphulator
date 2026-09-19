@@ -7876,12 +7876,26 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         self.sparams_phase_min_spin.valueChanged.connect(self._on_sparams_axis_limit_changed)
         axis_controls_layout.addWidget(self.sparams_phase_min_spin, 4, 5)
 
-        # Row 5: Conjugate frequencies toggle (spans all columns)
+        # Row 5: conjugate frequencies | mark line modes
         self.sparams_conjugate_freqs = QPushButton("Conjugate Freqs")
         self.sparams_conjugate_freqs.setCheckable(True)
         self.sparams_conjugate_freqs.setChecked(False)
         self.sparams_conjugate_freqs.clicked.connect(self._on_sparams_conjugate_toggled)
-        axis_controls_layout.addWidget(self.sparams_conjugate_freqs, 5, 0, 1, 6)
+        axis_controls_layout.addWidget(self.sparams_conjugate_freqs, 5, 0, 1, 3)
+
+        self.sparams_mark_modes = QPushButton("Mark Line Modes")
+        self.sparams_mark_modes.setCheckable(True)
+        self.sparams_mark_modes.setChecked(False)
+        self.sparams_mark_modes.setToolTip(
+            "Mark each transmission line's normal-mode frequencies on the "
+            "plot \u2014 the LOADED ones when an end load is set \u2014 and "
+            "label them by mode index. Hover a marker for the line, the "
+            "index and the frequency. Markers run to the comb cutoff (mode "
+            "N); the last one is drawn heavier, because beyond it the model "
+            "keeps no explicit modes (the tail is closed analytically). Use "
+            "it to read off which n to name in the pump's reference pair.")
+        self.sparams_mark_modes.clicked.connect(self._on_sparams_mark_modes_toggled)
+        axis_controls_layout.addWidget(self.sparams_mark_modes, 5, 3, 1, 3)
 
         # Initialize visibility of phase controls based on default mode
         self._update_sparams_axis_controls_visibility()
@@ -8772,6 +8786,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     "x_autoscale": self.sparams_x_autoscale.isChecked(),
                     "y_autoscale": self.sparams_y_autoscale.isChecked(),
                     "conjugate_freqs": self.sparams_conjugate_freqs.isChecked(),
+                    "mark_modes": self.sparams_mark_modes.isChecked(),
                     # New phase-related settings
                     "plot_mode": plot_mode,
                     "phase_autoscale": self.sparams_phase_autoscale.isChecked(),
@@ -12027,6 +12042,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     checkbox.blockSignals(False)
 
             # Apply autoscale settings
+            if "mark_modes" in settings and hasattr(self, 'sparams_mark_modes'):
+                self.sparams_mark_modes.setChecked(bool(settings["mark_modes"]))
             if "x_autoscale" in settings:
                 self.sparams_x_autoscale.setChecked(settings["x_autoscale"])
             if "y_autoscale" in settings:
@@ -12329,6 +12346,10 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         if plot_mode in ('phase', 'both') and not self.sparams_phase_autoscale.isChecked():
             ax_phase = self.sparams_ax_phase if plot_mode == 'both' else self.sparams_canvas.ax
             ax_phase.set_ylim(self.sparams_phase_min_spin.value(), self.sparams_phase_max_spin.value())
+
+        # Line mode-frequency overlay (after the x limits are settled, so
+        # the density test that thins the index labels sees the real view)
+        self._draw_mode_markers(axes_list, frequencies, conjugate_mode)
 
         # Determine bottom axis for x-axis labels (phase axis in 'both' mode)
         if plot_mode == 'both':
@@ -12686,6 +12707,159 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         """Handle axis limit spinbox changes"""
         # Replot when limits change (plot function will check autoscale state)
         if hasattr(self, 'sparams_data') and self.sparams_data is not None:
+            self._plot_sparams()
+
+    # ---- line mode-frequency overlay -------------------------------------
+    #
+    # Where a line's mode n lands on the DISPLAYED axis is not simply f_n:
+    # each channel is read in its own drive frame (a pumped line's twin is
+    # read at f_p - f), so the marker position is obtained by inverting that
+    # frame. The frame is affine in the root frequency, d = s*f_root + c, so
+    # it is recovered from the drive_signals array the sweep already carries
+    # rather than re-derived per topology -- which keeps this correct for
+    # pumped, conjugated and plain lines alike.
+
+    #: Muted palette for mode markers, cycled per line.
+    MODE_MARKER_COLORS = ('#e8e8e8', '#ffd9a0', '#a8e0ff', '#ffc0cb')
+    #: Don't print an index label if its neighbour is closer than this (px).
+    MODE_LABEL_MIN_PX = 16.0
+
+    def _line_mode_markers(self, frequencies, conjugate_mode):
+        """[{x, line_label, n, f_mode, is_cutoff, conj, color}] for every
+        explicit comb mode, in the plotted x coordinate."""
+        data = getattr(self, 'sparams_data', None) or {}
+        f_raw = data.get('frequencies')
+        drive = data.get('drive_signals') or {}
+        out = []
+        for idx, line in enumerate(getattr(self, 'line_resonators', [])):
+            try:
+                res = self.line_resonator_for(line)
+            except (ValueError, KeyError):
+                continue            # invalid parameters: nothing to mark
+            # This line's channel, and hence its drive frame
+            hub_id = None
+            for end in ('x0', 'xL'):
+                for conn in self._end_conns(line, end):
+                    if conn.get('kind') == 'port':
+                        hub_id = f"port:{conn['port_id']}"
+                        break
+                if hub_id:
+                    break
+            slope, offset = 1.0, 0.0
+            d = drive.get(hub_id) if hub_id is not None else None
+            if (d is not None and f_raw is not None
+                    and len(d) >= 2 and len(f_raw) >= 2
+                    and f_raw[-1] != f_raw[0]):
+                slope = float((d[-1] - d[0]) / (f_raw[-1] - f_raw[0]))
+                if abs(slope) < 1e-12:
+                    slope = 1.0    # a frame that does not move with the drive
+                offset = float(d[0] - slope * f_raw[0])
+            # a conjugated comb resonates where its drive frame reaches -f_n
+            sense = -1.0 if line.get('conj') else 1.0
+            color = self.MODE_MARKER_COLORS[idx % len(self.MODE_MARKER_COLORS)]
+            for n in range(1, res.N + 1):
+                f_mode = res.mode_freq(n)
+                x = (sense * f_mode - offset) / slope
+                if conjugate_mode:
+                    x = -x
+                out.append({'x': float(x), 'line_label': line['label'],
+                            'n': n, 'f_mode': float(f_mode),
+                            'is_cutoff': n == res.N,
+                            'conj': bool(line.get('conj')), 'color': color})
+        return out
+
+    def _draw_mode_markers(self, axes_list, frequencies, conjugate_mode):
+        """Draw the overlay and remember it for the hover readout."""
+        self._mode_markers = []
+        self._mode_marker_annotation = None
+        if not getattr(self, 'sparams_mark_modes', None) \
+                or not self.sparams_mark_modes.isChecked():
+            return
+        markers = self._line_mode_markers(frequencies, conjugate_mode)
+        if not markers:
+            return
+        ax0 = self.sparams_canvas.ax
+        lo, hi = sorted(ax0.get_xlim())
+        visible = [m for m in markers if lo <= m['x'] <= hi]
+        if not visible:
+            return
+        self._mode_markers = visible
+
+        # thin the index labels when markers crowd together
+        xs = sorted(m['x'] for m in visible)
+        span_px = max(ax0.get_window_extent().width, 1.0)
+        px_per_unit = span_px / max(hi - lo, 1e-12)
+        gaps = [(b - a) * px_per_unit for a, b in zip(xs, xs[1:])]
+        label_them = not gaps or min(gaps) >= self.MODE_LABEL_MIN_PX
+
+        for ax in axes_list:
+            for m in visible:
+                ax.axvline(
+                    m['x'], color=m['color'],
+                    linestyle='-' if m['is_cutoff'] else ':',
+                    linewidth=1.6 if m['is_cutoff'] else 1.0,
+                    alpha=0.85 if m['is_cutoff'] else 0.55, zorder=0)
+        if label_them:
+            for m in visible:
+                ax0.text(m['x'], 1.005, str(m['n']),
+                         transform=ax0.get_xaxis_transform(),
+                         ha='center', va='bottom', fontsize=7,
+                         fontfamily='sans-serif', color='#555555',
+                         fontweight='bold' if m['is_cutoff'] else 'normal',
+                         clip_on=False)
+        self._ensure_mode_marker_hover()
+
+    def _ensure_mode_marker_hover(self):
+        if getattr(self, '_mode_hover_connected', False):
+            return
+        self.sparams_canvas.mpl_connect('motion_notify_event',
+                                        self._on_mode_marker_hover)
+        self._mode_hover_connected = True
+
+    def _on_mode_marker_hover(self, event):
+        markers = getattr(self, '_mode_markers', None)
+        if not markers or event.inaxes is None or event.xdata is None:
+            self._hide_mode_marker_annotation()
+            return
+        ax = event.inaxes
+        lo, hi = sorted(ax.get_xlim())
+        px_per_unit = max(ax.get_window_extent().width, 1.0) / max(hi - lo, 1e-12)
+        nearest = min(markers, key=lambda m: abs(m['x'] - event.xdata))
+        if abs(nearest['x'] - event.xdata) * px_per_unit > 6.0:
+            self._hide_mode_marker_annotation()
+            return
+        tag = " (idler image)" if nearest['conj'] else ""
+        cutoff = "  \u2014 comb cutoff" if nearest['is_cutoff'] else ""
+        text = (f"{nearest['line_label']}  mode {nearest['n']}{tag}\n"
+                f"f = {nearest['f_mode']:g}{cutoff}")
+        ann = getattr(self, '_mode_marker_annotation', None)
+        if ann is None or ann.axes is not ax:
+            if ann is not None:
+                try:
+                    ann.remove()
+                except (ValueError, NotImplementedError):
+                    pass
+            ann = ax.annotate(
+                text, xy=(nearest['x'], event.ydata),
+                xytext=(8, 8), textcoords='offset points', fontsize=8,
+                fontfamily='sans-serif', zorder=10,
+                bbox=dict(boxstyle='round,pad=0.35', facecolor='#ffffe0',
+                          edgecolor='#999999', alpha=0.95))
+            self._mode_marker_annotation = ann
+        else:
+            ann.set_text(text)
+            ann.xy = (nearest['x'], event.ydata)
+        ann.set_visible(True)
+        self.sparams_canvas.draw_idle()
+
+    def _hide_mode_marker_annotation(self):
+        ann = getattr(self, '_mode_marker_annotation', None)
+        if ann is not None and ann.get_visible():
+            ann.set_visible(False)
+            self.sparams_canvas.draw_idle()
+
+    def _on_sparams_mark_modes_toggled(self):
+        if getattr(self, 'sparams_data', None) is not None:
             self._plot_sparams()
 
     def _on_sparams_conjugate_toggled(self):

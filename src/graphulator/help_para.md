@@ -71,6 +71,8 @@
 
 **Truncation.** f_max sets how many comb modes are kept explicitly. The modes beyond it still load the port; with *close comb tail analytically* (Ports & Lines panel, default on) that loading is folded back in closed form and is exact at any N — what f_max still truncates is the pump/tap couplings onto those modes. Press *Check truncation (2× f_max)* to measure it for the graph you have.
 
+**Reading off mode indices.** The pump's reference pair is named by mode index, so the S-params tab has a **Mark Line Modes** toggle (beside *Conjugate Freqs*) that draws each line's normal-mode frequencies on the plot with their indices, and names the line, index and frequency on hover. With an end load set these are the *loaded* mode frequencies, which is the case where counting `n·FSR` by eye goes wrong. Markers stop at the comb cutoff (mode N, drawn heavier); a pumped line's twin is marked where its idler image actually lands, at `f_p − f_m`.
+
 **Where to tune.** In scattering mode the **Ports & Lines** panel (full width under Nodes | Edges) holds every line's FSR/Ztx/f_max/Z0/α, its load's f_Z, the pump's f_p/rate/phase/n, and each attachment's rate and sign — so a line-only graph is fully tunable without any graph node. Selecting a glyph or bus on the canvas shows the same on the Properties tab.
 
 ## Selection & Editing
