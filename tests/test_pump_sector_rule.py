@@ -1,49 +1,30 @@
-"""OPEN BUG: a conversion-only pump produces gain.
+"""The sigma_z sector rule for pump couplings on a +-n comb.
 
-Reported from a coax configuration (FSR = 0.5, f_p = 0.5 = FSR, n = 12).
-That comb cannot amplify -- amplification needs f_n + f_m = f_p and the
-smallest available sum is 2*FSR = 1.0 -- yet S comes back with
-|S_ss|^2 ~ 10 and, cleanly, |S_ss|^2 - |S_is|^2 = 1 to 1e-14: the exact
-Manley-Rowe signature of two-mode squeezing. Not noise; the model is
-deliberately amplifying a process that cannot amplify.
+A comb macro puts each physical mode in the basis TWICE -- at +f_n and at
+-f_n -- because those are the two partial fractions of the mode's exact
+second-order response. The two halves are the co- and counter-rotating
+parts of the SAME mode, so they sit in opposite sigma_z sectors inside one
+cluster:
 
-MECHANISM. The twin channel is read at f_p - f_s = 0.5 - 6.0 = -5.5, and
-the pair is taken as f_s + f_i = 6.0 + (-5.5) = 0.5 = f_p, which only
-holds because the idler frequency is NEGATIVE. With f_i < 0 that identity
-is really f_s - |f_i| = f_p: down-conversion, a beam-splitter.
+    s = (-1)^[conj XOR counter_rotating]
 
-WHY IT IS NOT A ONE-LINE FIX. `_gui_pump_edges` emits ONLY signal->twin
-edges, and `_build_M_matrix` makes every such edge anti-Hermitian because
-the two ends' `conj` flags differ. Conversion (a_n <-> a_m) lives in the
-SAME sector, so representing it needs intra-comb edges, which the macro
-never builds -- the conversion block is simply absent from the model.
+A real quadratic modulation of Phi = sum_n u_n (a_n + a_n^dagger) gives a
+dynamical matrix sigma_z H with H Hermitian, so a coupling obeys
 
-Two repairs were tried and rejected, both recorded here so they are not
-retried blind:
+    M[k, j] = (s_j s_k) conj(M[j, k])
 
-  1. Effective sector = conj XOR (freq < 0), applied to the edge branch.
-     Rejected: an ordinary node below the drive frame has freq < 0 without
-     being anyone's counter-rotating partner, so this flips Hermitian
-     edges in plain graphs and destroys unitarity
-     (tests/test_hub_identity.py, whose random Omega has negative diagonal
-     entries, fails at 3.2).
-  2. The same, restricted to comb members by an explicit
-     `counter_rotating` flag. Unitarity is then fine, but reinterpreting a
-     signal->twin edge as a beam-splitter IN PLACE breaks the
-     para-Hermitian structure the Manley-Rowe identity rests on:
-     test_pumped_line_amplifies_and_is_pseudo_unitary goes from 1e-15 to
-     1.7e-3. A real conversion edge connects signal +n to signal +m, not
-     signal +n to twin -m, so the edge cannot simply change character.
+-- Hermitian within a sector (beam-splitter, conversion), anti-Hermitian
+across it (two-mode squeezing, gain).
 
-The fix is therefore structural: the pump must emit a SECOND block of
-intra-comb (and intra-twin) beam-splitter edges for pairs with
-|f_n - f_m| = f_p, alongside the existing cross-comb squeezing block --
-and the squeezing block must be restricted to pairs whose partner
-frequency is positive. That needs the derivation and an oracle gate, like
-every other block in this model.
+Reading the sector off the raw CLUSTER flag instead made every signal->twin
+edge anti-Hermitian, which turned a conversion-only pump into an amplifier.
+The configuration that surfaced it: FSR = 0.5, f_p = 0.5 = FSR, n_ref = 12.
+That comb holds no amplification pair at all (the smallest f_n + f_m is
+2*FSR = 1.0 > f_p), yet |S_ss|^2 reached ~10.
 
-Until then these tests DOCUMENT the defect rather than assert correct
-behaviour, so it stays executable and cannot be quietly forgotten.
+Full derivation, matrices and oracle numbers: docs/pump_sector_rule.md.
+The oracle gate for the same physics is
+tests/test_pumped_line.py::test_conversion_band_matches_oracle.
 """
 
 import os
@@ -85,8 +66,8 @@ def _conversion_scene(para, rate=0.022):
 
 
 def test_no_amplification_pair_exists_at_f_p_equal_fsr(para):
-    """The premise, independent of the bug: with f_p = FSR nothing in the
-    comb can amplify, and the partner enumeration says so correctly."""
+    """The premise: with f_p = FSR nothing in the comb can amplify, and the
+    partner enumeration says so."""
     from graphulator.para_features.explicit_ports import pump_partners
     win, line = _conversion_scene(para)
     res = win.line_resonator_for(line)
@@ -96,37 +77,72 @@ def test_no_amplification_pair_exists_at_f_p_equal_fsr(para):
 
 
 def test_unpumped_line_is_exactly_lossless(para):
-    """Control: the line, port and tail closure are NOT the problem."""
+    """Control: the line, port and tail closure are not in question here."""
     win, line = _conversion_scene(para, rate=0.0)
     f, g, c = _sweep(win)
     assert abs(g.max() - 1.0) < 1e-9 and c.max() < 1e-12
 
 
-def test_conversion_only_pump_currently_amplifies(para):
-    """The defect, pinned. Delete this test when the structural fix lands;
-    test_conversion_only_pump_should_conserve_flux below is its replacement."""
-    win, line = _conversion_scene(para)
-    f, g, c = _sweep(win)
-    assert g.max() > 5.0, g.max()
-    k = int(np.argmax(g))
-    # and it is clean two-mode squeezing, not numerical debris
-    assert abs(g[k] - c[k] - 1.0) < 1e-9, (g[k], c[k])
+def test_conversion_only_pump_conserves_flux(para):
+    """The fix, at the port: no gain, and beam-splitter flux conservation.
 
-
-@pytest.mark.xfail(reason="conversion block absent from the pump macro; see "
-                          "this module's docstring", strict=True)
-def test_conversion_only_pump_should_conserve_flux(para):
-    """What the model owes: no gain, and beam-splitter flux conservation."""
+    The resonant partner of the signal at f_12 = 6.0 is the twin's -11
+    member, at f_p + f_11 = 0.5 + 5.5 = 6.0, i.e. f_s - f_11 = f_p. Same
+    sigma_z sector as the signal, so the coupling is Hermitian and the two
+    ports exchange flux instead of creating it.
+    """
     win, line = _conversion_scene(para)
     f, g, c = _sweep(win)
     assert g.max() <= 1.0 + 1e-3, g.max()
+    assert c.max() > 0.5, c.max()              # conversion really happens
     assert np.max(np.abs(g + c - 1.0)) < 5e-3
 
 
+def test_resonant_partner_is_the_counter_rotating_twin_member(para):
+    """Where the sector rule bites, read off the assembled matrix: the twin
+    node that goes resonant carries counter_rotating, so its coupling to the
+    signal is Hermitian while its +m sibling's stays anti-Hermitian."""
+    from graphulator.autograph import GraphExtractor, GraphScatteringMatrix
+    win, line = _conversion_scene(para)
+    if not win.scattering_mode:
+        win._enter_scattering_mode()
+    job = win._build_sparams_job(None, np.array([6.0]), 5.9, 6.1, 1)
+    ex = GraphExtractor()
+    ex.extract_graph_data(
+        nodes=job['nodes'], edges=job['edges'],
+        scattering_assignments=job['scattering_assignments'],
+        frequency_settings={'start': 5.9, 'stop': 6.1, 'points': 1},
+        root_node_id=None, precomputed_tree_edges=None,
+        precomputed_chord_edges=None, hubs=job.get('hubs') or [],
+        line_resonators=job.get('line_resonators') or [])
+    gsm = GraphScatteringMatrix(ex, np.array([6.0]),
+                                tail_closure=job.get('tail_closure', True))
+    basis = ex.graph_data['basis_order']
+    by_id = {n['node_id']: n for n in ex.graph_data['nodes']}
+
+    sig = next(i for i in basis if i.endswith(':n12') and ':0:' in i)
+    conv = next(i for i in basis if i.endswith(':n-11') and ':1:' in i)
+    amp = next(i for i in basis if i.endswith(':n11') and ':1:' in i)
+
+    # the twin's -11 member is the one on resonance at f = 6.0
+    assert abs(gsm.M[0, basis.index(conv), basis.index(conv)].real) < 1e-3
+    assert abs(gsm.M[0, basis.index(amp), basis.index(amp)].real) > 1.0
+    assert by_id[conv]['counter_rotating'] and not by_id[amp]['counter_rotating']
+    assert not by_id[sig]['counter_rotating']
+
+    def block(a, b):
+        j, k = basis.index(a), basis.index(b)
+        return gsm.M[0, j, k], gsm.M[0, k, j]
+
+    fwd, rev = block(sig, conv)
+    assert abs(fwd) > 1e-6 and abs(rev - np.conj(fwd)) < 1e-12 * abs(fwd) + 1e-15
+    fwd, rev = block(sig, amp)
+    assert abs(fwd) > 1e-6 and abs(rev + np.conj(fwd)) < 1e-12 * abs(fwd) + 1e-15
+
+
 def test_a_real_amplification_pair_still_amplifies(para):
-    """Unaffected by the defect: f_p = 2*f_n with both members at POSITIVE
-    frequency is genuine two-mode squeezing and is pinned against the
-    oracle elsewhere (tests/test_pumped_line.py)."""
+    """The other sector is untouched: f_p = 2*f_n with both members at
+    POSITIVE frequency is genuine two-mode squeezing, and it still gains."""
     gp, win, config = para
     config.EXPLICIT_PORTS_MODE = True
     win._apply_explicit_ports_mode()
@@ -137,5 +153,4 @@ def test_a_real_amplification_pair_still_amplifies(para):
                       twin_pos=(0.0, -5.0))
     f, g, c = _sweep(win)
     assert g.max() > 1.0, g.max()
-    k = int(np.argmax(g))
-    assert abs(g[k] - c[k] - 1.0) < 1e-6, (g[k], c[k])
+    assert abs(g[int(np.argmax(g))] - c[int(np.argmax(g))] - 1.0) < 5e-3

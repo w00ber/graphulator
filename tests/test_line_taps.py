@@ -155,3 +155,57 @@ def test_tap_validation():
         line.tap_couplings('x0', 0)
     with pytest.raises(ValueError, match="reference harmonic"):
         line.tap_couplings('x0', line.N + 1)
+
+
+def test_tap_sector_matches_the_reference_a_basis_generator():
+    """A tap to the -n partial fraction is ANTI-Hermitian, read off the
+    reference's own doubled generator -- no ansatz, no graph code.
+
+    ``a_basis_A`` returns the generator in the (a, a*) basis, which is the
+    same doubled space the comb macro expands into. For a Hamiltonian
+    system that generator is sigma_z H with H Hermitian, so
+
+        N[k, j] = s_j s_k conj(N[j, k]),   s = +1 on 'a', -1 on 'a*'
+
+    and a device tapped onto the line must therefore couple Hermitian-ly to
+    each mode's 'a' half and anti-Hermitian-ly to its 'a*' half. That is the
+    rule GraphScatteringMatrix._build_M_matrix applies via the comb nodes'
+    ``counter_rotating`` flag (docs/pump_sector_rule.md); reading the sector
+    off the cluster flag alone made every tap Hermitian and every pump edge
+    anti-Hermitian.
+    """
+    N = 6
+    Cn, invLn, e, f = core.line_arrays(N, ell=1.0, Ztx=65.0, v=1.0, tail=False)
+    nl = len(Cn)
+    M = nl + 1
+    Cd, Ld, Cc = Cn[1], 1.0 / invLn[2], 1e-6
+
+    Cm = np.zeros((M, M))
+    Km = np.zeros((M, M))
+    Cm[:nl, :nl] = np.diag(Cn)
+    Km[:nl, :nl] = np.diag(invLn)
+    Cm[nl, nl] = Cd + Cc
+    Km[nl, nl] = 1.0 / Ld
+    for a in range(nl):                       # capacitive tap at x = 0
+        Cm[a, nl] -= Cc * e[a]
+        Cm[nl, a] -= Cc * e[a]
+        for b in range(nl):
+            Cm[a, b] += Cc * e[a] * e[b]
+
+    A, keep = core.a_basis_A(Cm, Km, np.zeros((M, M)))
+    Nmat = 1j * A                              # da/dt = A a  ->  dynamical N
+    m = len(keep)
+    s = np.array([+1 if r % 2 == 0 else -1 for r in range(2 * m)])
+    dev = 2 * (m - 1)                          # the device's 'a' row
+
+    seen = 0
+    for r in range(m - 1):                     # every line mode
+        for half in (0, 1):                    # its 'a' and 'a*' halves
+            k = 2 * r + half
+            fwd, rev = Nmat[dev, k], Nmat[k, dev]
+            assert abs(fwd) > 1e-6, (r, half, fwd)
+            expect = s[dev] * s[k]
+            got = rev / np.conj(fwd)
+            assert abs(got - expect) < 1e-9, (keep[r], half, got, expect)
+            seen += 1
+    assert seen == 2 * (m - 1) and seen >= 12

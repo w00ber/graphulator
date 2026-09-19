@@ -985,6 +985,13 @@ class LineResonator:
                 'label': f"{self.label}:n{k}",
                 'pos': (float(i), -2.0),
                 'conj': bool(self.conj),
+                # The -n member is the COUNTER-ROTATING half of the same
+                # physical mode -- the second partial fraction of its exact
+                # second-order response -- so it sits in the opposite
+                # sigma_z sector from +n inside the same cluster. Couplings
+                # read this (docs/pump_sector_rule.md); the diagonal does
+                # not, since the sign of f0 already says where it resonates.
+                'counter_rotating': bool(k < 0),
                 'freq': float(freqs[i]),
                 'B_int': float(B_int),
                 'B_ext': None,
@@ -1479,6 +1486,7 @@ class GraphExtractor:
                 'label': node.get('label', ''),
                 'pos': node.get('pos', (0.0, 0.0)),
                 'conj': node.get('conj', False),
+                'counter_rotating': node.get('counter_rotating', False),
                 # Initialize all scattering parameters to None
                 'freq': None,
                 'B_int': None,
@@ -2970,8 +2978,29 @@ class GraphScatteringMatrix:
                 if self.verbose:
                     logger.debug("  Edge %s→%s: f_p=%s, rate=%s, phase=%s, beta=%s", from_id, to_id, f_p, rate, phase, beta)
 
-                conj_j = self.extractor.graph_data['nodes'][j]['conj']
-                conj_k = self.extractor.graph_data['nodes'][k]['conj']
+                # sigma_z SECTOR, not the raw cluster flag. In a +-n comb
+                # the -n node is the counter-rotating half of the same
+                # physical mode, so it sits in the opposite sector from +n
+                # inside the same cluster: sector = conj XOR counter_rotating.
+                # A real quadratic modulation of Phi = sum_n u_n (a_n + a_n^t)
+                # gives a dynamical matrix sigma_z H with H Hermitian, i.e.
+                # M[k,j] = (s_j s_k) conj(M[j,k]) -- Hermitian in the same
+                # sector (conversion), anti-Hermitian across it (gain).
+                #
+                # Keying on the cluster flag alone made EVERY cross-cluster
+                # edge anti-Hermitian, so a pump that can only CONVERT still
+                # amplified: against the harmonic-balance oracle in the
+                # conversion band the graph returned max|S_ss|^2 = 4.58 where
+                # the circuit gives 0.999. See docs/pump_sector_rule.md and
+                # tests/test_pump_sector_rule.py.
+                #
+                # The DIAGONAL deliberately keeps the raw cluster flag: it
+                # sets the sign of f0, i.e. WHERE a node resonates, and the
+                # counter-rotating member must keep its own sign there.
+                node_j = self.extractor.graph_data['nodes'][j]
+                node_k = self.extractor.graph_data['nodes'][k]
+                conj_j = bool(node_j['conj']) ^ bool(node_j.get('counter_rotating'))
+                conj_k = bool(node_k['conj']) ^ bool(node_k.get('counter_rotating'))
 
                 if conj_j == conj_k:
                     if j < k:

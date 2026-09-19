@@ -106,12 +106,22 @@ Multiplying by $\delta\cos\omega_p t = \tfrac{\delta}{2}\,(e^{i\omega_p t} + e^{
 and keeping the slowly varying terms gives two blocks, **both** with the same rank-one
 matrix $\mathbf g\mathbf g^{\mathsf T}$:
 
-| term | slow when | process | graph edge |
-|---|---|---|---|
-| $a_n^* a_m^*\,e^{-i\omega_p t}$ + c.c. | $\omega_n + \omega_m = \omega_p$ | amplification (sum-frequency) | non-conjugate $\leftrightarrow$ conjugate |
-| $a_n^* a_m\,e^{\mp i\omega_p t}$ + c.c. | $\omega_n - \omega_m = \pm\omega_p$ | conversion (difference-frequency) | non-conjugate $\leftrightarrow$ conjugate, *negative-frequency member* (§4) |
+| term | slow when | process | graph edge | coupling |
+|---|---|---|---|---|
+| $a_n^* a_m^*\,e^{-i\omega_p t}$ + c.c. | $\omega_n + \omega_m = \omega_p$ | amplification (sum-frequency) | non-conjugate $\leftrightarrow$ conjugate | anti-Hermitian |
+| $a_n^* a_m\,e^{\mp i\omega_p t}$ + c.c. | $\omega_n - \omega_m = \pm\omega_p$ | conversion (difference-frequency) | non-conjugate $\leftrightarrow$ conjugate, *negative-frequency member* (§4) | **Hermitian** |
 
 One pump therefore drives both families at once, through one outer product.
+
+The last column is not decoration. Both families ride the same cross-cluster
+edges, so the cluster flag cannot tell them apart — the **sign of the twin
+member** does, through the sector
+$s = (-1)^{\texttt{conj}\,\oplus\,\texttt{counter\_rotating}}$, and the
+coupling obeys $M_{kj} = s_j s_k \overline{M_{jk}}$. Assembling every
+cross-cluster edge as anti-Hermitian makes a conversion-only pump amplify:
+against the oracle in the conversion band it returned $\max|S_{ss}|^2 = 4.58$
+where the circuit gives $0.999$. Derivation, matrices and oracle numbers:
+`docs/pump_sector_rule.md`.
 
 **What the rotating-wave approximation does to it.** In the isolated-mode limit
 $\mathrm{FSR} \gg \kappa$, only the $(n,m)$ entries of $\mathbf g\mathbf g^{\mathsf T}$ that
