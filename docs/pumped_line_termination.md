@@ -298,6 +298,46 @@ $\sqrt{p_{n_\mathrm{ref}}p_{m_\mathrm{ref}}/p_{n'_\mathrm{ref}}p_{m'_\mathrm{ref
 directly would remove the anchor at the cost of a number less comparable to an
 ordinary graph edge's rate; the app keeps the pair anchor and reports the pair.
 
+**The modulation depth behind the rate.** A rate in arb. units says little about
+how hard the element is driven. The physically readable version is the
+participation-weighted *fractional* modulation. Writing $\beta = \delta(1/L)L_J
+= \delta L_J/L_J$ for the element's own modulation and
+
+$$
+p_n \;=\; \frac{u_n(x_0)^2}{\omega_n^2 C_n L_J}
+\;=\; \frac{\text{inductive energy of mode }n\text{ in }L_J}{\text{its total inductive energy}}
+$$
+
+for mode $n$'s participation in the element, the same factorization gives
+
+$$
+\boxed{\ \varepsilon_{nm} \;\equiv\; \frac{4\,g_{nm}}{\sqrt{\omega_n\omega_m}}
+\;=\; \beta\,\sqrt{p_n\,p_m} \;=\; \frac{\delta L_J}{L_\mathrm{tot}},
+\qquad L_\mathrm{tot} \equiv \frac{L_J}{\sqrt{p_np_m}}\ }
+$$
+
+$L_\mathrm{tot}$ being the pair's effective inductance referred to the element,
+and $\varepsilon = \beta p_n$ exactly for a degenerate pump. Because the left
+side is dimensionless it may be evaluated in the app's linear units, where
+$g_\mathrm{lin} = \text{rate}/2$:
+
+$$
+\varepsilon = \frac{2\,\text{rate}}{\sqrt{f_n f_m}} .
+$$
+
+Verified against `build_galvanic`'s independently known $(\delta(1/L), L_J,
+\omega_n, C_n)$ to twelve digits. The panel and the bus Properties page report
+it beside the rate as $\delta L/L_\mathrm{tot}$ (a modulated capacitor gives the
+same expression read as $\delta C/C_\mathrm{tot}$, frequency-independent as a
+capacitance ratio must be).
+
+Note $\varepsilon$ is *pair-referred*, like the rate: $p_n \propto 1/n^2$ on the
+open–open comb, so $\varepsilon \propto 1/nm$ while the rate goes as
+$1/\sqrt{nm}$. What it buys is dimensionlessness — it compares against a design
+target directly. The genuinely anchor-free number is $\beta$ itself, which
+requires $L_J$ and is therefore available only once the end load is specified
+(§7.2 gives $L_J = Z_\mathrm{tx}/2\pi f_Z$).
+
 **Two core fixes the macro forced.** (i) The spanning tree stored each hop as
 its canonically *sorted* pair while the frame accumulation read it as
 parent→child, so a hop traversed toward a smaller id credited the pump offset

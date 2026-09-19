@@ -3717,7 +3717,7 @@ class PropertiesPanel(QWidget):
             'f_p', 1e-9, 1e9, 4, 0.1,
             "Pump frequency [a.u.]: amplifies every pair with f_n + f_m = f_p "
             "and converts every pair with |f_n - f_m| = f_p.",
-            refresh=refresh_partner))
+            refresh=lambda: (refresh_partner(), refresh_modulation())))
 
         nref = FineControlSpinBox()
         nref.setDecimals(0)
@@ -3733,6 +3733,7 @@ class PropertiesPanel(QWidget):
         def set_nref(v):
             pump['n_ref'] = int(v)
             refresh_partner()
+            refresh_modulation()
             g._invalidate_scattering_data()
             g._update_plot()
 
@@ -3743,11 +3744,28 @@ class PropertiesPanel(QWidget):
         form.addRow("Reference harmonic:", nref_row)
         refresh_partner()
 
+        modulation = QLabel()
+        modulation.setStyleSheet("color: #666;")
+
+        def refresh_modulation():
+            try:
+                eps, symbol = g.pump_modulation_fraction(line)
+                modulation.setText(f"{symbol} = {eps * 100:.4g}%")
+            except (ValueError, RuntimeError):
+                pass
+
         form.addRow("Rate @ (n, m) [mau]:", spin(
             'rate', 0.0, 1e6, 3, 1.0,
             "Parametric coupling between harmonic n of the line and its "
             "idler partner m in the twin [milli-arb. units]; other pairs "
-            "follow the verified profile.", scale=1000.0))
+            "follow the verified profile.", scale=1000.0,
+            refresh=refresh_modulation))
+        from .para_features.explicit_ports import PUMP_MODULATION_TOOLTIP
+        modulation.setToolTip(PUMP_MODULATION_TOOLTIP)
+        mod_label = QLabel("Modulation depth:")
+        mod_label.setToolTip(PUMP_MODULATION_TOOLTIP)
+        form.addRow(mod_label, modulation)
+        refresh_modulation()
         form.addRow("Pump phase:", spin(
             'phase', -360.0, 360.0, 1, 15.0, "Pump phase [degrees].",
             suffix="\N{DEGREE SIGN}"))
@@ -5195,6 +5213,7 @@ class PropertiesPanel(QWidget):
             "Pump frequency [a.u.]: amplifies every pair with f_n + f_m = f_p "
             "and converts every pair with |f_n - f_m| = f_p.",
             lambda v: pump_changed('f_p', float(v)), width=84))
+        hbox.addWidget(QLabel("[au]"))
         hbox.addWidget(QLabel("rate"))
         hbox.addWidget(self._physics_spin(
             pump['rate'] * 1000.0, 0.0, 1e6, 3, 1.0,
@@ -5202,11 +5221,19 @@ class PropertiesPanel(QWidget):
             "partner m in the twin [milli-arb. units]; other pairs follow "
             "the verified profile.",
             lambda v: pump_changed('rate', float(v) / 1000.0), width=78))
+        hbox.addWidget(QLabel("[mau]"))
+        # the DEVICE behind the rate: what stays fixed under re-anchoring
+        from .para_features.explicit_ports import PUMP_MODULATION_TOOLTIP
+        self._pump_modulation_label = QLabel()
+        self._pump_modulation_label.setToolTip(PUMP_MODULATION_TOOLTIP)
+        self._pump_modulation_label.setStyleSheet("color: dimgray;")
+        hbox.addWidget(self._pump_modulation_label)
         hbox.addWidget(QLabel("\N{GREEK SMALL LETTER PHI}"))
         hbox.addWidget(self._physics_spin(
             pump.get('phase', 0.0), -360.0, 360.0, 1, 15.0,
             "Pump phase [degrees]",
             lambda v: pump_changed('phase', float(v)), width=70))
+        hbox.addWidget(QLabel("[\N{DEGREE SIGN}]"))
         nref = FineControlSpinBox()
         nref.setDecimals(0)
         nref.setRange(1, max(1, resonator.N))
@@ -5238,6 +5265,10 @@ class PropertiesPanel(QWidget):
             return
         try:
             label.setText(self.graphulator.pump_pair_description(line))
+            mod = getattr(self, '_pump_modulation_label', None)
+            if mod is not None:
+                eps, symbol = self.graphulator.pump_modulation_fraction(line)
+                mod.setText(f"({symbol} = {eps * 100:.3g}%)")
         except (ValueError, RuntimeError):
             pass
 

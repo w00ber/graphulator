@@ -223,6 +223,62 @@ PUMP_NREF_TOOLTIP = (
     "mode you are looking at.")
 
 
+#: Symbol for the modulation fraction, per element type.
+PUMP_MODULATION_SYMBOL = {
+    'inductive': "\u03b4L/L_tot",
+    'capacitive': "\u03b4C/C_tot",
+}
+
+PUMP_MODULATION_TOOLTIP = (
+    "Effective modulation fraction seen by the reference pair: the "
+    "participation-weighted depth\n\n"
+    "    \u03b5 = \u03b4L_J/L_tot = \u03b2 \u00b7 \u221a(p_n p_m),"
+    "    \u03b2 = \u03b4L_J/L_J,    p_n = u_n(end)\u00b2/(\u03c9_n\u00b2 C_n L_J)\n\n"
+    "i.e. the element's own fractional modulation \u03b2 times the geometric "
+    "mean of the two modes' participations in it \u2014 equivalently "
+    "\u03b4L_J divided by the mode's effective inductance referred to the "
+    "element. Degenerate pump (n = m): \u03b5 = \u03b2 p_n exactly.\n\n"
+    "Read it as the depth THIS PAIR sees. Like the rate, it is referred to "
+    "the reference pair and moves with it (p_n \u221d 1/n\u00b2 on an "
+    "open\u2013open comb, so \u03b5 \u221d 1/nm); what it adds is that it "
+    "is dimensionless and normalized to the mode's own inductance, so it "
+    "compares directly against a design target instead of an arb.-unit "
+    "rate. The element's own \u03b2 = \u03b4L_J/L_J is the re-anchoring "
+    "invariant, and needs L_J \u2014 known only when the end load is set "
+    "(f_Z).\n\n"
+    "For a modulated capacitor the same expression reads \u03b4C/C_tot.")
+
+
+def pump_modulation_fraction(rate, f_n, f_m):
+    """Effective fractional modulation seen by the pair (n, m).
+
+    The circuit normalization (docs sec. 6) is
+
+        g_nm = dK_nm / (4 sqrt(w_n C_n w_m C_m)),
+        dK_nm = d(1/L) u_n(end) u_m(end)                     [inductive]
+
+    which factorizes into single-mode participations. With
+    p_n = u_n(end)^2/(w_n^2 C_n L_J) and beta = d(1/L) L_J = dL_J/L_J,
+
+        4 g_nm / sqrt(w_n w_m) = beta sqrt(p_n p_m)  ==  dL_J / L_tot,
+
+    L_tot = L_J/p_n being mode n's effective inductance referred to the
+    element. The left side is dimensionless, so it may be evaluated in the
+    app's LINEAR units; with the app's off-diagonal g_lin = rate/2,
+
+        eps = 2 * rate / sqrt(f_n f_m).
+
+    Verified against build_galvanic's known (d(1/L), L_J, w_n, C_n) to 12
+    digits (tests/test_pumped_line.py). A modulated capacitor obeys the
+    same expression, then reading dC/C_tot: there g ~ sqrt(w_n w_m) and the
+    ratio comes out frequency-independent, as a capacitance ratio must.
+    """
+    denom = np.sqrt(abs(float(f_n)) * abs(float(f_m)))
+    if denom <= 0:
+        return float('nan')                 # a DC mode has no such ratio
+    return 2.0 * float(rate) / denom
+
+
 def describe_pump_pair(n, m, f_n, f_m, f_p):
     """One line saying which pair the rate is anchored to and how far that
     pair is from the pump's resonance condition.
@@ -2506,6 +2562,25 @@ class ExplicitPortsMixin:
             "clamping. Raise f_max or re-enter the reference mode.",
             what, label, n, resonator.N)
         return int(min(max(n, 1), resonator.N))
+
+    def pump_modulation_fraction(self, line):
+        """(epsilon, symbol) for a line's pump at its reference pair.
+
+        epsilon is the depth seen by the REFERENCE PAIR (see
+        pump_modulation_fraction): dimensionless and normalized to the
+        mode's own inductance, but pair-referred like the rate itself. The
+        re-anchoring invariant is the element's own beta = dL_J/L_J, which
+        needs L_J and so is available only with an end load set.
+        """
+        pump = line['pump']
+        res = self.line_resonator_for(line)
+        n_ref, m_ref = self._pump_reference_pair(line)
+        eps = pump_modulation_fraction(float(pump['rate']),
+                                       res.mode_freq(n_ref),
+                                       res.mode_freq(m_ref))
+        symbol = PUMP_MODULATION_SYMBOL.get(
+            pump.get('coupling', 'inductive'), "\u03b4X/X_tot")
+        return eps, symbol
 
     def pump_pair_description(self, line):
         """describe_pump_pair for a line's current pump (see that function)."""

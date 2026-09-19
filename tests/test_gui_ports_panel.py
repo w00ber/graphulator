@@ -232,3 +232,14 @@ def test_pump_partner_label_explains_the_pair(para):
     assert 'conversion' in text and 'm = 2' in text        # 2.0 - 1.0 = 1.0
     # degenerate case
     assert 'degenerate' in describe_pump_pair(3, 3, 1.5, 1.5, 3.0)
+
+
+def test_pump_row_labels_units_and_shows_the_modulation_depth(para):
+    from PySide6.QtWidgets import QLabel
+    win, line = _pumped_scene(para)
+    panel = win.properties_panel
+    texts = [w.text() for w in panel.ports_param_widget.findChildren(QLabel)]
+    assert '[mau]' in texts, texts          # the rate's units, app convention
+    assert '[au]' in texts                  # f_p
+    eps, symbol = win.pump_modulation_fraction(line)
+    assert any(symbol in t and '%' in t for t in texts), texts
