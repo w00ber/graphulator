@@ -2970,31 +2970,8 @@ class GraphScatteringMatrix:
                 if self.verbose:
                     logger.debug("  Edge %s→%s: f_p=%s, rate=%s, phase=%s, beta=%s", from_id, to_id, f_p, rate, phase, beta)
 
-                # EFFECTIVE sector, not the raw conj flag. In a +-omega
-                # comb the negative-frequency member is the counter-
-                # rotating (conjugate) part of the SAME physical mode, so a
-                # node's sector is conj XOR (freq < 0): signal +n is a_n,
-                # signal -n is a*_n, the twin's +m is a*_m and the twin's
-                # -m is a_m again. Same sector -> beam-splitter (Hermitian,
-                # conversion); opposite -> two-mode squeezing
-                # (anti-Hermitian, gain).
-                #
-                # Keying on the flag alone made EVERY signal->twin edge a
-                # squeezing edge, so a pump that only converts still
-                # produced gain: with f_p = FSR the pair (signal +n, twin
-                # -(n-1)) satisfies f_n + f_-(n-1) = f_p only because the
-                # idler frequency is NEGATIVE -- which is really
-                # f_n - f_(n-1) = f_p, a beam-splitter. The graph then
-                # amplified (Manley-Rowe |S_ss|^2 - |S_is|^2 = 1 to 1e-14)
-                # in a comb holding no amplification pair at all.
-                #
-                # The DIAGONAL deliberately keeps the raw flag: it sets the
-                # sign of f0, i.e. WHERE a node resonates, which the
-                # counter-rotating member must keep.
-                node_j = self.extractor.graph_data['nodes'][j]
-                node_k = self.extractor.graph_data['nodes'][k]
-                conj_j = bool(node_j['conj']) ^ (node_j['freq'] < 0)
-                conj_k = bool(node_k['conj']) ^ (node_k['freq'] < 0)
+                conj_j = self.extractor.graph_data['nodes'][j]['conj']
+                conj_k = self.extractor.graph_data['nodes'][k]['conj']
 
                 if conj_j == conj_k:
                     if j < k:
