@@ -355,9 +355,10 @@ def pump_modulation_fraction(rate, f_n, f_m):
 def pump_partners(resonator, n_ref, f_p):
     """Every resonant partner of mode n under ONE pump, by family.
 
-    In the two-cluster picture the twin's +m member sits at f_p - f_m and
-    its -m member at f_p + f_m, so a single pump frequency satisfies THREE
-    conditions, not one:
+    In the two-cluster picture with the twin in the frame f - f_p, its +m
+    member sits at f_p - f_m and its -m member at f_p + f_m; in the frame
+    f + f_p the -m member sits at f_m - f_p. So a single pump frequency
+    satisfies THREE conditions, not one:
 
         f_n + f_m = f_p     amplification   (two-mode squeezing)
         f_m - f_n = f_p     up-conversion   (always has a target)
@@ -2654,28 +2655,49 @@ class ExplicitPortsMixin:
         pump = line['pump']
         res = self.line_resonator_for(line)
         f_p = float(pump['f_p'])
-        n_ref, m_ref = self._pump_reference_pair(line)
+        n_ref, m_ref, anchored = self._pump_anchor(line)
         f_n, f_m = res.mode_freq(n_ref), res.mode_freq(m_ref)
         family, cond, off = pump_pair_family(n_ref, m_ref, f_n, f_m, f_p)
         onres = "on resonance" if abs(off) < 1e-9 else "off resonance"
         head = (f"rate refers to (n={n_ref}, m={m_ref}): {family}, "
                 f"{cond} ({onres})")
 
+        # which rungs the twin's frame puts on the sweep
+        plus = self.pump_frame_rule(anchored) == 'sector+'
+        shown = {'up-conversion'} if plus else {'amplification',
+                                                'down-conversion'}
         others = []
         for p in pump_partners(res, n_ref, f_p):
             if p['m'] == m_ref and p['family'] in family:
                 continue                       # that is the anchored pair
             note = ("on resonance" if p['in_comb']
                     else f"nearest mode, off by {p['detune']:+.4g}")
+            if p['family'] not in shown:
+                note += "; not on this sweep, see frame"
             others.append(f"{p['family']} with m = {p['m']} "
                           f"(f = {p['f_m']:g}, {note})")
         if others:
             head += "\nsame pump also drives: " + ";  ".join(others)
+        head += ("\ntwin frame f \u2212 f_p: shows amplification and "
+                 "down-conversion" if not plus else
+                 "\ntwin frame f + f_p: shows up-conversion")
         return head
 
-    def _pump_reference_pair(self, line):
-        """(n_ref, m_ref): the signal mode the rate is defined at and its
-        idler partner, the mode nearest f_p - f_(n_ref).
+    def _pump_anchor(self, line):
+        """(n_ref, m_ref, family): the pair the rate is defined at.
+
+        m_ref is the partner of mode n_ref that is CLOSEST TO RESONANCE
+        under this pump, across the three conditions one pump satisfies
+        (pump_partners); ties go to amplification, then DOWN-, then
+        up-conversion. On a harmonic comb the families coincide exactly,
+        and that order reproduces the historical anchoring (the mode nearest
+        |f_p - f_n|) in every case, so no existing scene changes its pair or
+        its frame. The family also fixes
+        the twin's drive frame: omega - f_p for amplification and
+        down-conversion, omega + f_p for up-conversion (frame rule 'sector'
+        vs 'sector+'), because a two-frame truncation cannot hold the
+        omega +- f_p rungs at once and the one the user anchored the rate
+        to is the one that must be on the sweep.
 
         Uses the LOADED mode frequencies when an end is loaded: on a
         dispersed comb the n-th mode is not at n*FSR, so pairing off
@@ -2685,8 +2707,24 @@ class ExplicitPortsMixin:
         resonator = self.line_resonator_for(line)
         n_ref = self._clamp_mode(resonator, pump.get('n_ref', 1),
                                  line['label'], 'pump')
-        f_partner = float(pump['f_p']) - resonator.mode_freq(n_ref)
-        return n_ref, resonator.nearest_harmonic(f_partner)
+        f_p = float(pump['f_p'])
+        partners = pump_partners(resonator, n_ref, f_p)
+        if not partners:                        # cannot happen: f_n + f_p > 0
+            return n_ref, resonator.nearest_harmonic(f_p - resonator.mode_freq(n_ref)), 'amplification'
+        rank = {'amplification': 0, 'down-conversion': 1, 'up-conversion': 2}
+        best = min(partners, key=lambda p: (abs(p['detune']), rank[p['family']]))
+        return n_ref, int(best['m']), best['family']
+
+    def _pump_reference_pair(self, line):
+        """(n_ref, m_ref) of the anchored pair -- see _pump_anchor."""
+        n_ref, m_ref, _ = self._pump_anchor(line)
+        return n_ref, m_ref
+
+    @staticmethod
+    def pump_frame_rule(family):
+        """Twin drive frame for the anchored family: 'sector' (omega - f_p)
+        or 'sector+' (omega + f_p). See autograph's frame accumulation."""
+        return 'sector+' if family == 'up-conversion' else 'sector'
 
     def set_line_pump(self, line, end, f_p, rate, phase=0.0, n_ref=None,
                       coupling='inductive', twin_pos=None):
@@ -2881,7 +2919,8 @@ class ExplicitPortsMixin:
                 continue
             self._sync_twin(line)
             end = pump['end']
-            n_ref, m_ref = self._pump_reference_pair(line)
+            n_ref, m_ref, family = self._pump_anchor(line)
+            frame_rule = self.pump_frame_rule(family)
             coupling = pump.get('coupling', 'inductive')
             res = self.line_resonator_for(line)
             tres = self.line_resonator_for(twin)
@@ -2897,7 +2936,7 @@ class ExplicitPortsMixin:
                     out.append((edge, {'f_p': f_p,
                                        'rate': rate * wn * wm,
                                        'phase': (phase0 + phn + phm) % 360.0,
-                                       'frame_rule': 'sector'}))
+                                       'frame_rule': frame_rule}))
         return out
 
     def _gui_synth_edges(self, line_ids=None, node_ids=None):

@@ -2278,18 +2278,28 @@ class GraphExtractor:
                 if self.sign_override:
                     # User provided signed f_p, use as-is
                     signed_f_p = f_p if f_p is not None else 0.0
-                elif rule == 'sector' and f_p is not None:
-                    # Explicit sector rule (pump buses): a sum-frequency
-                    # process puts the whole conjugate cluster in the frame
-                    # f_p - omega, i.e. -f_p going INTO the conjugate sector
-                    # and +f_p coming out, whatever the members' natural
-                    # frequencies (a +-n comb defeats the ordering heuristic)
+                elif rule in ('sector', 'sector+') and f_p is not None:
+                    # Explicit sector rules (pump buses): the whole
+                    # conjugate cluster sits in ONE frame, whatever the
+                    # members' natural frequencies (a +-n comb defeats the
+                    # ordering heuristic).
+                    #   'sector'  : omega - f_p  -- the sum-frequency frame;
+                    #               holds amplification (twin +m at
+                    #               f_p - f_m) and down-conversion (twin -m
+                    #               at f_p + f_m)
+                    #   'sector+' : omega + f_p  -- holds up-conversion
+                    #               (twin -m at f_m - f_p), the rung the
+                    #               other frame only reaches at -omega
+                    # A two-frame truncation cannot hold all three at once;
+                    # the pump macro picks the frame of the pair the rate is
+                    # anchored to (explicit_ports._pump_anchor).
+                    into = -f_p if rule == 'sector' else +f_p
                     from_conj = node_info[from_id]['conj']
                     to_conj = node_info[to_id]['conj']
                     if to_conj and not from_conj:
-                        signed_f_p = -f_p
+                        signed_f_p = into
                     elif from_conj and not to_conj:
-                        signed_f_p = +f_p
+                        signed_f_p = -into
                     else:
                         signed_f_p = _determine_fp_sign(from_id, to_id, f_p)
                 else:
