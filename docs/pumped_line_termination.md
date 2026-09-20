@@ -188,7 +188,22 @@ $\omega = \omega_p + \omega_m$): the classical idler at $\omega_p - \omega_s$ co
 negative when $\omega_s > \omega_p$, and a conjugated negative-frequency component *is*
 the down-converted signal. It does **not** appear as a non-conjugate $\leftrightarrow$
 non-conjugate edge inside one cluster, because that would need a third frame
-$\omega \pm \omega_p$. The DC-complete $\pm n$ comb — the two partial fractions of each
+$\omega \pm \omega_p$.
+
+**Which frame the twin takes.** The frame $\omega_p - \omega$ holds
+amplification and down-conversion; *up*-conversion of a signal below the pump
+($\omega_m - \omega_n = \omega_p$) is the rung at $\omega + \omega_p$, which
+that frame reaches only at $-\omega$ — off the sweep. A two-frame truncation
+cannot hold both, so the pump macro puts the twin in the frame of the pair the
+rate is **anchored** to: the partner of $n_\mathrm{ref}$ closest to resonance
+under the pump (ties: amplification, then down-, then up-conversion, which
+reproduces the historical anchoring on a harmonic comb). Frame rule `sector`
+is $\omega - \omega_p$, `sector+` is $\omega + \omega_p$; the two give
+$S(\omega) = \overline{S(-\omega)}$ to machine precision, and the Ports &
+Lines panel names the frame and marks the partners it cannot show. The
+SQUID-terminated $\lambda/4$ scenes (`INTERMODE_LEE2013_*`, File → Test)
+are the worked case: the conversion "hole" of that experiment is an
+up-conversion and lives in `sector+`. The DC-complete $\pm n$ comb — the two partial fractions of each
 mode's exact second-order response — is what lets a two-rung truncation hold both
 processes; rungs at $\omega \pm 2\omega_p$ are dropped, at $O(\delta^2)$.
 

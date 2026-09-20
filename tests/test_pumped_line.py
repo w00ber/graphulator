@@ -101,7 +101,7 @@ def test_sector_frame_rule_overrides_ordering_heuristic():
          'freq': -6.0, 'B_int': 0.0, 'B_ext': 0.1},
     ]
     edge = {'from_node_id': 'a', 'to_node_id': 'b', 'is_self_loop': False}
-    for rule, expected in ((None, +9.0), ('sector', -9.0)):
+    for rule, expected in ((None, +9.0), ('sector', -9.0), ('sector+', +9.0)):
         assign = {id(nodes[0]): {'freq': 5.0, 'B_int': 0.0, 'B_ext': 0.1},
                   id(nodes[1]): {'freq': -6.0, 'B_int': 0.0, 'B_ext': 0.1},
                   id(edge): {'f_p': 9.0, 'rate': 0.02, 'phase': 0.0}}
