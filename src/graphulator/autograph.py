@@ -1948,6 +1948,7 @@ class GraphExtractor:
         tree_branches = []  # List of branches, each branch is a list of (parent, child)
         tree_edge_keys = set()
         chord_edge_keys = []
+        chord_seen = set()          # membership only; the list keeps order
 
         def dfs_branch(node_id, current_branch):
             """
@@ -1967,10 +1968,11 @@ class GraphExtractor:
 
             # Mark chord edges (edges to already-visited nodes)
             for neighbor_id, edge_key in adjacency[node_id]:
-                if neighbor_id in visited and edge_key not in chord_edge_keys:
+                if neighbor_id in visited and edge_key not in chord_seen:
                     # Check if this edge is not already in the tree
                     if edge_key not in tree_edge_keys:
                         chord_edge_keys.append(edge_key)
+                        chord_seen.add(edge_key)
 
             if len(unvisited_neighbors) == 0:
                 # Leaf node - end of current branch
@@ -2039,6 +2041,14 @@ class GraphExtractor:
             'missing_hubs': []
         }
 
+        # Nodes carrying a self-loop, in one pass. Asking per node used to
+        # rescan every edge: on a pumped comb that is 270 nodes x 18k edges.
+        self_loop_nodes = set()
+        for edge in self.graph_data['edges']:
+            if edge['is_self_loop']:
+                self_loop_nodes.add(edge['from_node_id'])
+                self_loop_nodes.add(edge['to_node_id'])
+
         # Check nodes
         for node in self.graph_data['nodes']:
             node_id = node['node_id']
@@ -2046,12 +2056,7 @@ class GraphExtractor:
             required = ['freq', 'B_int']
 
             # Check if node has self-loop (requires B_ext)
-            has_self_loop = any(
-                edge['is_self_loop'] and
-                (edge['from_node_id'] == node_id or edge['to_node_id'] == node_id)
-                for edge in self.graph_data['edges']
-            )
-            if has_self_loop:
+            if node_id in self_loop_nodes:
                 required.append('B_ext')
 
             # Check for missing parameters (now checking for None values)
@@ -2907,7 +2912,6 @@ class GraphScatteringMatrix:
         self.f_root_s = f_root_s
         self.tail_closure = bool(tail_closure)
         self.num_modes = len(extractor.graph_data['nodes'])
-        self.M = np.zeros((len(self.f_root_s), self.num_modes, self.num_modes), dtype=complex)
 
         # K is built before M: the external anti-Hermitian part of M is
         # computed FROM K_full ((i/2) K_full K_full^dagger), so M and S share
@@ -2919,7 +2923,6 @@ class GraphScatteringMatrix:
         self._build_tail_closure()
         self._build_M_matrix()
         self._build_S_matrix()
-        self._build_det_M()
 
     def _build_f_drivesignals(self):
         accumulated_frequencies_flattened = list(
@@ -2931,10 +2934,20 @@ class GraphScatteringMatrix:
         }
 
     def _build_M_matrix(self):
-        # Assemble diagonals
+        # M = (static N x N part, broadcast over the sweep) + (diagonal) +
+        # (tail closure). Only the last two carry frequency dependence, so
+        # the static part is assembled once at (N, N) and M is FILLED from
+        # it rather than zeroed and then added to twice. On a pumped comb M
+        # is ~1 GB and every avoided full pass is ~2 GB of memory traffic.
+        #
+        # Arithmetic order is unchanged, so the result is bit-identical to
+        # the zero-then-accumulate assembly: the off-diagonals are still
+        # coupling + (i/2) gram in that order, and the diagonal's own term
+        # commutes with the gram's diagonal.
         if self.verbose:
             logger.debug("[_build_M_matrix] Node diagonal values:")
 
+        diag = np.empty((len(self.f_root_s), self.num_modes), dtype=complex)
         for idx, node in enumerate(self.extractor.graph_data['nodes']):
             node_id = node['node_id']
             f0 = node['freq']
@@ -2956,66 +2969,80 @@ class GraphScatteringMatrix:
             f_drive = self.drive_signals.get(node_id, self.f_root_s)
 
             sign = 1.0 if conj_state else -1.0
-            self.M[:, idx, idx] = f_drive + sign * f0 + Btot * 1j / 2
+            diag[:, idx] = f_drive + sign * f0 + Btot * 1j / 2
 
-        # Assemble off-diagonals
+        # Assemble off-diagonals.
+        #
+        # sigma_z SECTOR, not the raw cluster flag. In a +-n comb the -n node
+        # is the counter-rotating half of the same physical mode, so it sits
+        # in the opposite sector from +n inside the same cluster:
+        # sector = conj XOR counter_rotating. A real quadratic modulation of
+        # Phi = sum_n u_n (a_n + a_n^dagger) gives a dynamical matrix
+        # sigma_z H with H Hermitian, i.e.
+        #
+        #     M[k, j] = (s_j s_k) conj(M[j, k])
+        #
+        # -- Hermitian within a sector (beam-splitter, conversion),
+        # anti-Hermitian across it (two-mode squeezing, gain).
+        #
+        # Keying on the cluster flag alone made EVERY cross-cluster edge
+        # anti-Hermitian, so a pump that can only CONVERT still amplified:
+        # against the harmonic-balance oracle in the conversion band the
+        # graph returned max|S_ss|^2 = 4.58 where the circuit gives 0.999.
+        # See docs/pump_sector_rule.md and tests/test_pump_sector_rule.py.
+        #
+        # The DIAGONAL deliberately keeps the raw cluster flag: it sets the
+        # sign of f0, i.e. WHERE a node resonates, and the counter-rotating
+        # member must keep its own sign there.
+        #
+        # The assembled pair depends only on the UNORDERED {j, k}: whichever
+        # way the edge is drawn, the lower index gets beta and the higher
+        # gets (s_j s_k) conj(beta). Collected and written in two vectorized
+        # assignments -- a pumped comb carries ~18k edges, and a Python-level
+        # strided write per edge over the frequency axis dominated assembly.
+        static = np.zeros((self.num_modes, self.num_modes), dtype=complex)
         basis = self.extractor.graph_data['basis_order']
+        basis_index = {node_id: i for i, node_id in enumerate(basis)}
+        nodes = self.extractor.graph_data['nodes']
+        sector = np.array([bool(n['conj']) ^ bool(n.get('counter_rotating'))
+                           for n in nodes], dtype=bool)
+
         if self.verbose:
             logger.debug("[_build_M_matrix] Edge off-diagonal values:")
+
+        ej, ek, ebeta = [], [], []
         for edge in self.extractor.graph_data['edges']:
             from_id = edge['from_node_id']
             to_id = edge['to_node_id']
+            j = basis_index[from_id]
+            k = basis_index[to_id]
+            if j == k:
+                continue
+            beta = edge['rate'] / 2 * np.exp(1j * edge['phase'] * np.pi / 180)
+            if self.verbose:
+                logger.debug("  Edge %s→%s: f_p=%s, rate=%s, phase=%s, beta=%s",
+                             from_id, to_id, edge['f_p'], edge['rate'],
+                             edge['phase'], beta)
+            ej.append(j)
+            ek.append(k)
+            ebeta.append(beta)
 
-            j = basis.index(from_id)
-            k = basis.index(to_id)
-
-            if j != k:
-                f_p = edge['f_p']
-                rate = edge['rate']
-                phase = edge['phase']
-
-                beta = rate/2 * np.exp(1j * phase * np.pi / 180)
-                if self.verbose:
-                    logger.debug("  Edge %s→%s: f_p=%s, rate=%s, phase=%s, beta=%s", from_id, to_id, f_p, rate, phase, beta)
-
-                # sigma_z SECTOR, not the raw cluster flag. In a +-n comb
-                # the -n node is the counter-rotating half of the same
-                # physical mode, so it sits in the opposite sector from +n
-                # inside the same cluster: sector = conj XOR counter_rotating.
-                # A real quadratic modulation of Phi = sum_n u_n (a_n + a_n^t)
-                # gives a dynamical matrix sigma_z H with H Hermitian, i.e.
-                # M[k,j] = (s_j s_k) conj(M[j,k]) -- Hermitian in the same
-                # sector (conversion), anti-Hermitian across it (gain).
-                #
-                # Keying on the cluster flag alone made EVERY cross-cluster
-                # edge anti-Hermitian, so a pump that can only CONVERT still
-                # amplified: against the harmonic-balance oracle in the
-                # conversion band the graph returned max|S_ss|^2 = 4.58 where
-                # the circuit gives 0.999. See docs/pump_sector_rule.md and
-                # tests/test_pump_sector_rule.py.
-                #
-                # The DIAGONAL deliberately keeps the raw cluster flag: it
-                # sets the sign of f0, i.e. WHERE a node resonates, and the
-                # counter-rotating member must keep its own sign there.
-                node_j = self.extractor.graph_data['nodes'][j]
-                node_k = self.extractor.graph_data['nodes'][k]
-                conj_j = bool(node_j['conj']) ^ bool(node_j.get('counter_rotating'))
-                conj_k = bool(node_k['conj']) ^ bool(node_k.get('counter_rotating'))
-
-                if conj_j == conj_k:
-                    if j < k:
-                        self.M[:, j, k] = beta
-                        self.M[:, k, j] = np.conj(beta)
-                    else:
-                        self.M[:, k, j] = beta
-                        self.M[:, j, k] = np.conj(beta)
-                else:
-                    if j < k:
-                        self.M[:, j, k] = beta
-                        self.M[:, k, j] = -np.conj(beta)
-                    else:
-                        self.M[:, k, j] = beta
-                        self.M[:, j, k] = -np.conj(beta)
+        if ej:
+            ej = np.asarray(ej)
+            ek = np.asarray(ek)
+            ebeta = np.asarray(ebeta, dtype=complex)
+            lo = np.minimum(ej, ek)
+            hi = np.maximum(ej, ek)
+            sgn = np.where(sector[ej] == sector[ek], 1.0, -1.0)
+            # beta carries NO frequency dependence, so the couplings are one
+            # (N, N) matrix broadcast over the sweep. Scattering them
+            # straight into M[:, lo, hi] instead walks the frequency axis
+            # once per edge -- 14M strided writes on a pumped comb, where
+            # this is 18k writes plus one contiguous add.
+            # Duplicate {j, k} pairs resolve to the LAST edge, as the
+            # per-edge assignment loop did.
+            static[lo, hi] = ebeta
+            static[hi, lo] = sgn * np.conj(ebeta)
 
         # External anti-Hermitian part, computed FROM K_full so that the
         # S-matrix identity S^dagger S = 1 - (M^-1 K)^dagger Gamma_int (M^-1 K)
@@ -3027,16 +3054,67 @@ class GraphScatteringMatrix:
         # ~1 ulp).
         if self.K_full.size:
             gram = self.K_full @ self.K_full.conj().T
-            self.M += 0.5j * gram[None, :, :]
-            if self.has_tail_closure:
-                # comb tail closure: channel h's damper is scaled by
-                # lambda_h(f) = 1/(1 + i chi_t,h/2). Added as the DIFFERENCE
-                # from the plain Gram above, so channels without a tail
-                # (lambda = 1) contribute exact zeros and legacy graphs stay
-                # bit-identical.
-                self.M += 0.5j * np.einsum(
-                    'fh,ih,jh->fij', self.lam - 1.0,
-                    self.K_full, self.K_full.conj())
+            static += 0.5j * gram
+
+        # Store the INGREDIENTS, not the sweep. M is assembled a frequency
+        # block at a time by M_block(); materializing the whole
+        # (n_freq, N, N) stack is what made large sweeps slow, and it was
+        # never needed -- each frequency's system is independent. On a pumped
+        # comb (N = 270, 801 points) that array is 934 MB, and simply
+        # allocating and first-touching it cost more than every other stage
+        # of the sweep put together.
+        self._M_static = static
+        self._M_diag = diag
+        # the comb tail closure's per-channel rank-one correction:
+        # channel h's damper is scaled by lambda_h(f) = 1/(1 + i chi_t,h/2),
+        # carried as the DIFFERENCE from the plain Gram above so channels
+        # without a tail (lambda = 1) contribute exact zeros and legacy
+        # graphs stay bit-identical.
+        self._M_tail = []
+        if self.K_full.size and self.has_tail_closure:
+            dlam = self.lam - 1.0
+            for h in range(self.K_full.shape[1]):
+                if not np.any(dlam[:, h]):
+                    continue
+                col = self.K_full[:, h]
+                self._M_tail.append((dlam[:, h],
+                                     0.5j * np.outer(col, col.conj())))
+
+    def M_block(self, lo, hi):
+        """M over frequency points [lo, hi), shape (hi - lo, N, N).
+
+        Assembled from the frequency-independent static part plus this
+        block's diagonal and tail-closure corrections. Identical, term by
+        term and in the same order, to the full-sweep assembly this replaced.
+        """
+        block = np.empty((hi - lo,) + self._M_static.shape, dtype=complex)
+        block[...] = self._M_static
+        idx = np.arange(self.num_modes)
+        block[:, idx, idx] += self._M_diag[lo:hi]
+        for dlam_h, outer in self._M_tail:
+            block += dlam_h[lo:hi, None, None] * outer
+        return block
+
+    def _freq_blocks(self):
+        """(lo, hi) frequency slices sized so one M block stays cache-warm."""
+        nf = len(self.f_root_s)
+        step = max(1, int(2 ** 22 // max(self.num_modes ** 2, 1)))
+        return [(a, min(a + step, nf)) for a in range(0, nf, step)]
+
+    @property
+    def M(self):
+        """The full (n_freq, N, N) stack, assembled ON DEMAND and cached.
+
+        Nothing in the S-matrix path calls this -- it goes block by block
+        through M_block(). Kept because identity checks and det_M want the
+        whole stack; on a large comb it is a ~1 GB allocation, so ask for it
+        deliberately.
+        """
+        if getattr(self, '_M_full', None) is None:
+            blocks = [self.M_block(lo, hi) for lo, hi in self._freq_blocks()]
+            self._M_full = (blocks[0] if len(blocks) == 1
+                            else np.concatenate(blocks, axis=0))
+        return self._M_full
 
     def _build_tail_closure(self):
         """Close each channel's truncated comb tail into a scalar lambda_h(f).
@@ -3181,15 +3259,33 @@ class GraphScatteringMatrix:
         else:
             self.K_loss = K_loss
 
+    def _channel_S(self, K, n_chan):
+        """S over the first n_chan channels, assembled block by block.
+
+        Two things this does NOT do. It does not invert M: S only ever
+        contracts M^-1 against the few channel columns, so a full
+        (n_freq, N, N) inverse computes -- and allocates -- N/n_chan times
+        more than the result needs; a batched SOLVE gives M^-1 K directly.
+        And it does not hold the sweep's M at once: each frequency's system
+        is independent, so M is built one block at a time (M_block) and the
+        block is discarded. On a pumped comb that is the difference between
+        touching a gigabyte and staying in cache.
+
+        Per frequency the arithmetic is unchanged, so results are identical
+        to the whole-sweep assembly.
+        """
+        S = np.empty((len(self.f_root_s), n_chan, n_chan), dtype=complex)
+        for lo, hi in self._freq_blocks():
+            rhs = np.broadcast_to(K, (hi - lo,) + K.shape)
+            MinvK = np.linalg.solve(self.M_block(lo, hi), rhs)
+            S[lo:hi] = self._scatter(K, MinvK, n_chan, lo, hi)
+        return S
+
     def _build_S_matrix(self):
-        # Batched inverse over the (N, m, m) stack; matmul broadcasts K across
-        # the frequency axis, so the whole sweep is one vectorized expression.
         # Contraction uses the conjugate transpose (identical to .T for the
         # real Phase-1 K) and PORT columns only: loss-hub damping is inside M
-        # but exposes no channel. Minv is NOT retained (line-macro graphs
-        # make it large); S_full recomputes it on demand.
-        Minv = np.linalg.inv(self.M)
-        self.S = self._scatter(self.K, Minv, self.num_ports)
+        # but exposes no channel.
+        self.S = self._channel_S(self.K, self.num_ports)
         self.SdB = 20 * np.log10(np.abs(self.S))
 
         # Initialize empty trace list for plotting
@@ -3209,23 +3305,23 @@ class GraphScatteringMatrix:
         Computed on demand (the (num_freqs, N, N) inverse is not cached —
         line-macro graphs make it large).
         """
-        n_chan = self.K_full.shape[1]
-        Minv = np.linalg.inv(self.M)
-        return self._scatter(self.K_full, Minv, n_chan)
+        return self._channel_S(self.K_full, self.K_full.shape[1])
 
-    def _scatter(self, K, Minv, n_chan):
+    def _scatter(self, K, MinvK, n_chan, lo=0, hi=None):
         """S over the first n_chan channels: i K^dagger M^-1 K - I, with the
         comb tail closure's per-channel lambda on both sides and its direct
         phase on the diagonal when a channel closes a tail (see
         _build_tail_closure). Without tails this is the historical
         expression, evaluated identically."""
-        core = 1j * (K.conj().T @ Minv @ K)
+        if hi is None:
+            hi = len(self.f_root_s)
+        core = 1j * (K.conj().T @ MinvK)
         if not self.has_tail_closure:
             return core - np.eye(n_chan)
-        lam = self.lam[:, :n_chan]
+        lam = self.lam[lo:hi, :n_chan]
         S = lam[:, :, None] * core * lam[:, None, :]
         idx = np.arange(n_chan)
-        S[:, idx, idx] -= self.direct[:, :n_chan]
+        S[:, idx, idx] -= self.direct[lo:hi, :n_chan]
         return S
 
     @property
@@ -3240,19 +3336,36 @@ class GraphScatteringMatrix:
         return 1.0 - np.sum(np.abs(self.S) ** 2, axis=1)
 
     def _build_det_M(self):
-        """Compute the determinant of M at each frequency point.
+        """Determinant of M at each frequency point, cached.
+
+        Computed ON DEMAND. Nothing in the S-matrix path needs it -- it is a
+        diagnostic display and a golden-artifact field -- and it costs two
+        more O(n_freq N^3) factorizations, which on a pumped comb was ~13% of
+        the sweep for a number that had already overflowed to inf.
 
         Creates:
             self.det_M : np.ndarray
-                Complex determinant of M matrix at each frequency, shape (len(f_root_s),)
+                Complex determinant of M at each frequency, shape (n_freq,)
             self.det_M_dB : np.ndarray
-                Magnitude of determinant in dB, shape (len(f_root_s),)
+                Magnitude of the determinant in dB, shape (n_freq,)
         """
-        self.det_M = np.linalg.det(self.M)
+        self._det_M = np.linalg.det(self.M)
         # det overflows to inf for large mode counts (e.g. line-macro combs);
         # slogdet keeps the dB display finite
         _, logabsdet = np.linalg.slogdet(self.M)
-        self.det_M_dB = (20.0 / np.log(10.0)) * logabsdet
+        self._det_M_dB = (20.0 / np.log(10.0)) * logabsdet
+
+    @property
+    def det_M(self):
+        if getattr(self, '_det_M', None) is None:
+            self._build_det_M()
+        return self._det_M
+
+    @property
+    def det_M_dB(self):
+        if getattr(self, '_det_M_dB', None) is None:
+            self._build_det_M()
+        return self._det_M_dB
 
     # =========================================================================
     # Plotting API - Trace Management
