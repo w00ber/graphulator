@@ -4947,12 +4947,13 @@ class PropertiesPanel(QWidget):
                 header(f"{line['label']}  (conjugate twin of "
                        f"{primary['label'] if primary else '?'})",
                        "Same physical line seen in the idler sector; edit "
-                       "FSR, Ztx, f_max, Z0, \u03b1 and the load on the "
-                       "primary.")
+                       "FSR, Ztx, f_max, Z0, \u03b1, the sections and the "
+                       "load on the primary.")
                 row = self._add_line_end_rows(line, row)
                 continue
             header(f"{line['label']}  (transmission line)")
             row = self._add_line_physics_row(line, row)
+            row = self._add_line_sections_row(line, row)
             load = line.get('load')
             if load:
                 row = self._add_line_load_row(line, row)
@@ -5096,10 +5097,17 @@ class PropertiesPanel(QWidget):
                 lambda v, l=line, k=key: self._line_param_changed(l, k, v),
                 width=width))
 
-        add("FSR", 'FSR', 1e-9, 1e9, 4, 0.1,
-            "Free spectral range [a.u.]. With an end load this is the "
-            "geometric parameter v/2\u2113, not the mode spacing.")
-        add("Ztx", 'Ztx', 1e-6, 1e6, 1, 1.0, "Line characteristic impedance",
+        add("FSR", 'FSR', 1e-9, 1e9, 9, 0.1,
+            "Free spectral range [a.u.]. With an end load or impedance "
+            "steps this is the geometric parameter v/2\u2113, not the mode "
+            "spacing \u2014 and it is the scale every mode frequency "
+            "derives from, so it carries more decimals than the rest.",
+            width=104)
+        add("Ztx", 'Ztx', 1e-6, 1e6, 1, 1.0,
+            ("Reference impedance: with sections below it no longer sets the "
+             "line's own Z, only the scale the end load's f_Z is defined "
+             "against (L = Ztx/2\u03c0f_Z)."
+             if line.get('sections') else "Line characteristic impedance"),
             width=64)
         add("f_max", 'f_max', 1e-9, 1e12, 3, 1.0,
             "Comb extent: the modes kept explicitly (N pairs). The modes "
@@ -5113,18 +5121,6 @@ class PropertiesPanel(QWidget):
         # map B_int = (2/pi) alpha FSR is exact and linear, so this is a
         # change of units and not of model; note it therefore TRACKS FSR.
         self._add_line_loss_spin(hbox, line)
-        if line.get('sections'):
-            from .para_features.explicit_ports import format_sections
-            steps = QLabel("stepped " + " | ".join(
-                f"{sec['Z']:g}\u03a9\u00d7{sec['frac']:.3g}"
-                for sec in line['sections']))
-            steps.setToolTip(
-                "Stepped impedance, Z\u00d7fraction of electrical length "
-                "from x0 to xL (edit via Edit\u2026). Ztx is then the "
-                "reference impedance for the load's f_Z. Spec: "
-                + format_sections(line['sections']))
-            steps.setStyleSheet("color: #444; font-style: italic;")
-            hbox.addWidget(steps)
         hbox.addStretch()
         edit_btn = QPushButton("Edit\N{HORIZONTAL ELLIPSIS}")
         edit_btn.setMaximumWidth(60)
@@ -5175,6 +5171,116 @@ class PropertiesPanel(QWidget):
             0.0, 1e9, 3, 1.0, self.LOSS_RATE_TOOLTIP, apply, width=76)
         hbox.addWidget(spin)
         hbox.addWidget(QLabel("mau"))
+
+    SECTIONS_ROW_TOOLTIP = (
+        "The line's geometry, as it physically is: runs of impedance Z, "
+        "each \u03b8 DEGREES long at the reference frequency f_ref \u2014\n"
+        "    Z:\u03b8, Z:\u03b8, \u2026   from x0 to xL\n"
+        "One section is an ordinary uniform line whose LENGTH you gave as "
+        "an angle (its Z becomes Ztx); two or more make it stepped.\n\n"
+        "\u03b8 = 90\u00b0 is a quarter wave at f_ref, 180\u00b0 a half "
+        "wave. The length follows in closed form,\n"
+        "    FSR = 180\u00b7f_ref / \u03a3\u03b8,   frac_j = "
+        "\u03b8_j / \u03a3\u03b8\n"
+        "so there is no back-solving for a length.\n\n"
+        "STORED form is (Z, frac) + FSR. f_ref is an input and display "
+        "convention only: re-quoting at another f_ref changes these numbers "
+        "and cannot move S. A new line inherits the f_ref you last used, "
+        "and that default survives a restart.\n\n"
+        "Stepped lines are re-derived on the piecewise basis (docs sec. 9) "
+        "\u2014 roots of the cascaded source-free condition, per-section "
+        "energy normalization \u2014 verified against the cascaded ABCD to "
+        "1e-15 with the tail closure on.\n\n"
+        "Press Enter to apply; an invalid spec is refused and the field "
+        "reverts.")
+
+    def _add_line_sections_row(self, line, row):
+        """Geometry as 'Z:theta' at a per-line f_ref (docs sec. 9.6)."""
+        from .para_features.explicit_ports import (format_sections_theta,
+                                                   sticky_section_fref)
+        g = self.graphulator
+        hbox = QHBoxLayout()
+        hbox.setSpacing(6)
+        lab = QLabel("geometry:")
+        lab.setToolTip(self.SECTIONS_ROW_TOOLTIP)
+        hbox.addWidget(lab)
+
+        def spec_text():
+            return format_sections_theta(line.get('sections'), line['FSR'],
+                                         line.get('f_ref')
+                                         or sticky_section_fref(),
+                                         Ztx=line.get('Ztx'))
+
+        edit = QLineEdit(spec_text())
+        edit.setToolTip(self.SECTIONS_ROW_TOOLTIP)
+        edit.setPlaceholderText("Z:\u03b8, Z:\u03b8, \u2026")
+        edit.setMaximumWidth(220)
+
+        summary = QLabel("")
+        summary.setStyleSheet("color: #444; font-style: italic;")
+        summary.setToolTip(self.SECTIONS_ROW_TOOLTIP)
+
+        def describe():
+            secs = line.get('sections')
+            if not secs:
+                summary.setText(f"uniform {line['Ztx']:g}\u03a9")
+            else:
+                summary.setText("x0 \u2192 xL:  " + "  |  ".join(
+                    f"{sec['Z']:g}\u03a9 \u00d7 {100 * sec['frac']:.0f}%"
+                    for sec in secs))
+
+        def apply_spec():
+            try:
+                g.set_line_geometry_theta(line, edit.text())
+            except ValueError as exc:
+                g._status_message(str(exc), 8000)
+                edit.setText(spec_text())
+                return
+            edit.setText(spec_text())
+            describe()
+            self._after_line_geometry_change(line)
+
+        edit.editingFinished.connect(apply_spec)
+        hbox.addWidget(edit)
+
+        f_lab = QLabel("@ f_ref")
+        f_lab.setToolTip(self.SECTIONS_ROW_TOOLTIP)
+        hbox.addWidget(f_lab)
+
+        def apply_fref(v):
+            try:
+                g.set_line_fref(line, v)
+            except ValueError as exc:
+                g._status_message(str(exc), 6000)
+                return
+            edit.setText(spec_text())          # same geometry, new numbers
+            self._after_line_geometry_change(line, geometry_moved=False)
+
+        hbox.addWidget(self._physics_spin(
+            float(line.get('f_ref') or sticky_section_fref()),
+            1e-9, 1e12, 4, 0.1,
+            "Frequency the angles above are quoted at. Changing it "
+            "re-renders them and cannot move S; it also becomes the sticky "
+            "default for new lines, persisted across restarts.",
+            apply_fref, width=84))
+
+        hbox.addWidget(summary)
+        describe()
+        hbox.addStretch()
+        holder = QWidget()
+        holder.setLayout(hbox)
+        self.ports_param_layout.addWidget(holder, row, 0, 1, 4)
+        return row + 1
+
+    def _after_line_geometry_change(self, line, geometry_moved=True):
+        g = self.graphulator
+        if geometry_moved:
+            self._schedule_scattering_update()
+        g._update_plot()
+        if hasattr(self, '_refresh_comb_notes'):
+            self._refresh_comb_notes()
+        if geometry_moved and hasattr(self, '_refresh_mode_index_ranges'):
+            self._refresh_mode_index_ranges()
 
     def _add_line_load_row(self, line, row):
         load = line['load']
@@ -14507,10 +14613,14 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         if node.get('conj', False):
             node_label += '*'
 
-        # Check if node has self-loop
+        # Check if node has self-loop, in the ORIGINAL edges and on the
+        # stable node_id -- the scattering-graph node is a copy, so a dict
+        # comparison against edge['from_node'] would not match even once the
+        # name resolved. Mirrors the check in _check_node_assignments.
         has_selfloop = any(
-            edge.get('is_self_loop', False) and edge['from_node'] == original_node
-            for edge in (self._original_edges_for_lookup if hasattr(self, '_original_edges_for_lookup') else self.edges)
+            edge.get('is_self_loop', False)
+            and edge['from_node_id'] == node['node_id']
+            for edge in getattr(self, '_original_edges_for_lookup', self.edges)
         )
 
         # Get current assignments
@@ -14584,7 +14694,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
             # Scroll to and highlight the row if scattering tab is visible
             if hasattr(self.properties_panel, '_scroll_to_node_row'):
-                self.properties_panel._scroll_to_node_row(original_node)
+                self.properties_panel._scroll_to_node_row(node)
 
         # Clear selection to remove red indicator (whether OK or Cancel was clicked)
         self.selected_nodes.clear()
@@ -14689,7 +14799,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
             # Scroll to and highlight the row if scattering tab is visible
             if hasattr(self.properties_panel, '_scroll_to_edge_row'):
-                self.properties_panel._scroll_to_edge_row(original_edge)
+                self.properties_panel._scroll_to_edge_row(edge)
 
         # Clear selection to remove red indicator (whether OK or Cancel was clicked)
         self.selected_nodes.clear()

@@ -37,9 +37,13 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest>=7.0",
+    # undefined-name sweep, run from inside the suite
+    # (tests/test_gui_dialogs.py::test_no_undefined_names_in_the_package)
+    "pyflakes>=3.0",
 ]
 dev = [
     "pytest>=7.0",
+    "pyflakes>=3.0",
     "ruff>=0.4",
 ]
 
@@ -79,6 +83,15 @@ line-length = 120
 target-version = "py310"
 # The two monolithic app files predate the tooling; lint the maintained
 # modules first and shrink this list as code migrates out of them.
+#
+# NOTE this exclusion is for STYLE only. It is not a licence for undefined
+# names: three live NameErrors hid in graphulator_para.py precisely because
+# it is listed here (an edit dialog referenced `original_node`, and both
+# scattering dialogs handed undefined names to the row scroller). The CI
+# lint job therefore runs F821 over EVERY tracked .py file as a separate
+# step -- passing explicit paths bypasses this list -- and
+# tests/test_gui_dialogs.py re-runs the same check inside the suite so it
+# fails locally too. Shrink the list, but do not rely on it hiding F821.
 extend-exclude = [
     "src/graphulator/graphulator_qt.py",
     "src/graphulator/graphulator_para.py",
@@ -95,3 +108,21 @@ ignore = [
     "E501",  # long lines: legacy code has many; revisit after refactors
     "E741",  # ambiguous variable names (I, l) common in matrix math
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Importing a pytest fixture by name and then taking it as a test argument
+# is the documented way to share fixtures, and it reads as a redefinition to
+# every static checker. All 71 F811 in the suite were this one pattern on
+# `para`, which is enough noise to make `ruff check .` useless as a signal.
+"tests/*.py" = ["F811"]
+# Some GUI test modules must set QT_QPA_PLATFORM before Qt is imported, so
+# their imports deliberately sit below that block. I001 would hoist them
+# back and the breakage only shows when the file is run alone.
+"tests/test_stepped_line.py" = ["F811", "I001"]
+"tests/test_gui_dialogs.py" = ["F811", "I001"]
+"tests/test_intermode_lee2013.py" = ["F811", "I001"]
+"tests/test_pump_sector_rule.py" = ["F811", "I001"]
+# The reference oracle is vendored VERBATIM and compared against operation
+# for operation; reformatting it (E702 semicolons, import order) would
+# silently break the thing every physics gate is measured against.
+"tests/cmtline_core.py" = ["E", "F", "I"]

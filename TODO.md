@@ -239,6 +239,28 @@
     the Lee/Spietz/Aumentado geometry predicts f_B/f_A = 3.089 vs the
     measured 3.077 with nothing fitted (INTERMODE_LEE2013_* test scenes).
     Stub: yes -- an inductive load with f_Z -> infinity is a short.
+  - [x] COMPOSITION shipped (docs sec. 9.6-9.7): lines are specified as
+    Z:theta degrees @ f_ref (FSR = 180 f_ref / sum theta, frac = theta/sum;
+    (Z, frac) + FSR stays canonical, so re-quoting at another f_ref cannot
+    move S), and two lines are joined end to end into ONE compound macro
+    (click a line end, then another line's end; click a junction to
+    separate). Composing equals specifying the compound directly, bitwise,
+    for all four end pairings.
+- [ ] **Attachments at an interior point of a line.** Blocked today:
+  junctions are snap points for composition only and joining is refused at
+  an occupied end (see ExplicitPortsMixin.JUNCTION_ATTACH_REFUSAL). Two
+  SEPARATE cases, do not conflate them:
+  - [ ] (A) a lumped device tapped at an interior point. Tractable now --
+    substitute the mode profile u_n(s) at the tap position for u_n(end) in
+    LineResonator.tap_couplings; gate it the way the end taps were gated,
+    against cmtline_core.a_basis_A over a device tapped at that point.
+  - [ ] (B) a STUB (an open or shorted branch at the junction). NOT the
+    same move: the structure becomes a tree, so the modes come from a
+    recursive Y_in built from the leaves, with
+    Y_left + Y_right + Y_stub = 0 at each junction and the mode mass summed
+    over branches. It is not a coupling matrix between two mode combs, and
+    modelling it as one would be the same category error as coupling two
+    combs across a junction.
   - Partial answer (docs sec. 8): the comb tail closure already takes an
     ARBITRARY exact Z_in -- `LineResonator.input_impedance` is an ABCD
     cascade -- so a stepped-impedance or stub line's PORT response could be
