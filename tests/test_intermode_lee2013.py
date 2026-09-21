@@ -62,23 +62,30 @@ def test_scenes_are_shipped_with_notes():
             SCENES, f"INTERMODE_LEE2013_{which}.pgraph")))
         notes = data.get('notes', '')
         assert notes.startswith('# Intermode coupling'), which
-        for must in ('How the circuit became this graph', 'loaded basis',
-                     'stepped', 'f_Z', 'Z_0', 'delta L', 'Which rung'):
+        for must in ('How the circuit became this graph', 'stepped, loaded basis',
+                     'sections = 47.3:2, 51.4:1', 'prediction', 'f_Z', 'Z_0',
+                     'delta L', 'Which rung'):
             assert must in notes, (which, must)
         assert data['scattering']['frequency']['center'] == pytest.approx(F_A)
 
 
-def test_modes_land_on_the_measured_frequencies(para):
-    """The effective load reproduces BOTH measured modes: bisection on f_Z
-    with the closed-form FSR inversion, no fitting by hand."""
+def test_the_physical_geometry_predicts_the_first_harmonic(para):
+    """The scene is the paper's circuit, not a fit: 47.3/51.4 ohm sections
+    over 2/3 and 1/3, the 0.40 nH SQUID, and ONE geometric knob (the length)
+    fixed by f_A. f_B is then predicted to 0.4 % of the measured 5.661 GHz
+    -- a uniform line would give 3.004 f_A = 5.53."""
     gp, win, config = para
     _load(win, 'CONVERSION')
     line = next(l for l in win.line_resonators if l.get('pump'))
+    assert [round(sec['Z'], 1) for sec in line['sections']] == [47.3, 51.4]
+    assert line['load']['end'] == 'xL' and 19.5 < line['load']['f_Z'] < 20.0
     res = win.line_resonator_for(line)
     assert res.mode_freq(1) == pytest.approx(F_A, abs=1e-6)
-    assert res.mode_freq(2) == pytest.approx(F_B, abs=1e-6)
+    f_B = res.mode_freq(2)
+    assert abs(f_B - F_B) / F_B < 0.005, f_B                # predicted
+    assert f_B > 3.05 * F_A                                 # the step shows
     # and the port rate at mode 1 is the paper's 2.9 MHz bandwidth
-    g1 = res.mode_gamma(1) * res.mode_profile(1, 'xL') ** 2
+    g1 = res.mode_gamma(1) * res.mode_profile(1, 'x0') ** 2
     assert g1 == pytest.approx(0.0029, rel=1e-6)
 
 

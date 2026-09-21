@@ -228,7 +228,17 @@
 - [ ] need to decide what we should do about the M matrix (symbolic) display. Add and M_super tab? What about sympy code export? 
   - for a transmission line, I'm thinking that we can have options to show a mode block (square in the displayed matrix) that just says M_\mathrm{tx} or show a more explicit block that shows the structure of the elements with a minimal set showing diagonal and off-diagonal KK^T coupling with the rest indicated by \dots, \vdots
 
-- can our code actually handle resonant coupling in chained transmission lines like a stepped impedance resonator (multiple sections of different impedance transmission line)? Can we just kluge it from a cascade of ABCD matrices and then compute the loaded normal modes from there? What about a transmission line set up as a stub? Can we actually create a shorted stub filter (set L load to zero?) if we wanted?
+- [x] can our code actually handle resonant coupling in chained transmission lines like a stepped impedance resonator (multiple sections of different impedance transmission line)? Can we just kluge it from a cascade of ABCD matrices and then compute the loaded normal modes from there? What about a transmission line set up as a stub? Can we actually create a shorted stub filter (set L load to zero?) if we wanted?
+  - SHIPPED (docs sec. 9; gate tests/test_stepped_line.py): `sections =
+    [{'Z', 'frac'}, ...]` on LineResonator / the line dict / the line
+    dialog ("Z:frac, Z:frac" from x0 to xL). Piecewise standing wave
+    (voltage and current continuous), roots of the cascaded source-free
+    condition, per-section closed-form energy normalization, exact Z_in as
+    the cascade so the tail closure carries over. Complex S11 vs an
+    INDEPENDENT ABCD cascade: 1/N with the closure off, 1.5e-15 with it on;
+    the Lee/Spietz/Aumentado geometry predicts f_B/f_A = 3.089 vs the
+    measured 3.077 with nothing fitted (INTERMODE_LEE2013_* test scenes).
+    Stub: yes -- an inductive load with f_Z -> infinity is a short.
   - Partial answer (docs sec. 8): the comb tail closure already takes an
     ARBITRARY exact Z_in -- `LineResonator.input_impedance` is an ABCD
     cascade -- so a stepped-impedance or stub line's PORT response could be

@@ -4001,7 +4001,7 @@ class PropertiesPanel(QWidget):
                                                    LineResonator,
                                                    line_payload, ALPHA_TOOLTIP,
                                                    LineInputDialog)
-        from .autograph import line_fsr_for_target
+        from .autograph import line_fsr_for_target_general
         self.clear_properties()
         self.current_object = line
         self.current_type = 'line'
@@ -4208,9 +4208,9 @@ class PropertiesPanel(QWidget):
             chosen = current_load()
             if chosen is None:
                 return
-            line['FSR'] = line_fsr_for_target(
+            line['FSR'] = line_fsr_for_target_general(
                 float(target_spin.value()), int(target_mode.value()),
-                chosen['f_Z'], chosen['type'])
+                chosen, line.get('sections'), float(line['Ztx']))
             g._sync_all_twins()
             g._invalidate_scattering_data()
             g._update_plot()
@@ -5113,11 +5113,23 @@ class PropertiesPanel(QWidget):
         # map B_int = (2/pi) alpha FSR is exact and linear, so this is a
         # change of units and not of model; note it therefore TRACKS FSR.
         self._add_line_loss_spin(hbox, line)
+        if line.get('sections'):
+            from .para_features.explicit_ports import format_sections
+            steps = QLabel("stepped " + " | ".join(
+                f"{sec['Z']:g}\u03a9\u00d7{sec['frac']:.3g}"
+                for sec in line['sections']))
+            steps.setToolTip(
+                "Stepped impedance, Z\u00d7fraction of electrical length "
+                "from x0 to xL (edit via Edit\u2026). Ztx is then the "
+                "reference impedance for the load's f_Z. Spec: "
+                + format_sections(line['sections']))
+            steps.setStyleSheet("color: #444; font-style: italic;")
+            hbox.addWidget(steps)
         hbox.addStretch()
         edit_btn = QPushButton("Edit\N{HORIZONTAL ELLIPSIS}")
         edit_btn.setMaximumWidth(60)
-        edit_btn.setToolTip("Label, tap coupling types, end load, target "
-                            "resonance and appearance")
+        edit_btn.setToolTip("Label, tap coupling types, end load, impedance "
+                            "steps, target resonance and appearance")
         edit_btn.clicked.connect(lambda _=False, l=line: g._edit_line(l))
         hbox.addWidget(edit_btn)
         holder = QWidget()
@@ -6736,7 +6748,8 @@ class PropertiesPanel(QWidget):
                     f"port_end={line['port_end']!r}, Z0_port={line['Z0_port']!r}, "
                     f"alpha_uniform={line['alpha_uniform']!r}, "
                     f"conj={line.get('conj', False)!r}, "
-                    f"load={line.get('load')!r})")
+                    f"load={line.get('load')!r}, "
+                    f"sections={line.get('sections')!r})")
             return _join_list(entries)
 
         # Full-graph literals for the single-component template
