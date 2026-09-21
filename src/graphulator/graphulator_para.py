@@ -5097,9 +5097,12 @@ class PropertiesPanel(QWidget):
                 lambda v, l=line, k=key: self._line_param_changed(l, k, v),
                 width=width))
 
-        add("FSR", 'FSR', 1e-9, 1e9, 4, 0.1,
-            "Free spectral range [a.u.]. With an end load this is the "
-            "geometric parameter v/2\u2113, not the mode spacing.")
+        add("FSR", 'FSR', 1e-9, 1e9, 9, 0.1,
+            "Free spectral range [a.u.]. With an end load or impedance "
+            "steps this is the geometric parameter v/2\u2113, not the mode "
+            "spacing \u2014 and it is the scale every mode frequency "
+            "derives from, so it carries more decimals than the rest.",
+            width=104)
         add("Ztx", 'Ztx', 1e-6, 1e6, 1, 1.0,
             ("Reference impedance: with sections below it no longer sets the "
              "line's own Z, only the scale the end load's f_Z is defined "

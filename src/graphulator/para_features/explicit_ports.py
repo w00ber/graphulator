@@ -456,11 +456,97 @@ class PortInputDialog(QDialog):
         return result
 
 
+# ---------------------------------------------------------------------------
+# Shared dialog widgets (port & line placement/edit)
+# ---------------------------------------------------------------------------
+#
+# These were dropped by 77e4cf7 while their two call sites in
+# PortInputDialog/LineInputDialog stayed, so placing a port or a line raised
+# NameError from the moment that commit landed -- nothing constructed either
+# dialog in the suite. Restored verbatim; the gate is
+# tests/test_gui_dialogs.py, which now builds every dialog in the module.
+
+def _color_button(initial, parent=None):
+    """Small swatch button opening a QColorDialog; .color() reads it."""
+    from PySide6.QtWidgets import QPushButton, QColorDialog
+    from PySide6.QtGui import QColor
+    btn = QPushButton(parent)
+    btn.setFixedSize(46, 22)
+
+    def _apply(name):
+        btn._color = name
+        btn.setStyleSheet(
+            f"background-color: {name}; border: 1px solid #888;")
+
+    def _pick():
+        col = QColorDialog.getColor(QColor(btn._color), btn.window())
+        if col.isValid():
+            _apply(col.name())
+
+    btn.clicked.connect(_pick)
+    btn.color = lambda: btn._color
+    _apply(initial)
+    return btn
+
+
+def _mult_spin(value, tooltip=''):
+    box = QDoubleSpinBox()
+    box.setRange(GLYPH_SIZE_MIN, GLYPH_SIZE_MAX)
+    box.setDecimals(2)
+    box.setSingleStep(0.1)
+    box.setValue(value)
+    if tooltip:
+        box.setToolTip(tooltip)
+    return box
+
+
+def _add_appearance_rows(form, obj, default_lw, default_fill):
+    """Length/height/stroke/color rows shared by the port & line dialogs.
+    Returns the widget dict; read back with _appearance_result."""
+    widgets = {}
+    widgets['w_mult'] = _mult_spin(obj.get('w_mult', 1.0),
+                                   "Stretch the glyph length "
+                                   "(× default; "
+                                   "arrow keys ←/"
+                                   "→ when selected)")
+    form.addRow("Length ×:", widgets['w_mult'])
+    widgets['h_mult'] = _mult_spin(obj.get('h_mult', 1.0),
+                                   "Stretch the glyph height "
+                                   "(× default; "
+                                   "arrow keys ↑/"
+                                   "↓ when selected)")
+    form.addRow("Height ×:", widgets['h_mult'])
+    lw = QDoubleSpinBox()
+    lw.setRange(0.25, 8.0)
+    lw.setDecimals(2)
+    lw.setSingleStep(0.25)
+    lw.setValue(float(obj.get('linewidth', default_lw)))
+    widgets['linewidth'] = lw
+    form.addRow("Stroke width:", lw)
+    widgets['color'] = _color_button(obj.get('color', 'black'))
+    form.addRow("Stroke color:", widgets['color'])
+    widgets['fill'] = _color_button(obj.get('fill', default_fill))
+    form.addRow("Fill color:", widgets['fill'])
+    return widgets
+
+
+def _appearance_result(widgets):
+    return {'w_mult': widgets['w_mult'].value(),
+            'h_mult': widgets['h_mult'].value(),
+            'linewidth': widgets['linewidth'].value(),
+            'color': widgets['color'].color(),
+            'fill': widgets['fill'].color()}
+
+
 def format_sections(sections):
     """[{'Z','frac'}, ...] -> 'Z:frac, Z:frac' (empty string for uniform)."""
     if not sections:
         return ''
-    return ', '.join(f"{sec['Z']:g}:{sec['frac']:g}" for sec in sections)
+    # .12g, not .6g: the fractions are normalized, so 2/3 prints as
+    # 0.666667 under %g and parses back to a DIFFERENT geometry -- opening
+    # a dialog and pressing OK would silently move the step.
+    return ', '.join(f"{sec['Z']:.12g}:{sec['frac']:.12g}"
+                     for sec in sections)
 
 
 def parse_sections(text):
@@ -517,7 +603,7 @@ class LineInputDialog(QDialog):
                 box.setToolTip(tooltip)
             return box
 
-        self.fsr_spin = spin(line.get('FSR', 1.0), 1e-9, 1e9, 4, 0.1,
+        self.fsr_spin = spin(line.get('FSR', 1.0), 1e-9, 1e9, 9, 0.1,
                              "Free spectral range [a.u.] (comb mode spacing)")
         form.addRow("FSR [au]:", self.fsr_spin)
         self.ztx_spin = spin(line.get('Ztx', 65.0), 1e-6, 1e6, 2, 1.0,
