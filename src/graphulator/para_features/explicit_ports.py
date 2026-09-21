@@ -538,6 +538,101 @@ def _appearance_result(widgets):
             'fill': widgets['fill'].color()}
 
 
+#: f_ref for a line placed before anything has been edited. Thereafter the
+#: app's sticky value (config.LINE_SECTION_FREF) is used, and persisted.
+SECTION_FREF_FALLBACK = 6.0
+
+
+def sticky_section_fref():
+    """The f_ref a newly placed line inherits: whatever was most recently
+    edited on any line, falling back to SECTION_FREF_FALLBACK."""
+    from .. import graphulator_para_config as _config
+    return float(getattr(_config, 'LINE_SECTION_FREF', SECTION_FREF_FALLBACK))
+
+
+def remember_section_fref(f_ref):
+    """Make `f_ref` the sticky default and persist it across restarts."""
+    from .. import graphulator_para_config as _config
+    _config.LINE_SECTION_FREF = float(f_ref)
+    try:
+        from ..para_core.settings_manager import get_settings_manager
+        get_settings_manager().save({'LINE_SECTION_FREF': float(f_ref)})
+    except Exception as exc:                      # pragma: no cover
+        logger.warning("Could not persist f_ref default: %s", exc)
+
+
+def sections_total_theta(FSR, f_ref):
+    """Total electrical length of a line in DEGREES at f_ref.
+
+    theta_j = 360 f_ref l_j / v and FSR = v / 2 l_tot, so
+
+        sum_j theta_j = 360 f_ref l_tot / v = 180 f_ref / FSR.
+    """
+    return 180.0 * float(f_ref) / float(FSR)
+
+
+def sections_fsr_from_theta(total_theta, f_ref):
+    """The inverse: FSR = 180 f_ref / sum_j theta_j."""
+    if total_theta <= 0:
+        raise ValueError("total electrical length must be > 0")
+    return 180.0 * float(f_ref) / float(total_theta)
+
+
+def format_sections_theta(sections, FSR, f_ref, Ztx=None):
+    """'Z:theta, Z:theta' in DEGREES at f_ref -- the input/display form.
+
+    A line is specified by what it physically is: a run of impedance Z that
+    is theta degrees long at a stated frequency. The stored form stays
+    (Z, frac) + FSR; theta is a view of it, so re-rendering at a different
+    f_ref changes these numbers and NOT the geometry.
+    """
+    total = sections_total_theta(FSR, f_ref)
+    secs = sections or [{'Z': Ztx if Ztx is not None else 50.0, 'frac': 1.0}]
+    return ', '.join(f"{sec['Z']:.12g}:{sec['frac'] * total:.10g}"
+                     for sec in secs)
+
+
+def parse_sections_theta(text, f_ref):
+    """'47.3:120, 51.4:60' at f_ref -> (sections, FSR, Ztx_if_uniform).
+
+    Returns sections = None for a single section: that is an ordinary
+    uniform line whose LENGTH was given as an electrical angle, and its Z
+    becomes the line's Ztx. Two or more sections give the stepped list with
+    normalized fractions. Raises ValueError with a readable reason.
+    """
+    text = (text or '').strip()
+    if not text:
+        return None, None, None
+    pairs = []
+    for i, tok in enumerate(t.strip() for t in text.replace(';', ',').split(',')):
+        if not tok:
+            continue
+        if ':' not in tok:
+            raise ValueError(
+                f"section {i + 1}: expected 'Z:theta' (theta in degrees at "
+                f"f_ref), got {tok!r}")
+        z, th = tok.split(':', 1)
+        try:
+            Z, theta = float(z), float(th)
+        except ValueError:
+            raise ValueError(f"section {i + 1}: expected numbers in "
+                             f"'Z:theta', got {tok!r}")
+        if Z <= 0:
+            raise ValueError(f"section {i + 1}: Z must be > 0, got {Z:g}")
+        if theta <= 0:
+            raise ValueError(f"section {i + 1}: theta must be > 0 degrees, "
+                             f"got {theta:g}")
+        pairs.append((Z, theta))
+    if not pairs:
+        return None, None, None
+    total = sum(theta for _, theta in pairs)
+    FSR = sections_fsr_from_theta(total, f_ref)
+    if len(pairs) == 1:
+        return None, FSR, pairs[0][0]          # a uniform line, length given
+    return ([{'Z': Z, 'frac': theta / total} for Z, theta in pairs],
+            FSR, None)
+
+
 def format_sections(sections):
     """[{'Z','frac'}, ...] -> 'Z:frac, Z:frac' (empty string for uniform)."""
     if not sections:
@@ -609,9 +704,13 @@ class LineInputDialog(QDialog):
         self.ztx_spin = spin(line.get('Ztx', 65.0), 1e-6, 1e6, 2, 1.0,
                              "Line characteristic impedance")
         form.addRow("Ztx [\N{GREEK CAPITAL LETTER OMEGA}]:", self.ztx_spin)
-        self.sections_edit = QLineEdit(format_sections(line.get('sections')))
+        self._f_ref = float(line.get('f_ref') or sticky_section_fref())
+        self.sections_edit = QLineEdit(
+            format_sections_theta(line.get('sections'),
+                                  float(line.get('FSR') or 1.0), self._f_ref,
+                                  Ztx=line.get('Ztx')) if line else '')
         self.sections_edit.setPlaceholderText(
-            "uniform (Ztx)  \u2014  or  Z:frac, Z:frac, \u2026  from x0 to xL")
+            f"Z:\u03b8, Z:\u03b8, \u2026 degrees @ f_ref = {self._f_ref:g}")
         self.sections_edit.setToolTip(self.SECTIONS_TOOLTIP)
         sec_label = QLabel("Sections:")
         sec_label.setToolTip(self.SECTIONS_TOOLTIP)
@@ -794,7 +893,25 @@ class LineInputDialog(QDialog):
 
     def _current_sections(self):
         """Parsed sections, or None; raises ValueError on a bad spec."""
-        return parse_sections(self.sections_edit.text())
+        return self._current_geometry()[0]
+
+    def _current_geometry(self):
+        """(sections, FSR, Ztx) from the 'Z:theta' field, read at this
+        dialog's f_ref. FSR and Ztx come back None for an empty field,
+        meaning 'leave the spinboxes alone'."""
+        return parse_sections_theta(self.sections_edit.text(), self._f_ref)
+
+    def _geometry_result(self):
+        """sections / FSR / Ztx / f_ref, with the ANGLE FIELD winning over
+        the FSR and Ztx spinboxes when it is filled in: it is the more
+        specific statement of the same geometry (docs sec. 9.6)."""
+        sections, FSR, Ztx = self._current_geometry()
+        out = {'sections': sections, 'f_ref': self._f_ref}
+        if FSR is not None:
+            out['FSR'] = FSR
+            if Ztx is not None:
+                out['Ztx'] = Ztx
+        return out
 
     def _current_load(self):
         value = self.load_combo.currentData()
@@ -865,7 +982,7 @@ class LineInputDialog(QDialog):
             'Ztx': self.ztx_spin.value(),
             'f_max': self.fmax_spin.value(),
             'load': self._current_load(),
-            'sections': self._current_sections(),
+            **self._geometry_result(),
             'port_end': (self.port_end_combo.currentData()
                          if self.port_end_combo is not None else None),
             'end_coupling': {e: c.currentData()
@@ -1301,7 +1418,8 @@ class ExplicitPortsMixin:
                            Z0_port=50.0, alpha_uniform=0.0, angle=0.0,
                            end_coupling=None, w_mult=1.0, h_mult=1.0,
                            linewidth=None, color='black', fill='#cccccc',
-                           conj=False, twin_of=None, load=None, sections=None):
+                           conj=False, twin_of=None, load=None, sections=None,
+                           f_ref=None):
         """Create a transmission-line macro glyph."""
         if label is None:
             label = f"TL{self.line_id_counter + 1}"
@@ -1345,6 +1463,11 @@ class ExplicitPortsMixin:
             # Stepped impedance: [{'Z', 'frac'}, ...] from x0 to xL (see
             # set_line_sections); None is the uniform line at Ztx.
             'sections': ([dict(sec) for sec in sections] if sections else None),
+            # The frequency the section angles are quoted at. An INPUT and
+            # DISPLAY convention only -- (Z, frac) + FSR is what is solved,
+            # so changing f_ref re-renders the angles and cannot move S.
+            'f_ref': float(f_ref if f_ref is not None
+                           else sticky_section_fref()),
         }
         # Validate parameters early through the numerics-side schema, and
         # keep its canonical sections (normalized fractions)
@@ -1783,12 +1906,20 @@ class ExplicitPortsMixin:
             if self._attach_pending_line_end == hit_end:
                 self._attach_pending_line_end = None
                 self._status_message("Line-end connection cancelled", 4000)
+            elif (self._attach_pending_line_end is not None
+                    and self._attach_pending_line_end[0] is not line):
+                # a second line end: COMPOSE the two into one line
+                first, first_end = self._attach_pending_line_end
+                self._attach_pending_line_end = None
+                self._join_line_ends_interactively(first, first_end,
+                                                   line, end)
             else:
                 self._attach_pending_line_end = hit_end
                 self._attach_pending_port = None
                 self._status_message(
                     f"'{line['label']}' {end} end selected \u2014 now click a "
-                    "port glyph to terminate it.", 6000)
+                    "port glyph to terminate it, a mode to tap it, or "
+                    "ANOTHER line's end to join them into one line.", 6000)
             self._update_plot()
             return True
 
@@ -1818,13 +1949,25 @@ class ExplicitPortsMixin:
             self._update_plot()
             return True
 
+        # --- a junction on a compound line: click to separate ---
+        hit_junction = self._find_line_junction_at_position(event.xdata,
+                                                            event.ydata)
+        if hit_junction is not None:
+            line, index = hit_junction
+            self._attach_pending_line_end = None
+            self._attach_pending_port = None
+            self._split_line_interactively(line, index)
+            return True
+
         # --- the line BODY: point at the end leads ---
         line = self._find_line_at_position(event.xdata, event.ydata)
         if line is not None:
             self._attach_pending_port = None
             self._status_message(
                 f"Connect '{line['label']}' by its END leads \u2014 click the "
-                "lead at either end, then a port glyph.", 8000)
+                "lead at either end, then a port glyph, a mode, or another "
+                "line's end. Click a JUNCTION to separate a compound line.",
+                8000)
             return True
 
         # --- a node completing a pending port or line end ---
@@ -2667,6 +2810,66 @@ class ExplicitPortsMixin:
         return {'x0': _rotate_point(x0, ly, lx, ly, angle),
                 'xL': _rotate_point(xL, ly, lx, ly, angle)}
 
+    def junction_points(self, line):
+        """[(index, x, y), ...] rotated canvas positions of the junctions of
+        a compound line -- the section boundaries. Empty for a uniform line."""
+        bands = self._line_section_bands(line)
+        if not bands:
+            return []
+        lx, ly = line['pos']
+        angle = line.get('angle', 0.0)
+        return [(i, *_rotate_point(bands[i][0], ly, lx, ly, angle))
+                for i in range(1, len(bands))]
+
+    def _find_line_junction_at_position(self, x, y, tol=None):
+        """(line, index) of the junction near (x, y), else None."""
+        if x is None or y is None:
+            return None
+        tol = tol if tol is not None else 0.45 * self.node_radius
+        best, best_d = None, tol
+        for line in reversed(self.line_resonators):
+            if line.get('twin_of') is not None:
+                continue                     # twins mirror; edit the primary
+            for index, jx, jy in self.junction_points(line):
+                d = float(np.hypot(x - jx, y - jy))
+                if d <= best_d:
+                    best, best_d = (line, index), d
+        return best
+
+    def _join_line_ends_interactively(self, a, end_a, b, end_b):
+        """Compose two lines, reporting the refusal reason when it fails."""
+        ok, reason = self.can_join_lines(a, end_a, b, end_b)
+        if not ok:
+            self._status_message(f"Cannot join: {reason}", 10000)
+            self._update_plot()
+            return None
+        label_b = b['label']
+        joined = self.join_lines(a, end_a, b, end_b)
+        n = len(joined.get('sections') or [])
+        self._status_message(
+            f"Joined '{label_b}' into '{joined['label']}' \u2014 one line, "
+            f"{n} sections, one set of modes. Click a junction to separate.",
+            8000)
+        if hasattr(self, 'properties_panel'):
+            self.properties_panel._update_scattering_ports_table()
+        self._update_plot()
+        return joined
+
+    def _split_line_interactively(self, line, index):
+        try:
+            left, right = self.split_line_at_junction(line, index)
+        except ValueError as exc:
+            self._status_message(str(exc), 8000)
+            return None
+        self._status_message(
+            f"Separated '{left['label']}' \u2014 now two lines, "
+            f"'{left['label']}' and '{right['label']}', each with its own "
+            f"modes.", 8000)
+        if hasattr(self, 'properties_panel'):
+            self.properties_panel._update_scattering_ports_table()
+        self._update_plot()
+        return left, right
+
     def _find_line_end_at_position(self, x, y, tol=None):
         """Return (line, end) whose lead tip is near (x, y), else None."""
         if x is None or y is None:
@@ -2998,6 +3201,7 @@ class ExplicitPortsMixin:
                 load=(dict(line['load']) if line.get('load') else None),
                 sections=([dict(sec) for sec in line['sections']]
                           if line.get('sections') else None),
+                f_ref=line.get('f_ref'),
                 end_coupling=dict(line.get('end_coupling') or {}),
                 w_mult=line.get('w_mult', 1.0), h_mult=line.get('h_mult', 1.0),
                 linewidth=line.get('linewidth'), color=line.get('color', 'black'),
@@ -3024,6 +3228,240 @@ class ExplicitPortsMixin:
         self._sync_twin(line)
         self._invalidate_scattering_data()
         return twin
+
+    def set_line_geometry_theta(self, line, spec, f_ref=None):
+        """Set the line's impedance profile AND length from 'Z:theta, ...'.
+
+        The angles are read at `f_ref` (default: the line's own). This is
+        the input convention of docs sec. 9.6: a line is what it physically
+        is -- runs of impedance Z, each theta degrees long at a stated
+        frequency -- rather than a fraction plus a back-solved FSR. The
+        stored form is unchanged: FSR and (Z, frac).
+
+        A single section is an ordinary uniform line whose length was given
+        as an angle; its Z becomes the line's Ztx.
+        """
+        if line.get('twin_of') is not None:
+            raise ValueError("Edit the primary line, not its conjugate twin.")
+        f_ref = float(f_ref if f_ref is not None
+                      else line.get('f_ref') or sticky_section_fref())
+        sections, FSR, Ztx = parse_sections_theta(spec, f_ref)
+        if FSR is None:
+            raise ValueError("give at least one 'Z:theta' section")
+        candidate = dict(line)
+        candidate['sections'] = sections
+        candidate['FSR'] = FSR
+        if Ztx is not None:
+            candidate['Ztx'] = Ztx
+        res = LineResonator(**line_payload(candidate))   # validates or raises
+        line['sections'] = ([dict(sec) for sec in res.sections]
+                            if res.sections else None)
+        line['FSR'] = FSR
+        if Ztx is not None:
+            line['Ztx'] = Ztx
+        line['f_ref'] = f_ref
+        self._sync_twin(line)
+        self._invalidate_scattering_data()
+        return line['sections']
+
+    def set_line_fref(self, line, f_ref):
+        """Re-quote this line's section angles at a different frequency.
+
+        A pure change of units: FSR, the fractions and therefore S are
+        untouched -- only the numbers the panel shows move. Also becomes
+        the sticky default for newly placed lines, persisted.
+        """
+        f_ref = float(f_ref)
+        if f_ref <= 0:
+            raise ValueError("f_ref must be > 0")
+        primary = self.line_primary(line) or line
+        primary['f_ref'] = f_ref
+        self._sync_twin(primary)
+        remember_section_fref(f_ref)
+        return f_ref
+
+    # ---- composition: joining lines end to end (docs sec. 9.7) ----
+    #
+    # A chain of sections joined end to end is ONE resonator with one set of
+    # normal modes, not several coupled ones: a junction is a continuity
+    # condition (voltage and current match), not a coupling rate, and each
+    # piece's own standing-wave modes are the wrong basis for the composite.
+    # So joining COMPOSES the pieces into a single macro whose `sections`
+    # are their impedances -- the same field a stepped line already uses --
+    # and the compound is one object: one label, one row, junction markers
+    # on the glyph. Separating dissolves it back; that is meant to be
+    # obvious rather than confirmed.
+
+    JUNCTION_ATTACH_REFUSAL = (
+        "'{label}' is a compound line: its junctions are snap points for "
+        "composition only, and nothing can be attached there yet. Connect "
+        "at one of its two FREE ends instead.\n\n"
+        "Why: a device tapped at an interior point needs the mode profile "
+        "u_n(s) at that point rather than u_n(end) -- tractable, and "
+        "gateable against the reference's a-basis transform. A STUB is a "
+        "different problem: it makes the structure a tree, so the modes "
+        "come from a recursive Y_in built from the leaves with "
+        "Y_left + Y_right + Y_stub = 0 at the junction and the mass summed "
+        "over branches -- not a coupling matrix between two mode combs. "
+        "Both are open items in TODO.md.")
+
+    def _line_end_is_free(self, line, end):
+        """Nothing attached at `end`: no port, no tap, no pumped element."""
+        return not (self._end_conns(line, end)
+                    or self._end_is_pumped(line, end)
+                    or (line.get('load') or {}).get('end') == end)
+
+    def _ordered_sections(self, line, reverse=False):
+        """The line's sections as an explicit list (a uniform line is one
+        section at its Ztx), optionally walked from xL to x0."""
+        secs = [dict(sec) for sec in (line.get('sections')
+                                      or [{'Z': line['Ztx'], 'frac': 1.0}])]
+        return secs[::-1] if reverse else secs
+
+    def can_join_lines(self, a, end_a, b, end_b):
+        """(ok, reason): may these two line ends be composed into one line?"""
+        if a is b:
+            return False, "a line cannot be joined to itself"
+        for line in (a, b):
+            if line.get('twin_of') is not None:
+                return False, (f"'{line['label']}' is a conjugate twin; "
+                               f"compose the primary instead")
+        for line, end in ((a, end_a), (b, end_b)):
+            if (line.get('load') or {}).get('end') == end:
+                return False, (
+                    f"'{line['label']}' carries its end load at {end}. "
+                    f"Joining there would put a shunt reactance INSIDE the "
+                    f"line, which makes the structure a tree -- see "
+                    f"TODO.md, stub support.")
+            if self._end_is_pumped(line, end):
+                return False, (f"'{line['label']}' is pumped at {end}; the "
+                               f"modulated element must stay at a free end")
+            if self._end_conns(line, end):
+                return False, (f"'{line['label']}' has something attached at "
+                               f"{end}. Free that end first: a junction "
+                               f"carries no attachments.")
+        if abs(float(a.get('f_max', 0)) - float(b.get('f_max', 0))) > 0:
+            pass                       # f_max is a truncation choice, not geometry
+        return True, ""
+
+    def join_lines(self, a, end_a, b, end_b):
+        """Compose two lines into one compound line and return it.
+
+        `b` is absorbed into `a` and its glyph removed. Lengths add, so with
+        l = v/2 FSR,
+
+            1/FSR = 1/FSR_a + 1/FSR_b,    frac_j <- frac_j * l_piece/l_total
+
+        and the section list is walked so that `a`'s free end stays x0 of
+        the compound. `a` keeps its label, position and appearance; the
+        compound's f_max is the larger of the two.
+        """
+        ok, reason = self.can_join_lines(a, end_a, b, end_b)
+        if not ok:
+            raise ValueError(reason)
+        # sections ordered x0 -> xL of the compound: a's free end leads
+        secs_a = self._ordered_sections(a, reverse=(end_a == 'x0'))
+        secs_b = self._ordered_sections(b, reverse=(end_b == 'xL'))
+        l_a, l_b = 1.0 / float(a['FSR']), 1.0 / float(b['FSR'])
+        total = l_a + l_b
+        merged = ([{'Z': sec['Z'], 'frac': sec['frac'] * l_a / total}
+                   for sec in secs_a]
+                  + [{'Z': sec['Z'], 'frac': sec['frac'] * l_b / total}
+                     for sec in secs_b])
+        # the ends that survive, and what was attached to them
+        keep_a = 'xL' if end_a == 'x0' else 'x0'
+        keep_b = 'x0' if end_b == 'xL' else 'xL'
+        b_conns = [dict(c) for c in self._end_conns(b, keep_b)]
+        b_load = dict(b['load']) if b.get('load') else None
+
+        self._save_state()
+        candidate = dict(a)
+        candidate['sections'] = merged
+        candidate['FSR'] = 1.0 / total
+        LineResonator(**line_payload(candidate))        # validates or raises
+
+        a['sections'] = merged
+        a['FSR'] = 1.0 / total
+        a['f_max'] = max(float(a['f_max']), float(b['f_max']))
+        # a's surviving end becomes x0 of the compound when it was xL
+        if end_a == 'x0':
+            a['ends'] = {'x0': [dict(c) for c in self._end_conns(a, 'xL')],
+                         'xL': []}
+            a['end_coupling'] = {
+                'x0': (a.get('end_coupling') or {}).get('xL', 'capacitive'),
+                'xL': (a.get('end_coupling') or {}).get('x0', 'capacitive')}
+            if a.get('load'):
+                a['load'] = dict(a['load'], end='x0')
+        a['ends']['xL'] = b_conns
+        if b_load:
+            a['load'] = dict(b_load, end='xL')
+        a.setdefault('end_coupling', {})['xL'] = (
+            (b.get('end_coupling') or {}).get(keep_b, 'capacitive'))
+        self.remove_line_resonator(b)
+        self._sync_twin(a)
+        self._invalidate_scattering_data()
+        return a
+
+    def split_line_at_junction(self, line, index):
+        """Dissolve a compound line at junction `index` (1 .. n_sections-1).
+
+        Returns (line, new_line): the piece keeping x0 is the original, the
+        piece keeping xL is a new glyph placed beside it. Each piece's FSR
+        follows from its share of the length; a piece left with one section
+        becomes an ordinary uniform line at that impedance.
+        """
+        secs = line.get('sections')
+        if not secs:
+            raise ValueError(f"'{line['label']}' is a single uniform line; "
+                             f"there is no junction to separate")
+        index = int(index)
+        if not 1 <= index <= len(secs) - 1:
+            raise ValueError(f"junction index must be 1..{len(secs) - 1}")
+        if line.get('twin_of') is not None:
+            raise ValueError("Separate the primary line, not its twin.")
+        left, right = secs[:index], secs[index:]
+        w_left = sum(sec['frac'] for sec in left)
+        FSR = float(line['FSR'])
+
+        def piece(sub, weight):
+            fr = [{'Z': sec['Z'], 'frac': sec['frac'] / weight} for sec in sub]
+            return (None if len(fr) == 1 else fr,
+                    fr[0]['Z'] if len(fr) == 1 else None,
+                    FSR / weight)
+
+        self._save_state()
+        r_sections, r_Ztx, r_FSR = piece(right, 1.0 - w_left)
+        lx, ly = line['pos']
+        offset = 2.2 * LINE_BODY_W * self.node_radius * line.get('w_mult', 1.0)
+        new = self.add_line_resonator(
+            label=f"{line['label']}b", pos=(lx + offset, ly),
+            angle=line.get('angle', 0.0), FSR=r_FSR,
+            Ztx=r_Ztx if r_Ztx is not None else line['Ztx'],
+            f_max=line['f_max'], port_end=None,
+            Z0_port=line.get('Z0_port', 50.0),
+            alpha_uniform=line.get('alpha_uniform', 0.0),
+            end_coupling=dict(line.get('end_coupling') or {}),
+            w_mult=line.get('w_mult', 1.0), h_mult=line.get('h_mult', 1.0),
+            linewidth=line.get('linewidth'), color=line.get('color', 'black'),
+            fill=line.get('fill', '#cccccc'), sections=r_sections,
+            f_ref=line.get('f_ref'))
+        # the xL end, its connections and any load, move to the new piece
+        new['ends']['xL'] = [dict(c) for c in self._end_conns(line, 'xL')]
+        if (line.get('load') or {}).get('end') == 'xL':
+            new['load'] = dict(line['load'])
+            line['load'] = None
+        line['ends']['xL'] = []
+
+        l_sections, l_Ztx, l_FSR = piece(left, w_left)
+        line['sections'] = l_sections
+        line['FSR'] = l_FSR
+        if l_Ztx is not None:
+            line['Ztx'] = l_Ztx
+        LineResonator(**line_payload(line))
+        LineResonator(**line_payload(new))
+        self._sync_twin(line)
+        self._invalidate_scattering_data()
+        return line, new
 
     def set_line_sections(self, line, sections):
         """Give `line` a stepped impedance profile (docs sec. 9).
@@ -3111,6 +3549,7 @@ class ExplicitPortsMixin:
         twin['load'] = (dict(line['load']) if line.get('load') else None)
         twin['sections'] = ([dict(sec) for sec in line['sections']]
                             if line.get('sections') else None)
+        twin['f_ref'] = float(line.get('f_ref') or sticky_section_fref())
         twin['end_coupling'] = dict(line.get('end_coupling')
                                     or {'x0': 'capacitive', 'xL': 'capacitive'})
         twin['label'] = f"{line['label']}*"
@@ -3907,6 +4346,7 @@ class ExplicitPortsMixin:
                     'load': (dict(l['load']) if l.get('load') else None),
                     'sections': ([dict(sec) for sec in l['sections']]
                                  if l.get('sections') else None),
+                    'f_ref': float(l.get('f_ref') or SECTION_FREF_FALLBACK),
                     'pump': (dict(l['pump']) if l.get('pump') else None),
                     'conj': bool(l.get('conj', False)),
                     'twin_of': l.get('twin_of'),
@@ -3996,6 +4436,8 @@ class ExplicitPortsMixin:
                 # canonicalized just below, once the dict is complete
                 'sections': ([dict(sec) for sec in ldata['sections']]
                              if ldata.get('sections') else None),
+                # display convention; older files predate it
+                'f_ref': float(ldata.get('f_ref') or sticky_section_fref()),
                 'pump': (dict(ldata['pump']) if ldata.get('pump') else None),
                 'conj': bool(ldata.get('conj', False)),
                 'twin_of': ldata.get('twin_of'),

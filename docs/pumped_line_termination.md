@@ -859,9 +859,92 @@ with nothing fitted: a 0.4 % first-principles account of the harmonic shift the
 step was designed to produce. The `INTERMODE_LEE2013_*` test scenes (File → Test)
 are built on this geometry.
 
+### 9.6 Specifying a line by what it is: $Z\!:\!\theta^\circ$ at $f_\mathrm{ref}$
+
+A line is physically a run of impedance $Z$ that is some number of degrees long
+at a stated frequency. Asking the user instead for a *fraction* plus an FSR — or
+worse, back-solving a length from a target resonance — states the same thing
+less directly. So the input convention is
+
+$$
+Z_1\!:\!\theta_1,\ Z_2\!:\!\theta_2,\ \dots \quad\text{at}\quad f_\mathrm{ref},
+$$
+
+from which the stored quantities follow in closed form:
+
+$$
+\boxed{\ \mathrm{FSR} = \frac{180\,f_\mathrm{ref}}{\sum_j \theta_j^\circ}\ },
+\qquad
+\mathrm{frac}_j = \frac{\theta_j}{\sum_k \theta_k},
+$$
+
+because $\theta_j = 360 f_\mathrm{ref}\ell_j/v$ and $\mathrm{FSR} = v/2\ell_\mathrm{tot}$.
+$\theta = 90^\circ$ is a quarter wave at $f_\mathrm{ref}$, $180^\circ$ a half wave.
+A **single** section is not a stepped line at all — it is an ordinary uniform
+line whose *length* was given as an angle, and its $Z$ becomes $Z_\mathrm{tx}$.
+
+$(Z, \mathrm{frac})$ + FSR remains the canonical stored form. $f_\mathrm{ref}$
+is an input and display convention only, carried per line and serialized, so
+**re-quoting at a different $f_\mathrm{ref}$ changes the printed angles and
+cannot move $S$** — gated by
+`test_requoting_at_another_f_ref_cannot_move_S`, which pins every mode
+frequency to bitwise equality across the change. A newly placed line inherits
+the $f_\mathrm{ref}$ last edited on any line (falling back to 6), and that
+sticky default is persisted to the user settings.
+
+### 9.7 Composition: placing lines and joining them
+
+A chain of sections joined end to end is **one resonator with one set of normal
+modes**, not several coupled ones. The junction is a continuity condition —
+voltage and current match across it — not a coupling rate, and each piece's own
+standing-wave modes are the wrong basis for the composite. So joining two line
+glyphs *composes* them into a single macro whose `sections` are their
+impedances, which is the field §9.1 already defines; the drawing mechanic is a
+front-end over it, not a second model.
+
+Lengths add, so with $\ell = v/2\,\mathrm{FSR}$,
+
+$$
+\frac{1}{\mathrm{FSR}} = \frac{1}{\mathrm{FSR}_a} + \frac{1}{\mathrm{FSR}_b},
+\qquad
+\mathrm{frac}_j \leftarrow \mathrm{frac}_j\,\frac{\ell_\mathrm{piece}}{\ell_\mathrm{total}} ,
+$$
+
+and which ends are clicked sets the order of the section list and which two
+ends stay free. Composing two pieces lands on *exactly* the line you would have
+typed directly — verified bitwise on FSR and on every mode frequency, for all
+four end pairings. Separating at a junction is the inverse and takes no
+confirmation: each piece recovers its share of the length, and a piece left
+with one section becomes an ordinary uniform line again.
+
+The compound is **one object**: one label, one row in Ports & Lines, and the
+junctions drawn on the glyph (the §9 band dividers already mark them).
+
+**Junctions carry no attachments.** They are snap points for composition only,
+and joining is refused at an end that holds a port, a tap, a pumped element or
+the end load — the last because a shunt reactance *inside* the line makes the
+structure a tree rather than a line. Two separate open cases sit behind that
+refusal, and the message names both:
+
+* **(A) a lumped device tapped at an interior point.** Tractable now: the tap
+  profile becomes $u_n(s)$ at the tap position instead of $u_n(\text{end})$,
+  and it is gateable against the reference's a-basis transform exactly as the
+  end taps were (§ tap couplings).
+* **(B) a stub.** Not tractable by the same move: the structure becomes a tree,
+  so the modes come from a recursive $Y_\mathrm{in}$ built from the leaves with
+  $Y_\mathrm{left} + Y_\mathrm{right} + Y_\mathrm{stub} = 0$ at the junction and
+  the mass summed over branches — **not** a coupling matrix between two mode
+  combs.
+
 **What shipped.** `LineResonator(sections=…)`, `set_line_sections`, the
 "Sections" field of the line dialog (`Z:frac, Z:frac` from $x_0$ to $x_L$, live
 mode preview), the Ports & Lines summary, serialization, twin mirroring, code
 export, and `line_fsr_for_target_general` (closed form when unloaded — $\theta_n$
-is then geometric — bisection on FSR when loaded). Not shipped: per-section phase
-velocity, per-section loss, a capacitive load (still §7.5).
+is then geometric — bisection on FSR when loaded). Then §9.6: the
+$Z\!:\!\theta^\circ$ at $f_\mathrm{ref}$ input convention
+(`set_line_geometry_theta`, `set_line_fref`, sticky and persisted), and §9.7:
+composition (`can_join_lines`, `join_lines`, `split_line_at_junction`,
+`junction_points`, and the canvas gesture — click one line's end, then
+another's, to join; click a junction to separate). Not shipped: per-section
+phase velocity, per-section loss, a capacitive load (still §7.5), and
+attachments at a junction (cases A and B above).

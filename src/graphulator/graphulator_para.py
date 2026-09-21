@@ -5173,34 +5173,48 @@ class PropertiesPanel(QWidget):
         hbox.addWidget(QLabel("mau"))
 
     SECTIONS_ROW_TOOLTIP = (
-        "Stepped impedance (docs sec. 9): sections of different Z along the "
-        "line, written  Z:frac, Z:frac, \u2026  from x0 to xL, frac the "
-        "share of the ELECTRICAL length (normalized; common phase "
-        "velocity). Empty = uniform line at Ztx.\n\n"
-        "The comb is re-derived on the piecewise basis \u2014 roots of the "
-        "cascaded source-free condition (no longer evenly spaced), "
-        "per-section energy normalization, end profiles \u2014 so the mode "
-        "frequencies, the participations and every mode's port linewidth "
-        "move together. Verified against the cascaded ABCD to 1e-15 with "
-        "the tail closure on (tests/test_stepped_line.py).\n\n"
+        "The line's geometry, as it physically is: runs of impedance Z, "
+        "each \u03b8 DEGREES long at the reference frequency f_ref \u2014\n"
+        "    Z:\u03b8, Z:\u03b8, \u2026   from x0 to xL\n"
+        "One section is an ordinary uniform line whose LENGTH you gave as "
+        "an angle (its Z becomes Ztx); two or more make it stepped.\n\n"
+        "\u03b8 = 90\u00b0 is a quarter wave at f_ref, 180\u00b0 a half "
+        "wave. The length follows in closed form,\n"
+        "    FSR = 180\u00b7f_ref / \u03a3\u03b8,   frac_j = "
+        "\u03b8_j / \u03a3\u03b8\n"
+        "so there is no back-solving for a length.\n\n"
+        "STORED form is (Z, frac) + FSR. f_ref is an input and display "
+        "convention only: re-quoting at another f_ref changes these numbers "
+        "and cannot move S. A new line inherits the f_ref you last used, "
+        "and that default survives a restart.\n\n"
+        "Stepped lines are re-derived on the piecewise basis (docs sec. 9) "
+        "\u2014 roots of the cascaded source-free condition, per-section "
+        "energy normalization \u2014 verified against the cascaded ABCD to "
+        "1e-15 with the tail closure on.\n\n"
         "Press Enter to apply; an invalid spec is refused and the field "
         "reverts.")
 
     def _add_line_sections_row(self, line, row):
-        """Editable 'Z:frac, ...' spec plus the impedance profile in words."""
-        from .para_features.explicit_ports import (format_sections,
-                                                   parse_sections)
+        """Geometry as 'Z:theta' at a per-line f_ref (docs sec. 9.6)."""
+        from .para_features.explicit_ports import (format_sections_theta,
+                                                   sticky_section_fref)
         g = self.graphulator
         hbox = QHBoxLayout()
         hbox.setSpacing(6)
-        lab = QLabel("sections:")
+        lab = QLabel("geometry:")
         lab.setToolTip(self.SECTIONS_ROW_TOOLTIP)
         hbox.addWidget(lab)
 
-        edit = QLineEdit(format_sections(line.get('sections')))
+        def spec_text():
+            return format_sections_theta(line.get('sections'), line['FSR'],
+                                         line.get('f_ref')
+                                         or sticky_section_fref(),
+                                         Ztx=line.get('Ztx'))
+
+        edit = QLineEdit(spec_text())
         edit.setToolTip(self.SECTIONS_ROW_TOOLTIP)
-        edit.setPlaceholderText("uniform \u2014 or  Z:frac, Z:frac, \u2026")
-        edit.setMaximumWidth(210)
+        edit.setPlaceholderText("Z:\u03b8, Z:\u03b8, \u2026")
+        edit.setMaximumWidth(220)
 
         summary = QLabel("")
         summary.setStyleSheet("color: #444; font-style: italic;")
@@ -5209,38 +5223,47 @@ class PropertiesPanel(QWidget):
         def describe():
             secs = line.get('sections')
             if not secs:
-                summary.setText("uniform at Ztx")
-                return
-            summary.setText("x0 \u2192 xL:  " + "  |  ".join(
-                f"{sec['Z']:g}\u03a9 \u00d7 {100 * sec['frac']:.0f}%"
-                for sec in secs))
+                summary.setText(f"uniform {line['Ztx']:g}\u03a9")
+            else:
+                summary.setText("x0 \u2192 xL:  " + "  |  ".join(
+                    f"{sec['Z']:g}\u03a9 \u00d7 {100 * sec['frac']:.0f}%"
+                    for sec in secs))
 
-        def apply():
+        def apply_spec():
             try:
-                wanted = parse_sections(edit.text())
+                g.set_line_geometry_theta(line, edit.text())
             except ValueError as exc:
                 g._status_message(str(exc), 8000)
-                edit.setText(format_sections(line.get('sections')))
+                edit.setText(spec_text())
                 return
-            if wanted == line.get('sections'):
-                return
-            try:
-                g.set_line_sections(line, wanted)
-            except ValueError as exc:
-                g._status_message(str(exc), 8000)
-                edit.setText(format_sections(line.get('sections')))
-                return
-            edit.setText(format_sections(line.get('sections')))
+            edit.setText(spec_text())
             describe()
-            self._schedule_scattering_update()
-            g._update_plot()
-            if hasattr(self, '_refresh_comb_notes'):
-                self._refresh_comb_notes()
-            if hasattr(self, '_refresh_mode_index_ranges'):
-                self._refresh_mode_index_ranges()
+            self._after_line_geometry_change(line)
 
-        edit.editingFinished.connect(apply)
+        edit.editingFinished.connect(apply_spec)
         hbox.addWidget(edit)
+
+        f_lab = QLabel("@ f_ref")
+        f_lab.setToolTip(self.SECTIONS_ROW_TOOLTIP)
+        hbox.addWidget(f_lab)
+
+        def apply_fref(v):
+            try:
+                g.set_line_fref(line, v)
+            except ValueError as exc:
+                g._status_message(str(exc), 6000)
+                return
+            edit.setText(spec_text())          # same geometry, new numbers
+            self._after_line_geometry_change(line, geometry_moved=False)
+
+        hbox.addWidget(self._physics_spin(
+            float(line.get('f_ref') or sticky_section_fref()),
+            1e-9, 1e12, 4, 0.1,
+            "Frequency the angles above are quoted at. Changing it "
+            "re-renders them and cannot move S; it also becomes the sticky "
+            "default for new lines, persisted across restarts.",
+            apply_fref, width=84))
+
         hbox.addWidget(summary)
         describe()
         hbox.addStretch()
@@ -5248,6 +5271,16 @@ class PropertiesPanel(QWidget):
         holder.setLayout(hbox)
         self.ports_param_layout.addWidget(holder, row, 0, 1, 4)
         return row + 1
+
+    def _after_line_geometry_change(self, line, geometry_moved=True):
+        g = self.graphulator
+        if geometry_moved:
+            self._schedule_scattering_update()
+        g._update_plot()
+        if hasattr(self, '_refresh_comb_notes'):
+            self._refresh_comb_notes()
+        if geometry_moved and hasattr(self, '_refresh_mode_index_ranges'):
+            self._refresh_mode_index_ranges()
 
     def _add_line_load_row(self, line, row):
         load = line['load']

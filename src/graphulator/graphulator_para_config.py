@@ -352,6 +352,12 @@ SPARAMS_PLOT_FIGURE_BACKGROUND = 'white'  # Figure background color
 # Drawn behind the traces at each line's mode frequencies. Defaults: black
 # dashed with round dash caps, half the trace linewidth, so the markers read
 # as annotation rather than as data.
+# Reference frequency the transmission-line section angles are quoted at.
+# A line is specified as Z:theta degrees @ f_ref; the stored form stays
+# (Z, frac) + FSR, so this is an input/display convention only and changing
+# it never moves S. Sticky: the last value edited on any line, persisted.
+LINE_SECTION_FREF = 6.0
+
 SPARAMS_MODE_MARKER_COLOR = 'black'
 SPARAMS_MODE_MARKER_STYLE = 'dashed'     # solid | dashed | dotted | dashdot
 SPARAMS_MODE_MARKER_LINEWIDTH_SCALE = 0.5   # x SPARAMS_PLOT_LINEWIDTH
