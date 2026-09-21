@@ -26,16 +26,21 @@ PREDICTS f_B/f_A = 3.089 with nothing fitted, against the paper's measured
 import json
 import os
 
-import numpy as np
-import pytest
-
-from graphulator import autograph
-from graphulator.autograph import LineResonator
-from tests import cmtline_core as core
-
+# Set BEFORE anything that may pull in Qt: the GUI half of this module
+# builds a window, and the platform plugin is chosen at import time. Ruff's
+# I001 autofix will hoist the imports above this block if the noqa goes
+# missing -- the suite masks it (another module gets there first), so it
+# only bites when this file is run alone.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if hasattr(os, "geteuid") and os.geteuid() == 0:
     os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
+
+import numpy as np                                          # noqa: E402
+import pytest                                               # noqa: E402
+
+from graphulator import autograph                           # noqa: E402
+from graphulator.autograph import LineResonator             # noqa: E402
+from tests import cmtline_core as core                      # noqa: E402
 
 FSR, ZREF, Z0 = 1.0, 50.0, 50.0
 SECS = [{'Z': 30.0, 'frac': 0.4}, {'Z': 80.0, 'frac': 0.6}]
@@ -247,6 +252,7 @@ def test_mass_is_the_sum_of_the_sections_energies():
     quadrature of c u_n^2 along the line, section by section, with the
     same continuous (u, w) state -- the closed form is exact, not fitted."""
     from scipy.integrate import quad
+
     from graphulator.autograph import _stepped_state
     line = LineResonator(line_id=0, FSR=1.0, Ztx=ZREF, f_max=6.0,
                          sections=SECS, load=LOAD)
@@ -310,7 +316,7 @@ def test_validation():
 # through the GUI: set, mirror to the twin, save, load, export
 # ---------------------------------------------------------------------------
 
-from tests.test_gui_hubs import para                            # noqa: E402,F401
+from tests.test_gui_hubs import para  # noqa: E402,F401
 
 
 def test_sections_through_the_gui_round_trip_and_reach_the_twin(para):
@@ -417,8 +423,8 @@ def test_caption_and_panel_row_name_the_sections(para):
     and absent from the glyph caption, which is how a stepped line looked
     exactly like a uniform one."""
     from PySide6.QtWidgets import QLineEdit
-    from graphulator.para_features.explicit_ports import (format_sections,
-                                                          parse_sections)
+
+    from graphulator.para_features.explicit_ports import format_sections, parse_sections
     gp, win, config = para
     config.EXPLICIT_PORTS_MODE = True
     win._apply_explicit_ports_mode()

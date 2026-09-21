@@ -26,9 +26,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if hasattr(os, "geteuid") and os.geteuid() == 0:
     os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
 
-from graphulator.autograph import LineResonator                 # noqa: E402
-from graphulator.para_features import explicit_ports as ep      # noqa: E402
-from tests.test_gui_hubs import para                            # noqa: E402,F401
+from graphulator.autograph import LineResonator  # noqa: E402
+from graphulator.para_features import explicit_ports as ep  # noqa: E402
+from tests.test_gui_hubs import para  # noqa: E402,F401
 
 
 def test_shared_dialog_helpers_exist():
@@ -138,6 +138,7 @@ def test_attachment_dialog_builds_and_round_trips():
 def test_every_dialog_class_is_covered():
     """If a dialog is added to the module, it gets a gate here too."""
     import inspect
+
     from PySide6.QtWidgets import QDialog
     classes = {name for name, obj in vars(ep).items()
                if inspect.isclass(obj) and issubclass(obj, QDialog)
@@ -203,3 +204,111 @@ def test_placing_a_line_then_editing_it_keeps_it_valid(para, auto_accept):
     assert line['Ztx'] == pytest.approx(before['Ztx'])
     assert line['sections'] == before['sections']
     LineResonator(**ep.line_payload(line))  # still a valid macro
+
+
+# ---------------------------------------------------------------------------
+# the scattering-parameter dialogs (double-click a node / edge)
+# ---------------------------------------------------------------------------
+#
+# Same coverage hole as the placement dialogs, found by pyflakes rather than
+# by a user: _edit_scattering_node_parameters referenced an undefined
+# `original_node` inside its self-loop check, and both dialogs passed
+# `original_node` / `original_edge` to the row-scroller on accept. Three
+# live NameErrors, invisible to a suite that never opened them.
+
+
+def _two_node_graph(win):
+    from tests.test_gui_hubs import add_node
+    a = add_node(win, 0, 'a', -2.0, freq=5.0)
+    b = add_node(win, 1, 'b', 2.0, freq=6.0)
+    edge = {'from_node_id': 0, 'to_node_id': 1, 'from_node': a,
+            'to_node': b, 'is_self_loop': False, 'linewidth_mult': 1.0,
+            'selfloopangle': 30.0, 'selfloopscale': 1.0, 'flip': False,
+            'angle_pinned': False}
+    win.edges.append(edge)
+    win.scattering_assignments[(0, 1)] = {'f_p': 0.0, 'rate': 0.05,
+                                          'phase': 0.0}
+    return a, b, edge
+
+
+def _self_loop(win, node):
+    loop = {'from_node_id': node['node_id'], 'to_node_id': node['node_id'],
+            'from_node': node, 'to_node': node, 'is_self_loop': True,
+            'linewidth_mult': 1.0, 'selfloopangle': 30.0,
+            'selfloopscale': 1.0, 'flip': False, 'angle_pinned': False}
+    win.edges.append(loop)
+    return loop
+
+
+@pytest.fixture()
+def reject_dialogs(monkeypatch):
+    """Open the dialogs but decline, so the constructor path runs without
+    committing edits (the accept branch is exercised separately)."""
+    from PySide6.QtWidgets import QDialog
+    monkeypatch.setattr(QDialog, 'exec', lambda self: QDialog.Rejected)
+
+
+@pytest.fixture()
+def accept_dialogs(monkeypatch):
+    from PySide6.QtWidgets import QDialog
+    monkeypatch.setattr(QDialog, 'exec',
+                        lambda self: QDialog.DialogCode.Accepted)
+
+
+def test_scattering_node_dialog_opens(para, reject_dialogs):
+    gp, win, config = para
+    a, _, _ = _two_node_graph(win)
+    win._edit_scattering_node_parameters(a)       # raised NameError
+
+
+def test_scattering_node_dialog_finds_a_self_loop(para, reject_dialogs):
+    """The check must match on the stable node_id against the ORIGINAL
+    edges: a scattering-graph node is a copy, so comparing dicts would
+    silently report 'no self-loop' and hide the B_ext field."""
+    gp, win, config = para
+    a, _, _ = _two_node_graph(win)
+    _self_loop(win, a)
+    win._original_edges_for_lookup = list(win.edges)
+    copy_of_a = dict(a)                            # what the scattering graph holds
+    copy_of_a['pos'] = (99.0, 99.0)                # ... and it is NOT the same dict
+    win._edit_scattering_node_parameters(copy_of_a)
+    assert any(e.get('is_self_loop') and e['from_node_id'] == a['node_id']
+               for e in win._original_edges_for_lookup)
+
+
+def test_scattering_edge_dialog_opens(para, reject_dialogs):
+    gp, win, config = para
+    _, _, edge = _two_node_graph(win)
+    win._edit_scattering_edge_parameters(edge)
+
+
+def test_scattering_dialogs_commit_and_scroll(para, accept_dialogs):
+    """The accept branch calls _scroll_to_node_row / _scroll_to_edge_row --
+    both were handed undefined names."""
+    gp, win, config = para
+    a, _, edge = _two_node_graph(win)
+    win._edit_scattering_node_parameters(a)
+    assert 'freq' in win.scattering_assignments[0]
+    win._edit_scattering_edge_parameters(edge)
+    key = next(k for k in win.scattering_assignments if isinstance(k, tuple))
+    assert 'rate' in win.scattering_assignments[key]
+
+
+def test_no_undefined_names_in_the_package():
+    """The sweep, kept executable. pyflakes' undefined-name check is exactly
+    the NameError-at-runtime class that cost three bugs here; run it over
+    the shipped package so the next one fails in CI, not on a click."""
+    pyflakes = pytest.importorskip("pyflakes.api")
+    import io
+    import pathlib
+
+    from pyflakes.reporter import Reporter
+
+    root = pathlib.Path(__file__).resolve().parent.parent / 'src' / 'graphulator'
+    out, err = io.StringIO(), io.StringIO()
+    reporter = Reporter(out, err)
+    for path in sorted(root.rglob('*.py')):
+        pyflakes.checkPath(str(path), reporter)
+    undefined = [ln for ln in out.getvalue().splitlines()
+                 if 'undefined name' in ln]
+    assert not undefined, "\n".join(undefined)

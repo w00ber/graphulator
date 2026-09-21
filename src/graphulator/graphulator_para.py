@@ -14580,10 +14580,14 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         if node.get('conj', False):
             node_label += '*'
 
-        # Check if node has self-loop
+        # Check if node has self-loop, in the ORIGINAL edges and on the
+        # stable node_id -- the scattering-graph node is a copy, so a dict
+        # comparison against edge['from_node'] would not match even once the
+        # name resolved. Mirrors the check in _check_node_assignments.
         has_selfloop = any(
-            edge.get('is_self_loop', False) and edge['from_node'] == original_node
-            for edge in (self._original_edges_for_lookup if hasattr(self, '_original_edges_for_lookup') else self.edges)
+            edge.get('is_self_loop', False)
+            and edge['from_node_id'] == node['node_id']
+            for edge in getattr(self, '_original_edges_for_lookup', self.edges)
         )
 
         # Get current assignments
@@ -14657,7 +14661,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
             # Scroll to and highlight the row if scattering tab is visible
             if hasattr(self.properties_panel, '_scroll_to_node_row'):
-                self.properties_panel._scroll_to_node_row(original_node)
+                self.properties_panel._scroll_to_node_row(node)
 
         # Clear selection to remove red indicator (whether OK or Cancel was clicked)
         self.selected_nodes.clear()
@@ -14762,7 +14766,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
             # Scroll to and highlight the row if scattering tab is visible
             if hasattr(self.properties_panel, '_scroll_to_edge_row'):
-                self.properties_panel._scroll_to_edge_row(original_edge)
+                self.properties_panel._scroll_to_edge_row(edge)
 
         # Clear selection to remove red indicator (whether OK or Cancel was clicked)
         self.selected_nodes.clear()
