@@ -4947,12 +4947,13 @@ class PropertiesPanel(QWidget):
                 header(f"{line['label']}  (conjugate twin of "
                        f"{primary['label'] if primary else '?'})",
                        "Same physical line seen in the idler sector; edit "
-                       "FSR, Ztx, f_max, Z0, \u03b1 and the load on the "
-                       "primary.")
+                       "FSR, Ztx, f_max, Z0, \u03b1, the sections and the "
+                       "load on the primary.")
                 row = self._add_line_end_rows(line, row)
                 continue
             header(f"{line['label']}  (transmission line)")
             row = self._add_line_physics_row(line, row)
+            row = self._add_line_sections_row(line, row)
             load = line.get('load')
             if load:
                 row = self._add_line_load_row(line, row)
@@ -5099,7 +5100,11 @@ class PropertiesPanel(QWidget):
         add("FSR", 'FSR', 1e-9, 1e9, 4, 0.1,
             "Free spectral range [a.u.]. With an end load this is the "
             "geometric parameter v/2\u2113, not the mode spacing.")
-        add("Ztx", 'Ztx', 1e-6, 1e6, 1, 1.0, "Line characteristic impedance",
+        add("Ztx", 'Ztx', 1e-6, 1e6, 1, 1.0,
+            ("Reference impedance: with sections below it no longer sets the "
+             "line's own Z, only the scale the end load's f_Z is defined "
+             "against (L = Ztx/2\u03c0f_Z)."
+             if line.get('sections') else "Line characteristic impedance"),
             width=64)
         add("f_max", 'f_max', 1e-9, 1e12, 3, 1.0,
             "Comb extent: the modes kept explicitly (N pairs). The modes "
@@ -5113,18 +5118,6 @@ class PropertiesPanel(QWidget):
         # map B_int = (2/pi) alpha FSR is exact and linear, so this is a
         # change of units and not of model; note it therefore TRACKS FSR.
         self._add_line_loss_spin(hbox, line)
-        if line.get('sections'):
-            from .para_features.explicit_ports import format_sections
-            steps = QLabel("stepped " + " | ".join(
-                f"{sec['Z']:g}\u03a9\u00d7{sec['frac']:.3g}"
-                for sec in line['sections']))
-            steps.setToolTip(
-                "Stepped impedance, Z\u00d7fraction of electrical length "
-                "from x0 to xL (edit via Edit\u2026). Ztx is then the "
-                "reference impedance for the load's f_Z. Spec: "
-                + format_sections(line['sections']))
-            steps.setStyleSheet("color: #444; font-style: italic;")
-            hbox.addWidget(steps)
         hbox.addStretch()
         edit_btn = QPushButton("Edit\N{HORIZONTAL ELLIPSIS}")
         edit_btn.setMaximumWidth(60)
@@ -5175,6 +5168,83 @@ class PropertiesPanel(QWidget):
             0.0, 1e9, 3, 1.0, self.LOSS_RATE_TOOLTIP, apply, width=76)
         hbox.addWidget(spin)
         hbox.addWidget(QLabel("mau"))
+
+    SECTIONS_ROW_TOOLTIP = (
+        "Stepped impedance (docs sec. 9): sections of different Z along the "
+        "line, written  Z:frac, Z:frac, \u2026  from x0 to xL, frac the "
+        "share of the ELECTRICAL length (normalized; common phase "
+        "velocity). Empty = uniform line at Ztx.\n\n"
+        "The comb is re-derived on the piecewise basis \u2014 roots of the "
+        "cascaded source-free condition (no longer evenly spaced), "
+        "per-section energy normalization, end profiles \u2014 so the mode "
+        "frequencies, the participations and every mode's port linewidth "
+        "move together. Verified against the cascaded ABCD to 1e-15 with "
+        "the tail closure on (tests/test_stepped_line.py).\n\n"
+        "Press Enter to apply; an invalid spec is refused and the field "
+        "reverts.")
+
+    def _add_line_sections_row(self, line, row):
+        """Editable 'Z:frac, ...' spec plus the impedance profile in words."""
+        from .para_features.explicit_ports import (format_sections,
+                                                   parse_sections)
+        g = self.graphulator
+        hbox = QHBoxLayout()
+        hbox.setSpacing(6)
+        lab = QLabel("sections:")
+        lab.setToolTip(self.SECTIONS_ROW_TOOLTIP)
+        hbox.addWidget(lab)
+
+        edit = QLineEdit(format_sections(line.get('sections')))
+        edit.setToolTip(self.SECTIONS_ROW_TOOLTIP)
+        edit.setPlaceholderText("uniform \u2014 or  Z:frac, Z:frac, \u2026")
+        edit.setMaximumWidth(210)
+
+        summary = QLabel("")
+        summary.setStyleSheet("color: #444; font-style: italic;")
+        summary.setToolTip(self.SECTIONS_ROW_TOOLTIP)
+
+        def describe():
+            secs = line.get('sections')
+            if not secs:
+                summary.setText("uniform at Ztx")
+                return
+            summary.setText("x0 \u2192 xL:  " + "  |  ".join(
+                f"{sec['Z']:g}\u03a9 \u00d7 {100 * sec['frac']:.0f}%"
+                for sec in secs))
+
+        def apply():
+            try:
+                wanted = parse_sections(edit.text())
+            except ValueError as exc:
+                g._status_message(str(exc), 8000)
+                edit.setText(format_sections(line.get('sections')))
+                return
+            if wanted == line.get('sections'):
+                return
+            try:
+                g.set_line_sections(line, wanted)
+            except ValueError as exc:
+                g._status_message(str(exc), 8000)
+                edit.setText(format_sections(line.get('sections')))
+                return
+            edit.setText(format_sections(line.get('sections')))
+            describe()
+            self._schedule_scattering_update()
+            g._update_plot()
+            if hasattr(self, '_refresh_comb_notes'):
+                self._refresh_comb_notes()
+            if hasattr(self, '_refresh_mode_index_ranges'):
+                self._refresh_mode_index_ranges()
+
+        edit.editingFinished.connect(apply)
+        hbox.addWidget(edit)
+        hbox.addWidget(summary)
+        describe()
+        hbox.addStretch()
+        holder = QWidget()
+        holder.setLayout(hbox)
+        self.ports_param_layout.addWidget(holder, row, 0, 1, 4)
+        return row + 1
 
     def _add_line_load_row(self, line, row):
         load = line['load']

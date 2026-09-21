@@ -337,3 +337,119 @@ def test_sections_through_the_gui_round_trip_and_reach_the_twin(para):
     win._enter_scattering_mode()
     code = win.properties_panel._generate_scattering_calculation_code()
     assert code is not None and "sections=[{'Z': 30.0, 'frac': 0.4}" in code
+
+
+# ---------------------------------------------------------------------------
+# the drawing says so: bands, dividers, caption, panel row
+# ---------------------------------------------------------------------------
+
+def test_glyph_draws_one_band_per_section_thinner_for_higher_Z(para):
+    """A stepped line must LOOK stepped. Band thickness follows the
+    transmission-line reading -- higher Z is a thinner conductor -- and the
+    length-weighted mean is the nominal height, so a uniform line is drawn
+    exactly as before and a stepped one keeps its footprint."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    uni = win.add_line_resonator(label='U', pos=(0.0, 4.0), FSR=1.0, Ztx=50.0,
+                                 f_max=6.0, port_end='xL')
+    assert win._line_section_bands(uni) is None          # unchanged path
+
+    line = win.add_line_resonator(label='S', pos=(0.0, 0.0), FSR=1.0,
+                                  Ztx=50.0, f_max=6.0, port_end='xL',
+                                  sections=[{'Z': 20.0, 'frac': 0.35},
+                                            {'Z': 90.0, 'frac': 0.4},
+                                            {'Z': 45.0, 'frac': 0.25}])
+    bands = win._line_section_bands(line)
+    assert len(bands) == 3
+    lx, ly, w, h, _ = win._line_geometry(line)
+    # bands tile the body exactly, in order, with the right lengths
+    assert bands[0][0] == pytest.approx(lx - w)
+    assert bands[-1][1] == pytest.approx(lx + w)
+    for (_, x_hi, _, _, _), (x_lo, _, _, _, _) in zip(bands, bands[1:]):
+        assert x_hi == pytest.approx(x_lo)
+    for (x_lo, x_hi, _, _, frac) in bands:
+        assert x_hi - x_lo == pytest.approx(2 * w * frac)
+    # higher Z -> thinner, monotonically
+    hs = {Z: bh for _, _, bh, Z, _ in bands}
+    assert hs[20.0] > hs[45.0] > hs[90.0]
+    lo_f, hi_f = win.LINE_SECTION_H_RANGE
+    for _, _, bh, _, _ in bands:
+        assert lo_f * h - 1e-12 <= bh <= hi_f * h + 1e-12
+
+    # equal impedances reproduce the uniform height exactly
+    flat = win.add_line_resonator(label='F', pos=(0.0, -4.0), FSR=1.0,
+                                  Ztx=50.0, f_max=6.0, port_end='xL',
+                                  sections=[{'Z': 50.0, 'frac': 0.3},
+                                            {'Z': 50.0, 'frac': 0.7}])
+    _, _, _, h_flat, _ = win._line_geometry(flat)
+    for _, _, bh, _, _ in win._line_section_bands(flat):
+        assert bh == pytest.approx(h_flat)
+    # ... and so do its lead tips, which follow the END sections' caps
+    assert (win._line_end_points(flat)['x0'][0]
+            == pytest.approx(win._line_end_points(uni)['x0'][0]))
+
+
+def test_sections_are_stored_canonically(para):
+    """line['sections'] always holds NORMALIZED fractions, whichever door
+    they came in by -- the glyph lays the body out from these numbers
+    directly, so raw 'Z:2, Z:1' input would draw a body twice too long."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    raw = [{'Z': 25.0, 'frac': 1.0}, {'Z': 75.0, 'frac': 3.0}]
+    line = win.add_line_resonator(label='A', pos=(0.0, 0.0), FSR=1.0,
+                                  Ztx=50.0, f_max=6.0, port_end='xL',
+                                  sections=raw)
+    assert [s['frac'] for s in line['sections']] == [0.25, 0.75]
+    win.set_line_sections(line, [{'Z': 47.3, 'frac': 2.0},
+                                 {'Z': 51.4, 'frac': 1.0}])
+    assert [round(s['frac'], 10) for s in line['sections']] == [
+        round(2 / 3, 10), round(1 / 3, 10)]
+    # and the bands then tile the body exactly
+    lx, _, w, _, _ = win._line_geometry(line)
+    bands = win._line_section_bands(line)
+    assert bands[-1][1] == pytest.approx(lx + w)
+
+
+def test_caption_and_panel_row_name_the_sections(para):
+    """The parameter has to be READABLE: it was clipped off the physics row
+    and absent from the glyph caption, which is how a stepped line looked
+    exactly like a uniform one."""
+    from PySide6.QtWidgets import QLineEdit
+    from graphulator.para_features.explicit_ports import (format_sections,
+                                                          parse_sections)
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    line = win.add_line_resonator(label='TL', pos=(0.0, 0.0), FSR=1.0,
+                                  Ztx=50.0, f_max=6.0, port_end='xL',
+                                  sections=SECS)
+    assert format_sections(SECS) == '30:0.4, 80:0.6'
+    assert parse_sections('30:0.4, 80:0.6') == SECS
+    assert parse_sections('  ') is None
+    with pytest.raises(ValueError, match="Z:frac"):
+        parse_sections('30, 80')
+
+    win._enter_scattering_mode()
+    panel = win.properties_panel
+    panel._update_scattering_ports_table()
+    # the editable spec field is on the panel, showing the canonical spec
+    edits = [e for e in panel.ports_param_holder.findChildren(QLineEdit)
+             if e.text() == format_sections(SECS)] \
+        if hasattr(panel, 'ports_param_holder') else []
+    if not edits:            # holder name differs; search the whole panel
+        edits = [e for e in panel.findChildren(QLineEdit)
+                 if e.text() == format_sections(SECS)]
+    assert edits, "no sections field showing the spec"
+
+    # editing it applies through set_line_sections, canonically
+    edits[0].setText('25:1, 75:3')
+    edits[0].editingFinished.emit()
+    assert [s['frac'] for s in line['sections']] == [0.25, 0.75]
+    assert edits[0].text() == '25:0.25, 75:0.75'
+    # an invalid spec is refused and the field reverts
+    edits[0].setText('nonsense')
+    edits[0].editingFinished.emit()
+    assert line['sections'][0]['Z'] == 25.0
+    assert edits[0].text() == '25:0.25, 75:0.75'

@@ -1260,8 +1260,11 @@ class ExplicitPortsMixin:
             # set_line_sections); None is the uniform line at Ztx.
             'sections': ([dict(sec) for sec in sections] if sections else None),
         }
-        # Validate parameters early through the numerics-side schema
-        LineResonator(**line_payload(line))
+        # Validate parameters early through the numerics-side schema, and
+        # keep its canonical sections (normalized fractions)
+        _res = LineResonator(**line_payload(line))
+        line['sections'] = ([dict(sec) for sec in _res.sections]
+                            if _res.sections else None)
         self.line_resonators.append(line)
         self.line_id_counter += 1
 
@@ -2200,6 +2203,8 @@ class ExplicitPortsMixin:
             self._save_state()
             result.pop('port_end', None)   # topology is rewired on canvas
             line.update(result)
+            canon = LineResonator(**line_payload(line)).sections
+            line['sections'] = ([dict(sec) for sec in canon] if canon else None)
             self._sync_all_twins()         # load / sections reach the twin
             self._invalidate_scattering_data()
             if hasattr(self, 'properties_panel'):
@@ -2522,13 +2527,57 @@ class ExplicitPortsMixin:
         h = LINE_BODY_H * r * line.get('h_mult', 1.0)
         return lx, ly, w, h, 0.5 * h
 
+    #: Half-height clamp for a stepped body, in units of the nominal h.
+    #: A 10:1 step would otherwise draw a thread next to a sausage.
+    LINE_SECTION_H_RANGE = (0.35, 1.8)
+
+    def _line_section_bands(self, line):
+        """[(x_lo, x_hi, h_j, Z_j, frac_j), ...] for a stepped line, else None.
+
+        The body is drawn one band per section, thickness set by the
+        transmission-line reading of impedance: a HIGHER Z is a THINNER
+        conductor, so h_j is proportional to 1/Z_j, normalized so the
+        length-weighted mean is the nominal h (a uniform line is therefore
+        drawn exactly as before, and a stepped one keeps its footprint).
+
+        The mapping is proportional but CLAMPED, so it shows the ordering
+        and roughly the size of a step, not a calibrated width -- which is
+        why a divider line is drawn at every boundary regardless of how
+        small the contrast is.
+        """
+        secs = line.get('sections')
+        if not secs:
+            return None
+        lx, ly, w, h, _ = self._line_geometry(line)
+        norm = sum(sec['frac'] / sec['Z'] for sec in secs)
+        lo_f, hi_f = self.LINE_SECTION_H_RANGE
+        bands = []
+        x = lx - w
+        for sec in secs:
+            hj = h * (1.0 / sec['Z']) / norm if norm > 0 else h
+            hj = min(max(hj, lo_f * h), hi_f * h)
+            x_hi = x + 2 * w * sec['frac']
+            bands.append((x, x_hi, hj, sec['Z'], sec['frac']))
+            x = x_hi
+        return bands
+
+    def _line_end_cap_depths(self, line):
+        """(rx_x0, rx_xL): cap half-depths, which follow the END sections'
+        thicknesses on a stepped line so the stubs meet the lead tips."""
+        _, _, _, h, rx = self._line_geometry(line)
+        bands = self._line_section_bands(line)
+        if bands is None:
+            return rx, rx
+        return 0.5 * bands[0][2], 0.5 * bands[-1][2]
+
     def _line_end_points(self, line):
         """Rotated lead-tip coordinates of the line's two ends."""
         r = self.node_radius
         lx, ly, w, h, rx = self._line_geometry(line)
+        rx0, rxL = self._line_end_cap_depths(line)
         angle = line.get('angle', 0.0)
-        x0 = lx - w - rx - LINE_LEAD_LEN * r
-        xL = lx + w + rx + LINE_LEAD_LEN * r
+        x0 = lx - w - rx0 - LINE_LEAD_LEN * r
+        xL = lx + w + rxL + LINE_LEAD_LEN * r
         return {'x0': _rotate_point(x0, ly, lx, ly, angle),
                 'xL': _rotate_point(xL, ly, lx, ly, angle)}
 
@@ -2906,8 +2955,12 @@ class ExplicitPortsMixin:
         candidate = dict(line)
         candidate['sections'] = ([dict(sec) for sec in sections]
                                  if sections else None)
-        LineResonator(**line_payload(candidate))        # validates or raises
-        line['sections'] = candidate['sections']
+        # store the CANONICAL form (fractions normalized to sum to 1) so the
+        # glyph, the panel and the numerics all read the same numbers -- the
+        # bands lay the body out from these fracs directly
+        res = LineResonator(**line_payload(candidate))   # validates or raises
+        line['sections'] = ([dict(sec) for sec in res.sections]
+                            if res.sections else None)
         self._sync_twin(line)
         self._invalidate_scattering_data()
         return line['sections']
@@ -3573,32 +3626,51 @@ class ExplicitPortsMixin:
             # slender coax cylinder (diagrammer reference art): gray body,
             # closed rounded cap on the left, open elliptical mouth on the
             # right, terminal stubs on both ends
-            body = mpatches.Rectangle(
-                (lx - w, ly - h), 2 * w, 2 * h, facecolor=fill,
-                edgecolor='none', zorder=10, transform=glyph_tf)
-            ax.add_patch(body)
+            # A STEPPED line is drawn one band per section (thinner = higher
+            # impedance), with a divider at each boundary; an unstepped one
+            # is the single band it always was.
+            bands = self._line_section_bands(line)
+            if bands is None:
+                bands = [(lx - w, lx + w, h, None, 1.0)]
+            h_first, h_last = bands[0][2], bands[-1][2]
+            rx_first, rx_last = 0.5 * h_first, 0.5 * h_last
+            for bx0, bx1, bh, _, _ in bands:
+                ax.add_patch(mpatches.Rectangle(
+                    (bx0, ly - bh), bx1 - bx0, 2 * bh, facecolor=fill,
+                    edgecolor='none', zorder=10, transform=glyph_tf))
             left_fill = mpatches.Ellipse(
-                (lx - w, ly), 2 * rx, 2 * h, facecolor=fill,
+                (lx - w, ly), 2 * rx_first, 2 * h_first, facecolor=fill,
                 edgecolor='none', zorder=10, transform=glyph_tf)
             ax.add_patch(left_fill)
             left_arc = mpatches.Arc(
-                (lx - w, ly), 2 * rx, 2 * h, theta1=90, theta2=270,
+                (lx - w, ly), 2 * rx_first, 2 * h_first, theta1=90, theta2=270,
                 edgecolor=stroke, linewidth=lw, zorder=11,
                 transform=glyph_tf)
             ax.add_patch(left_arc)
             mouth = mpatches.Ellipse(
-                (lx + w, ly), 2 * rx, 2 * h, facecolor='white',
+                (lx + w, ly), 2 * rx_last, 2 * h_last, facecolor='white',
                 edgecolor=stroke, linewidth=lw, zorder=11,
                 transform=glyph_tf)
             ax.add_patch(mouth)
-            for seg in ((lx - w, ly - h, lx + w, ly - h),
-                        (lx - w, ly + h, lx + w, ly + h)):
-                ax.add_line(mlines.Line2D([seg[0], seg[2]], [seg[1], seg[3]],
-                                          color=stroke, linewidth=lw,
-                                          zorder=11, transform=glyph_tf))
+            for bx0, bx1, bh, _, _ in bands:
+                for yy in (ly - bh, ly + bh):
+                    ax.add_line(mlines.Line2D([bx0, bx1], [yy, yy],
+                                              color=stroke, linewidth=lw,
+                                              zorder=11, transform=glyph_tf))
+            # step dividers: drawn whatever the thickness contrast, so a
+            # small step (47.3 -> 51.4 is 8 %) is still visibly a step
+            for i in range(1, len(bands)):
+                xb = bands[i][0]
+                h_a, h_b = bands[i - 1][2], bands[i][2]
+                ax.add_line(mlines.Line2D(
+                    [xb, xb], [ly - max(h_a, h_b), ly + max(h_a, h_b)],
+                    color=stroke, linewidth=lw, zorder=11.2,
+                    transform=glyph_tf))
             # terminal stubs centered on both ends
-            for x0, x1 in ((lx - w - rx - LINE_LEAD_LEN * r, lx - w - rx),
-                           (lx + w + rx, lx + w + rx + LINE_LEAD_LEN * r)):
+            for x0, x1 in ((lx - w - rx_first - LINE_LEAD_LEN * r,
+                            lx - w - rx_first),
+                           (lx + w + rx_last,
+                            lx + w + rx_last + LINE_LEAD_LEN * r)):
                 ax.add_line(mlines.Line2D([x0, x1], [ly, ly],
                                           color=stroke, linewidth=lw,
                                           zorder=11, transform=glyph_tf))
@@ -3657,6 +3729,9 @@ class ExplicitPortsMixin:
 
             n_pairs = LineResonator(**line_payload(line)).N
             sub = f"FSR={line['FSR']:g}, N={n_pairs}"
+            if line.get('sections'):
+                sub += ", " + " | ".join(f"{sec['Z']:g}\u03a9"
+                                         for sec in line['sections'])
             terminated = [e for e in ('x0', 'xL')
                           if self._line_end_ports(line, e)]
             if terminated:
@@ -3832,12 +3907,21 @@ class ExplicitPortsMixin:
                 'Z0_port': float(ldata.get('Z0_port', 50.0)),
                 'alpha_uniform': float(ldata.get('alpha_uniform', 0.0)),
                 'load': (dict(ldata['load']) if ldata.get('load') else None),
+                # canonicalized just below, once the dict is complete
                 'sections': ([dict(sec) for sec in ldata['sections']]
                              if ldata.get('sections') else None),
                 'pump': (dict(ldata['pump']) if ldata.get('pump') else None),
                 'conj': bool(ldata.get('conj', False)),
                 'twin_of': ldata.get('twin_of'),
             }
+            if line.get('sections'):
+                try:
+                    canon = LineResonator(**line_payload(line)).sections
+                    line['sections'] = [dict(sec) for sec in canon]
+                except ValueError as exc:
+                    logger.warning("Dropping invalid sections on line %r: %s",
+                                   line['label'], exc)
+                    line['sections'] = None
             self.line_resonators.append(line)
             max_line_id = max(max_line_id, line['line_id'])
         self.line_id_counter = max_line_id + 1
