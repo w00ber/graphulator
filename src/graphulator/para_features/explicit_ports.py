@@ -77,7 +77,7 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QVBoxLayout,
                                QSpinBox, QHBoxLayout)
 
 from ..autograph import (LineResonator, LINE_LOAD_TYPES,
-                        line_fsr_for_target)
+                        line_fsr_for_target, line_fsr_for_target_general)
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +198,9 @@ def line_payload(line):
         'conj': bool(line.get('conj', False)),
         # a shunt reactance at one end; None keeps the open-open comb
         'load': (dict(line['load']) if line.get('load') else None),
+        # impedance steps along the line; None is the uniform line at Ztx
+        'sections': ([dict(sec) for sec in line['sections']]
+                     if line.get('sections') else None),
     }
 
 
@@ -205,6 +208,7 @@ def line_payload(line):
 # The twin is the SAME physical line seen in the idler sector, so it owns
 # only its layout (pos, angle, style) and its own end connections.
 TWIN_MIRRORED_KEYS = ('FSR', 'Ztx', 'f_max', 'Z0_port', 'alpha_uniform')
+# (load and sections are mirrored explicitly by _sync_twin as deep copies)
 PUMP_COUPLINGS = ('inductive', 'capacitive')
 
 # The pump couples EVERY mode n of the line to EVERY mode m of its twin
@@ -452,6 +456,38 @@ class PortInputDialog(QDialog):
         return result
 
 
+def format_sections(sections):
+    """[{'Z','frac'}, ...] -> 'Z:frac, Z:frac' (empty string for uniform)."""
+    if not sections:
+        return ''
+    return ', '.join(f"{sec['Z']:g}:{sec['frac']:g}" for sec in sections)
+
+
+def parse_sections(text):
+    """'47.3:2, 51.4:1' -> [{'Z': 47.3, 'frac': 2.0}, {'Z': 51.4, 'frac': 1.0}]
+    (fractions are normalized by LineResonator). Empty -> None (uniform).
+    Raises ValueError with a readable reason."""
+    text = (text or '').strip()
+    if not text:
+        return None
+    out = []
+    for i, tok in enumerate(t.strip() for t in text.replace(';', ',').split(',')):
+        if not tok:
+            continue
+        if ':' not in tok:
+            raise ValueError(f"section {i + 1}: expected 'Z:frac', got {tok!r}")
+        z, frac = tok.split(':', 1)
+        try:
+            out.append({'Z': float(z), 'frac': float(frac)})
+        except ValueError:
+            raise ValueError(f"section {i + 1}: expected numbers in 'Z:frac', "
+                             f"got {tok!r}")
+    if len(out) == 1:
+        raise ValueError("one section is just Ztx; give two or more, or "
+                         "leave empty for a uniform line")
+    return out or None
+
+
 class LineInputDialog(QDialog):
     """Property panel for a transmission-line (LineResonator) glyph."""
 
@@ -487,6 +523,13 @@ class LineInputDialog(QDialog):
         self.ztx_spin = spin(line.get('Ztx', 65.0), 1e-6, 1e6, 2, 1.0,
                              "Line characteristic impedance")
         form.addRow("Ztx [\N{GREEK CAPITAL LETTER OMEGA}]:", self.ztx_spin)
+        self.sections_edit = QLineEdit(format_sections(line.get('sections')))
+        self.sections_edit.setPlaceholderText(
+            "uniform (Ztx)  \u2014  or  Z:frac, Z:frac, \u2026  from x0 to xL")
+        self.sections_edit.setToolTip(self.SECTIONS_TOOLTIP)
+        sec_label = QLabel("Sections:")
+        sec_label.setToolTip(self.SECTIONS_TOOLTIP)
+        form.addRow(sec_label, self.sections_edit)
         self.fmax_spin = spin(line.get('f_max', 10.0), 1e-9, 1e12, 4, 1.0,
                               "Comb extent: N = ceil(f_max/FSR) mode pairs "
                               "from DC (full comb — band-limiting is Phase 2)")
@@ -579,6 +622,21 @@ class LineInputDialog(QDialog):
         "Z_ind = \u2212i\u03c9L, so an inductor's reactance is negative "
         "here \u2014 the opposite of the textbook.")
 
+    SECTIONS_TOOLTIP = (
+        "Stepped impedance (docs sec. 9): sections of different Ztx along "
+        "the line, written Z:frac, Z:frac, \u2026 from x0 to xL, frac the "
+        "share of the ELECTRICAL length (normalized; common phase "
+        "velocity). Empty = uniform line at Ztx.\n\n"
+        "The comb is then re-derived on the piecewise basis: the standing "
+        "wave is propagated through the steps (voltage and current "
+        "continuous), the modes are the roots of the cascaded source-free "
+        "condition -- no longer evenly spaced -- and each mode's mass is the "
+        "sum of its sections' energies. Verified against the cascaded ABCD "
+        "to 1e-15 with the tail closure on (tests/test_stepped_line.py).\n\n"
+        "With sections, Ztx above is the REFERENCE impedance the load's "
+        "f_Z is defined against (L = Ztx/2\u03c0f_Z), so the physical "
+        "element does not change when the line around it is stepped.")
+
     FZ_TOOLTIP = (
         "f_Z: the frequency at which |X_elem| = Ztx "
         "(= Ztx/2\u03c0L inductive). One number, in absolute frequency, "
@@ -645,7 +703,12 @@ class LineInputDialog(QDialog):
         for box in (self.fsr_spin, self.ztx_spin, self.fmax_spin,
                     self.fz_spin):
             box.valueChanged.connect(self._refresh_load_rows)
+        self.sections_edit.textChanged.connect(self._refresh_load_rows)
         self._refresh_load_rows()
+
+    def _current_sections(self):
+        """Parsed sections, or None; raises ValueError on a bad spec."""
+        return parse_sections(self.sections_edit.text())
 
     def _current_load(self):
         value = self.load_combo.currentData()
@@ -656,21 +719,33 @@ class LineInputDialog(QDialog):
 
     def _solve_fsr(self):
         load = self._current_load()
-        if load is None:
+        try:
+            sections = self._current_sections()
+        except ValueError:
             return
-        self.fsr_spin.setValue(line_fsr_for_target(
+        if load is None and not sections:
+            return
+        self.fsr_spin.setValue(line_fsr_for_target_general(
             float(self.target_spin.value()),
             int(self.target_mode_spin.value()),
-            load['f_Z'], load['type']))
+            load, sections, float(self.ztx_spin.value())))
 
     def _refresh_load_rows(self):
         """Enable the load widgets only when a load is chosen, and show
         where the loaded modes actually land."""
         load = self._current_load()
-        for w in (self.fz_spin, self.target_spin, self.target_mode_spin,
-                  self.solve_button):
-            w.setEnabled(load is not None)
-        if load is None:
+        try:
+            sections = self._current_sections()
+            sections_error = None
+        except ValueError as exc:
+            sections, sections_error = None, str(exc)
+        self.fz_spin.setEnabled(load is not None)
+        for w in (self.target_spin, self.target_mode_spin, self.solve_button):
+            w.setEnabled(load is not None or sections is not None)
+        if sections_error:
+            self.load_status.setText(f"Sections: {sections_error}")
+            return
+        if load is None and sections is None:
             self.solve_button.setToolTip(
                 "Unloaded, mode n sits at n\u00b7FSR \u2014 set FSR = f/n "
                 "directly. Choose an end load to solve for a dispersed comb.")
@@ -682,16 +757,20 @@ class LineInputDialog(QDialog):
             probe = LineResonator(
                 line_id='probe', FSR=float(self.fsr_spin.value()),
                 Ztx=float(self.ztx_spin.value()),
-                f_max=float(self.fmax_spin.value()), load=load)
+                f_max=float(self.fmax_spin.value()), load=load,
+                sections=sections)
             freqs = probe.mode_freqs()[:6]
         except Exception as exc:                        # pragma: no cover
             self.load_status.setText(str(exc))
             return
         shown = ", ".join(f"{f:g}" for f in freqs)
         more = " \u2026" if probe.N > len(freqs) else ""
+        what = ("Stepped" if sections else "Loaded")
+        dc = ("DC mode shorted away" if probe._skip_dc
+              else "free DC mode kept")
         self.load_status.setText(
-            f"Loaded modes: {shown}{more}   (N = {probe.N}; DC mode shorted "
-            f"away). FSR here is v/2\u2113, not the spacing.")
+            f"{what} modes: {shown}{more}   (N = {probe.N}; {dc}). FSR here "
+            f"is v/2\u2113, not the spacing.")
 
     def get_result(self):
         return {
@@ -700,6 +779,7 @@ class LineInputDialog(QDialog):
             'Ztx': self.ztx_spin.value(),
             'f_max': self.fmax_spin.value(),
             'load': self._current_load(),
+            'sections': self._current_sections(),
             'port_end': (self.port_end_combo.currentData()
                          if self.port_end_combo is not None else None),
             'end_coupling': {e: c.currentData()
@@ -1135,7 +1215,7 @@ class ExplicitPortsMixin:
                            Z0_port=50.0, alpha_uniform=0.0, angle=0.0,
                            end_coupling=None, w_mult=1.0, h_mult=1.0,
                            linewidth=None, color='black', fill='#cccccc',
-                           conj=False, twin_of=None, load=None):
+                           conj=False, twin_of=None, load=None, sections=None):
         """Create a transmission-line macro glyph."""
         if label is None:
             label = f"TL{self.line_id_counter + 1}"
@@ -1176,6 +1256,9 @@ class ExplicitPortsMixin:
             # Shunt reactance terminating ONE end (see set_line_load); None
             # leaves both ends open, which is the f_Z -> 0 inductive limit.
             'load': (dict(load) if load else None),
+            # Stepped impedance: [{'Z', 'frac'}, ...] from x0 to xL (see
+            # set_line_sections); None is the uniform line at Ztx.
+            'sections': ([dict(sec) for sec in sections] if sections else None),
         }
         # Validate parameters early through the numerics-side schema
         LineResonator(**line_payload(line))
@@ -2117,6 +2200,7 @@ class ExplicitPortsMixin:
             self._save_state()
             result.pop('port_end', None)   # topology is rewired on canvas
             line.update(result)
+            self._sync_all_twins()         # load / sections reach the twin
             self._invalidate_scattering_data()
             if hasattr(self, 'properties_panel'):
                 self.properties_panel._update_scattering_ports_table()
@@ -2777,6 +2861,8 @@ class ExplicitPortsMixin:
                 # end load, not given it by the later _sync_twin, or its
                 # own validation would run against the wrong basis
                 load=(dict(line['load']) if line.get('load') else None),
+                sections=([dict(sec) for sec in line['sections']]
+                          if line.get('sections') else None),
                 end_coupling=dict(line.get('end_coupling') or {}),
                 w_mult=line.get('w_mult', 1.0), h_mult=line.get('h_mult', 1.0),
                 linewidth=line.get('linewidth'), color=line.get('color', 'black'),
@@ -2803,6 +2889,28 @@ class ExplicitPortsMixin:
         self._sync_twin(line)
         self._invalidate_scattering_data()
         return twin
+
+    def set_line_sections(self, line, sections):
+        """Give `line` a stepped impedance profile (docs sec. 9).
+
+        `sections` is [{'Z': ohms, 'frac': fraction of electrical length},
+        ...] from x0 to xL (fractions normalized), or None for the uniform
+        line at Ztx. The comb is re-derived on the piecewise basis: roots of
+        the cascaded source-free condition, per-section energy
+        normalization, end profiles. Ztx stays the reference impedance the
+        load's f_Z is defined against, so the physical element is unchanged.
+        A pumped line's twin carries the same sections.
+        """
+        if line.get('twin_of') is not None:
+            raise ValueError("Step the primary line, not its conjugate twin.")
+        candidate = dict(line)
+        candidate['sections'] = ([dict(sec) for sec in sections]
+                                 if sections else None)
+        LineResonator(**line_payload(candidate))        # validates or raises
+        line['sections'] = candidate['sections']
+        self._sync_twin(line)
+        self._invalidate_scattering_data()
+        return line['sections']
 
     def set_line_load(self, line, load):
         """Terminate ONE end of `line` in a shunt reactance (docs sec. 7).
@@ -2862,6 +2970,8 @@ class ExplicitPortsMixin:
         # the twin is the SAME physical line in the idler sector, so it
         # carries the same end load and hence the same dispersed basis
         twin['load'] = (dict(line['load']) if line.get('load') else None)
+        twin['sections'] = ([dict(sec) for sec in line['sections']]
+                            if line.get('sections') else None)
         twin['end_coupling'] = dict(line.get('end_coupling')
                                     or {'x0': 'capacitive', 'xL': 'capacitive'})
         twin['label'] = f"{line['label']}*"
@@ -3634,6 +3744,8 @@ class ExplicitPortsMixin:
                     'Z0_port': l.get('Z0_port', 50.0),
                     'alpha_uniform': l.get('alpha_uniform', 0.0),
                     'load': (dict(l['load']) if l.get('load') else None),
+                    'sections': ([dict(sec) for sec in l['sections']]
+                                 if l.get('sections') else None),
                     'pump': (dict(l['pump']) if l.get('pump') else None),
                     'conj': bool(l.get('conj', False)),
                     'twin_of': l.get('twin_of'),
@@ -3720,6 +3832,8 @@ class ExplicitPortsMixin:
                 'Z0_port': float(ldata.get('Z0_port', 50.0)),
                 'alpha_uniform': float(ldata.get('alpha_uniform', 0.0)),
                 'load': (dict(ldata['load']) if ldata.get('load') else None),
+                'sections': ([dict(sec) for sec in ldata['sections']]
+                             if ldata.get('sections') else None),
                 'pump': (dict(ldata['pump']) if ldata.get('pump') else None),
                 'conj': bool(ldata.get('conj', False)),
                 'twin_of': ldata.get('twin_of'),

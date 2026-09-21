@@ -742,3 +742,126 @@ trace over the window. For a plain terminated line that number is $10^{-15}$
 with the closure and $\sim 1$ without; for a pumped line it is the second-order
 tail above. The closure is on by default and can be switched off there to see
 the raw truncated comb — which is what every table in §6 and §7 measured.
+
+## 9. Stepped-impedance lines
+
+§7 assumed one characteristic impedance. Real resonators are often *stepped* —
+the experiment of Lee, Spietz & Aumentado (2013) uses two CPW sections,
+$\approx 47.3\,\Omega$ over two thirds of the length at the port and
+$\approx 51.4\,\Omega$ over the third at the SQUID, precisely to move the first
+harmonic off $3 f_A$ so that the conversion pump $f_B - f_A$ separates from the
+degenerate-gain pump $2 f_A$. A uniform-line model cannot represent that, and
+substituting an *effective* load to hit the measured frequencies gets them right
+by distorting the mode profiles at the element, the participations and the port
+linewidths up the ladder — the very quantities the multimode model exists to get
+right. So the basis is generalized. Numbers here come from
+`misc/stepped_line_checks.py`; the gate is `tests/test_stepped_line.py`.
+
+### 9.1 Parameterization
+
+`sections = [{'Z': Z_1, 'frac': s_1}, …]` ordered from $x_0$ to $x_L$, the $s_j$
+fractions of the **electrical** length (normalized to sum to 1). Phase velocity
+is taken common to all sections — the CPW-on-one-substrate case; a per-section
+$v$ would only rescale the fractions. `sections = None` is the uniform line,
+bit-for-bit. With sections, $Z_\mathrm{tx}$ becomes the **reference** impedance
+the load's $f_Z$ is defined against ($L = Z_\mathrm{tx}/2\pi f_Z$), so the
+physical element keeps its meaning when the line around it is stepped.
+
+### 9.2 The piecewise standing wave
+
+Carry the state $(u, w)$ along the line, $u$ the voltage (flux-rate) amplitude
+and $w = Z_j^{-1}\,du/ds$ the current amplitude, $s$ the electrical distance.
+Both are continuous across a step (voltage and current are), and inside a
+section of impedance $Z_j$ they rotate,
+
+$$
+u(s) = u_0\cos s + Z_j w_0 \sin s,\qquad
+w(s) = -\frac{u_0}{Z_j}\sin s + w_0\cos s .
+$$
+
+Start at the open end with $(u, w) = (1, 0)$ and propagate through the sections
+to $\theta = k\ell$. The source-free condition at the far end is
+
+$$
+\text{open:}\ \ w(\theta) = 0,\qquad
+\text{inductive:}\ \ u(\theta) + Z_\mathrm{tx}\,x(f)\,w(\theta) = 0,\quad x = f/f_Z ,
+$$
+
+which for one section is $\cos\theta - x\sin\theta$, the pole-free form of §7.
+The residual is smooth, so the roots $\theta_n$ are found by a sign scan (fine
+relative to the shortest section) and bisection to adjacent floats; they are
+**not** one per $\pi$ interval any more, so they are counted rather than indexed.
+An inductive load still shorts DC; an open–open stepped line keeps the free
+mode with $C_0 = \sum_j s_j/(2 Z_j\,\mathrm{FSR})$ and, since it has no
+negative-frequency partner, the residue $\kappa_0^2 = 1/(\pi Z_0 C_0)$ — twice
+the $n \ge 1$ form — which reproduces the uniform comb's DC coupling exactly.
+
+### 9.3 Normalization and the mode quantities
+
+The mode mass is the capacitive energy summed over sections, in closed form:
+with $a_j = u_0$, $b_j = Z_j w_0$ at the start of section $j$ and $\delta_j =
+\theta_n s_j$ its electrical length,
+
+$$
+C_n = \sum_j \frac{1}{2 Z_j\,\mathrm{FSR}\,\theta_n}
+\left[ a_j^2\!\left(\tfrac{\delta_j}{2} + \tfrac{\sin 2\delta_j}{4}\right)
+     + b_j^2\!\left(\tfrac{\delta_j}{2} - \tfrac{\sin 2\delta_j}{4}\right)
+     + a_j b_j\,\tfrac{1 - \cos 2\delta_j}{2} \right] ,
+$$
+
+which reduces to $C_\mathrm{line}\,(\tfrac12 + \sin 2\theta/4\theta)$ for one
+section. Checked against an adaptive quadrature of $c(x)\,u_n^2$ section by
+section: agreement to $2\times10^{-16}$. Everything downstream is unchanged in
+form: $u_n(\text{end})$ from the propagated state, $\gamma_n = u_n(\text{port})^2
+/ 2\pi Z_0 C_n$, the participation $p_n = u_n(\ell)^2/\omega_n^2 C_n L$, the tap
+and pump profiles through the same three quantities.
+
+### 9.4 The exact input impedance is the cascade
+
+`input_impedance` becomes the product of the sections' ABCD matrices,
+$\prod_j \begin{pmatrix}\cos\delta_j & -iZ_j\sin\delta_j\\ -i\sin\delta_j/Z_j & \cos\delta_j\end{pmatrix}$
+walking away from the port end, terminated in the load or left open. Since the
+tail closure (§8) is "exact minus kept", it carries over with no other change.
+
+### 9.5 Verification
+
+All against an **independent** reference — `cmtline_core.abcd_line` per section,
+cascaded by hand and terminated in its `Z_ind` — never the macro's own
+`input_impedance`.
+
+*Roots.* For three geometries (two sections open–open; two sections with $L$ at
+$x_L$; three sections with $L$ at $x_0$) every $\theta_n$ zeroes the cascade's
+admittance numerator to $2\times10^{-13}$ of its value one part in $10^3$ away,
+and a sign scan of that numerator finds exactly $N$ zeros.
+
+*$S_{11}$* (30/80 Ω sections 0.4/0.6, $L$ at $x_L$ with $f_Z = 2.5\,\mathrm{FSR}$,
+port at $x_0$):
+
+| | $N=10$ | $N=20$ | $N=40$ | $N=80$ | ratios |
+|---|---|---|---|---|---|
+| closure off | $2.46\times10^{-1}$ | $1.16\times10^{-1}$ | $5.67\times10^{-2}$ | $2.80\times10^{-2}$ | 2.12 / 2.05 / 2.02 |
+| closure on | $1.5\times10^{-15}$ | $1.4\times10^{-15}$ | $1.6\times10^{-15}$ | $2.1\times10^{-15}$ | — |
+
+The truncated basis converges like $1/N$ exactly as the uniform and loaded ones
+do (§7.5); with the tail closed the macro **is** the cascaded ABCD answer to
+rounding at every $N$, and $|S_{11}| = 1$ to $10^{-15}$. Equal sections
+reproduce the uniform line to $10^{-15}$, loaded or not.
+
+*A prediction.* With the 2013 experiment's physical values only — 47.3 Ω over
+$2/3$, 51.4 Ω over $1/3$, $L_\mathrm{SQ} = \Phi_0/2\pi I_\mathrm{SQ} = 0.401$ nH
+from $I_\mathrm{SQ} = 0.82\,\mu$A — the stepped basis gives
+
+$$
+\frac{f_B}{f_A} = 3.089\qquad(\text{uniform line: } 3.004;\ \text{measured: } 3.077 \text{ at the bias of Figs. 3–4},\ \approx 3.095 \text{ at zero flux, Fig. 1b}),
+$$
+
+with nothing fitted: a 0.4 % first-principles account of the harmonic shift the
+step was designed to produce. The `INTERMODE_LEE2013_*` test scenes (File → Test)
+are built on this geometry.
+
+**What shipped.** `LineResonator(sections=…)`, `set_line_sections`, the
+"Sections" field of the line dialog (`Z:frac, Z:frac` from $x_0$ to $x_L$, live
+mode preview), the Ports & Lines summary, serialization, twin mirroring, code
+export, and `line_fsr_for_target_general` (closed form when unloaded — $\theta_n$
+is then geometric — bisection on FSR when loaded). Not shipped: per-section phase
+velocity, per-section loss, a capacitive load (still §7.5).

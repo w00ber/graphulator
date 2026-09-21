@@ -184,25 +184,12 @@ def scene_line_pumped_loaded():
 # so they can never drift from the file.
 # ---------------------------------------------------------------------------
 
-def _solve_fz_for_harmonic_ratio(fA, fB, Ztx):
-    """Effective inductive-load f_Z putting loaded mode 1 at fA AND mode 2
-    at fB. Bisection on f_Z; FSR follows from the closed form each step."""
-    from graphulator.autograph import LineResonator
-    def f2(fZ):
-        fsr = line_fsr_for_target(fA, 1, fZ, 'inductive')
-        r = LineResonator(line_id=0, FSR=fsr, Ztx=Ztx, f_max=4 * fB,
-                          port_end='xL', Z0_port=50.0,
-                          load={'end': 'x0', 'type': 'inductive', 'f_Z': fZ})
-        return r.mode_freq(2)
-    lo, hi = 2.0, 60.0                 # f2 decreases toward 3 fA as fZ grows
-    assert f2(lo) > fB > f2(hi), (f2(lo), fB, f2(hi))
-    for _ in range(200):
-        mid = 0.5 * (lo + hi)
-        if f2(mid) > fB:
-            lo = mid
-        else:
-            hi = mid
-    return 0.5 * (lo + hi)
+def _solve_fsr_for_fundamental(fA, Zref, sections, load):
+    """The one geometric knob -- the line length, i.e. FSR = v/2l -- fixed by
+    the one measurement it must reproduce, f_A. Everything else (f_B, the
+    profiles, the participations) is then PREDICTED by the stepped basis."""
+    from graphulator.autograph import line_fsr_for_target_general
+    return line_fsr_for_target_general(fA, 1, load, sections, Zref)
 
 
 def intermode_scene(which):
@@ -213,28 +200,29 @@ def intermode_scene(which):
         pump_alpha, pump_load_modulation)
 
     # --- the paper's numbers, GHz as the app's a.u. -------------------------
-    fA, fB = 1.840, 5.661           # Fig. 4 stripe; f_B^fit
+    fA, fB_meas = 1.840, 5.661      # Fig. 4 stripe; f_B^fit (measured)
     kappaA = 0.0029                 # 2.9 MHz fundamental bandwidth
-    Ztx = 50.0                      # uniform stand-in for the 47.3/51.4 step
+    Ztx = 50.0                      # REFERENCE impedance (defines the load's f_Z)
+    # the stepped CPW: 47.3 ohm over 2/3 of the length at the port (x0),
+    # 51.4 ohm over the 1/3 at the SQUID (xL) -- the paper's own geometry
+    secs = [{'Z': 47.3, 'frac': 2 / 3}, {'Z': 51.4, 'frac': 1 / 3}]
     Phi0, I_SQ, bias = 2.067833848e-15, 0.82e-6, 0.026
     L_SQ = Phi0 / (2 * np.pi * I_SQ) / abs(np.cos(np.pi * bias))
-    fZ_SQ = Ztx / (2 * np.pi * L_SQ) / 1e9        # the SQUID alone
-    fZ = _solve_fz_for_harmonic_ratio(fA, fB, Ztx)  # SQUID + step, as one load
-    L_eff = Ztx / (2 * np.pi * fZ) * 1.0            # nH when fZ in GHz
-    fsr = line_fsr_for_target(fA, 1, fZ, 'inductive')
+    fZ = Ztx / (2 * np.pi * L_SQ) / 1e9           # the physical SQUID, nothing else
+    load = {'end': 'xL', 'type': 'inductive', 'f_Z': fZ}
+    fsr = _solve_fsr_for_fundamental(fA, Ztx, secs, load)
 
     # port: a 62 fF coupler is a weak port; in the galvanic port model that
     # is a large Z0_port. Set it so mode 1's port rate is the paper's kappa_A.
-    probe = LineResonator(line_id=0, FSR=fsr, Ztx=Ztx, f_max=4 * fB,
-                          port_end='xL', Z0_port=50.0,
-                          load={'end': 'x0', 'type': 'inductive', 'f_Z': fZ})
-    g1_at_50 = probe.mode_gamma(1) * probe.mode_profile(1, 'xL') ** 2
+    f_max = 4 * fB_meas
+    probe = LineResonator(line_id=0, FSR=fsr, Ztx=Ztx, f_max=f_max,
+                          port_end='x0', Z0_port=50.0, sections=secs, load=load)
+    g1_at_50 = probe.mode_gamma(1) * probe.mode_profile(1, 'x0') ** 2
     Z0_port = 50.0 * g1_at_50 / kappaA
-    res = LineResonator(line_id=0, FSR=fsr, Ztx=Ztx, f_max=4 * fB,
-                        port_end='xL', Z0_port=Z0_port,
-                        load={'end': 'x0', 'type': 'inductive', 'f_Z': fZ})
-    f1, f2 = res.mode_freq(1), res.mode_freq(2)
-    gam = {n: res.mode_gamma(n) * res.mode_profile(n, 'xL') ** 2 for n in (1, 2)}
+    res = LineResonator(line_id=0, FSR=fsr, Ztx=Ztx, f_max=f_max,
+                        port_end='x0', Z0_port=Z0_port, sections=secs, load=load)
+    f1, f2 = res.mode_freq(1), res.mode_freq(2)          # f2 is PREDICTED
+    gam = {n: res.mode_gamma(n) * res.mode_profile(n, 'x0') ** 2 for n in (1, 2)}
 
     # pump strength: anchored on the device, dL_l/L_l. The rate box is the
     # coupling at the reference pair (1, m_ref); m_ref is the mode nearest
@@ -242,7 +230,7 @@ def intermode_scene(which):
     # A<->B coupling g_12 = rate*w_2/2 sits at the paper's stated operating
     # point g_AB ~ sqrt(kappa_A kappa_B) (conversion) or a bit above it
     # (visible gain) -- the paper reports 0.5-3% flux modulation there.
-    w2 = dict((nid, w) for nid, w, _ in res.tap_couplings('x0', 1, 'inductive'))
+    w2 = dict((nid, w) for nid, w, _ in res.tap_couplings('xL', 1, 'inductive'))
     w2 = w2[res.mode_node_id(2)]
     target = {'CONVERSION': 1.0, 'DEGENERATE_AMP': 0.9, 'NONDEGENERATE_AMP': 0.9}[which]
     if which == 'DEGENERATE_AMP':
@@ -251,16 +239,15 @@ def intermode_scene(which):
         rate = 2 * target * np.sqrt(gam[1] * gam[2]) / w2
     f_p = {'CONVERSION': f2 - f1, 'DEGENERATE_AMP': 2 * f1,
            'NONDEGENERATE_AMP': f1 + f2}[which]
-    beta = pump_load_modulation(res, 'inductive', rate, 1, 1, 'x0')
+    beta = pump_load_modulation(res, 'inductive', rate, 1, 1, 'xL')
     dPhi = beta / (np.pi * np.tan(np.pi * bias))   # dL/L = pi tan(pi Phi/Phi0) dPhi/Phi0
     alpha = pump_alpha(rate, f1, f1)
 
     win = fresh_window()
     tl = win.add_line_resonator(label='TL', pos=(0.0, 2.0), FSR=fsr, Ztx=Ztx,
-                                f_max=4 * fB, port_end='xL', Z0_port=Z0_port,
-                                load={'end': 'x0', 'type': 'inductive',
-                                      'f_Z': fZ})
-    win.set_line_pump(tl, 'x0', f_p=float(f_p), rate=float(rate), n_ref=1,
+                                f_max=f_max, port_end='x0', Z0_port=Z0_port,
+                                load=load, sections=secs)
+    win.set_line_pump(tl, 'xL', f_p=float(f_p), rate=float(rate), n_ref=1,
                       twin_pos=(0.0, -2.0))
     if not win.scattering_mode:
         win._enter_scattering_mode()
@@ -326,38 +313,37 @@ $\lambda/4$ Resonators* (2013). A Nb coplanar-waveguide $\lambda/4$
 resonator, open at the port end (62 fF coupler to 50 Ω) and terminated at
 ground by a dc SQUID whose inductance is flux-pumped. The fundamental **A**
 ($f_A$ = %(fA).3f GHz, bandwidth 2.9 MHz) and first harmonic **B**
-($f_B$ = %(fB).3f GHz) are the two "resonators" of the toy circuit in its
-Fig. 1(a); one pump reaches degenerate gain ($2f_A$ = %(fpsd).3f), A↔B
-conversion ($f_B - f_A$ = %(fpfc).3f, Fig. 4) and nondegenerate gain
-($f_A + f_B$ = %(fpnd).3f, Fig. 3). Units: **GHz as the app's a.u.**
+($f_B$ = %(fBmeas).3f GHz measured; **%(fB).3f GHz predicted here**) are the
+two "resonators" of the toy circuit in its Fig. 1(a); one pump reaches
+degenerate gain ($2f_A$ = %(fpsd).3f), A↔B conversion ($f_B - f_A$ =
+%(fpfc).3f, Fig. 4) and nondegenerate gain ($f_A + f_B$ = %(fpnd).3f,
+Fig. 3). Units: **GHz as the app's a.u.**
 %(look)s
 ## How the circuit became this graph
 
-1. **The resonator is one line macro, on the loaded basis** (docs §7). A
-   $\lambda/4$ line is open at one end and *nearly* shorted at the other by
-   the SQUID: that is an open line with an **inductive end load** at x0,
-   whose comb is the quarter-wave family $f_1, \sim 3f_1, \sim 5f_1, \dots$
-   pulled by the load's dispersion. The load is parameterized by $f_Z$, the
-   frequency where $\omega L = Z_\mathrm{tx}$.
+1. **The resonator is one line macro, on the stepped, loaded basis**
+   (docs §7, §9). A $\lambda/4$ line is open at one end and *nearly*
+   shorted at the other by the SQUID: an open line with an **inductive end
+   load** at xL, whose comb is the quarter-wave family $f_1, \sim 3f_1,
+   \sim 5f_1, \dots$ pulled by the load's dispersion — and by the step.
 
-2. **The SQUID inductance.** $I_\mathrm{SQ}$ = 0.82 µA gives
-   $L_\mathrm{SQ,0} = \Phi_0/2\pi I_\mathrm{SQ}$ = 0.401 nH, or 0.403 nH at
-   the paper's bias $\Phi = -0.026\,\Phi_0$ — $f_Z$ = %(fZsq).2f GHz on a
-   50 Ω line. That alone puts $f_B/f_A$ = 3.004: the near-ideal $\lambda/4$
-   spacing, and exactly the problem the paper solves with a **stepped
-   impedance** (47.3 / 51.4 Ω, step 1/3 from the SQUID) that moves $f_B$ to
-   3.077 $f_A$ so the conversion pump ($f_B - f_A$) separates from the
-   degenerate-gain pump ($2f_A$) by 141 MHz instead of 7.
+2. **The SQUID inductance, physical.** $I_\mathrm{SQ}$ = 0.82 µA gives
+   $L_\mathrm{SQ,0} = \Phi_0/2\pi I_\mathrm{SQ}$ = 0.401 nH, or %(LSQ).3f nH
+   at the paper's bias $\Phi = -0.026\,\Phi_0$; against the 50 Ω reference
+   that is $f_Z$ = %(fZ).2f GHz. Nothing about the load is adjusted.
 
-3. **The step is not in the macro** (one $Z_\mathrm{tx}$ per line), so it is
-   emulated by the only dispersion knob the loaded basis has: a single
-   effective end inductance chosen so the loaded modes 1 and 2 land on the
-   *measured* $f_A$ and $f_B$ — solved by bisection on $f_Z$ with the
-   closed-form FSR inversion at each step. Result: $f_Z$ = %(fZ).3f GHz,
-   $L_\mathrm{eff}$ = %(Leff).2f nH, FSR (the geometric $v/2\ell$, not a
-   spacing) = %(fsr).4f GHz. The excess over 0.4 nH stands in for the
-   step; the mode *profiles* at the SQUID are therefore those of a heavier
-   load than the real one, which is the approximation to remember.
+3. **The stepped impedance, as built.** The paper's CPW is ~47.3 Ω over
+   two thirds of its length at the port and ~51.4 Ω over the third at the
+   SQUID, put in *to move* $f_B$ off $3f_A$ so the conversion pump
+   ($f_B - f_A$) separates from the degenerate-gain pump ($2f_A$). The macro
+   carries exactly that: `sections = 47.3:2, 51.4:1` from x0 to xL. The
+   only geometric knob left is the length, FSR = $v/2\ell$ = %(fsr).4f GHz,
+   fixed by the one measurement it must reproduce, $f_A$ = %(fA).3f. **The
+   first harmonic is then a prediction**: $f_B$ = %(fB).3f GHz against the
+   measured %(fBmeas).3f (%(fBerr)+.1f%%; a uniform line would give
+   %(fBuni).3f). The mode profiles at the SQUID and the participations
+   ($p_1$ = %(p1).3f, $p_2$ = %(p2).3f) are those of the real geometry, not
+   of a fitted load — which is the point of a multimode model.
 
 4. **The port.** A 62 fF coupler is a *weak* port. The macro terminates the
    line galvanically in $Z_0$, so weak coupling is a **large $Z_0$**:
@@ -404,18 +390,25 @@ conversion ($f_B - f_A$ = %(fpfc).3f, Fig. 4) and nondegenerate gain
    amplification detuned by 141 MHz); the Ports & Lines panel names the
    frame and marks partners the frame cannot show.
 
-**Not modelled:** the stepped impedance itself, the SQUID's Kerr
-nonlinearity (the paper's gain ceiling), and the capacitive character of
-the coupler. Sibling scenes: `INTERMODE_LEE2013_CONVERSION`,
+**Not modelled:** the SQUID's Kerr nonlinearity (the paper's gain
+ceiling), the capacitive character of the coupler (a series 62 fF, here a
+galvanic weak port), and any difference in phase velocity between the two
+CPW sections. Sibling scenes: `INTERMODE_LEE2013_CONVERSION`,
 `INTERMODE_LEE2013_DEGENERATE_AMP`, `INTERMODE_LEE2013_NONDEGENERATE_AMP`
 — same circuit, the three pump frequencies of the paper.
-""" % dict(fA=f1, fB=f2, fpsd=2 * f1, fpfc=f2 - f1, fpnd=f1 + f2, look=look,
-           fZsq=fZ_SQ, fZ=fZ, Leff=L_eff, fsr=fsr, Z0=Z0_port,
-           kB=gam[2] * 1e3, beta=beta, dPhi=dPhi, alpha=alpha)
+""" % dict(fA=f1, fB=f2, fBmeas=fB_meas, fBerr=100 * (f2 - fB_meas) / fB_meas,
+           # a UNIFORM line tuned to the same f_A (its own FSR), for contrast
+           fBuni=LineResonator(line_id=0, Ztx=Ztx, f_max=f_max, load=load,
+                               FSR=line_fsr_for_target(fA, 1, fZ, 'inductive')
+                               ).mode_freq(2),
+           fpsd=2 * f1, fpfc=f2 - f1, fpnd=f1 + f2, look=look,
+           LSQ=L_SQ * 1e9, fZ=fZ, fsr=fsr, Z0=Z0_port, kB=gam[2] * 1e3,
+           p1=res.load_participation(1, 'xL'), p2=res.load_participation(2, 'xL'),
+           beta=beta, dPhi=dPhi, alpha=alpha)
     win.properties_panel.notes_editor.setPlainText(notes.strip() + "\n")
     save(win, f"INTERMODE_LEE2013_{which}")
-    return dict(f1=f1, f2=f2, f_p=f_p, rate=rate, Z0=Z0_port, fZ=fZ, fsr=fsr,
-                gam=gam, beta=beta, dPhi=dPhi, alpha=alpha, w2=w2)
+    return dict(f1=f1, f2=f2, fB_meas=fB_meas, f_p=f_p, rate=rate, Z0=Z0_port,
+                fZ=fZ, fsr=fsr, gam=gam, beta=beta, dPhi=dPhi, alpha=alpha, w2=w2)
 
 
 def scene_intermode_lee2013():

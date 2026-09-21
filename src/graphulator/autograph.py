@@ -452,6 +452,144 @@ def line_fsr_for_target(f_target, n, f_Z, kind):
     return float(np.pi * f_target / (np.arctan2(1.0, x) + (n - 1) * np.pi))
 
 
+
+# ---------------------------------------------------------------------------
+# Stepped-impedance lines (several sections of different Ztx)
+# ---------------------------------------------------------------------------
+#
+# The loaded basis above assumes one impedance. A stepped line keeps the same
+# recipe -- roots of a source-free condition, an energy normalization, end
+# profiles -- with the standing wave propagated PIECEWISE through the steps.
+# Derivation and numbers: docs/pumped_line_termination.md section 9 and
+# misc/stepped_line_checks.py; gate: tests/test_stepped_line.py (roots
+# against the ABCD admittance zero, complex S11 against the cascaded ABCD,
+# the uniform limit bit-for-bit).
+#
+# State (u, w) along the line, u the voltage (flux-rate) amplitude and
+# w = (1/Z_j) du/ds the current amplitude, s the electrical distance. Both
+# are continuous across a step (voltage and current are), and inside a
+# section of impedance Z_j they rotate:
+#
+#     u(s) = u0 cos s + Z_j w0 sin s,     w(s) = -(u0/Z_j) sin s + w0 cos s.
+#
+# Sections are taken from the OPEN end (u = 1, w = 0). At the far end the
+# source-free condition is
+#
+#     open      : w = 0
+#     inductive : u + Ztx x(f) w = 0,   x = f/f_Z   (one section: cos - x sin)
+#
+# and the mode mass is the per-section capacitive energy in closed form,
+#     C_n = sum_j  [1/(2 Z_j FSR theta_n)] * int_0^{delta_j} u^2 ds,
+# which reduces to C_line (1/2 + sin 2theta/4theta) for one section.
+# Phase velocity is taken common to all sections (fractions of ELECTRICAL
+# length), which is the CPW-on-one-substrate case; a per-section v would
+# only rescale the fractions.
+
+def _stepped_state(theta, sections):
+    """Propagate (u, w) from the open end through `sections` = ((Z, frac),..)
+    at electrical length theta. Returns (u_end, w_end, pieces) with pieces =
+    [(u0, w0, Z, delta), ...] per section for the energy integrals."""
+    u, w = 1.0, 0.0
+    pieces = []
+    for Z, frac in sections:
+        delta = theta * frac
+        pieces.append((u, w, Z, delta))
+        c, sn = np.cos(delta), np.sin(delta)
+        u, w = u * c + Z * w * sn, -(u / Z) * sn + w * c
+    return u, w, pieces
+
+
+def _stepped_residual(theta, sections, FSR, f_Z, kind):
+    """The pole-free source-free condition h(theta); its zeros are the modes."""
+    u, w, _ = _stepped_state(theta, sections)
+    if kind is None:
+        return w                                  # far end open
+    f = theta * FSR / np.pi
+    if kind == 'inductive':
+        # u + Ztx x(f) w with L = Ztx/(2 pi f_Z): Ztx cancels against the
+        # 1/Z in w only for a uniform line; keep it explicit via the
+        # reference impedance the load is defined against
+        return u + _STEPPED_ZREF[0] * (f / f_Z) * w
+    raise ValueError("stepped basis: capacitive load is refused (7.5)")
+
+
+# The reference impedance the load's f_Z refers to is passed through this
+# one-slot holder so the cached root finder stays a pure function of its
+# hashable arguments (it is set by the caller immediately before use).
+_STEPPED_ZREF = [1.0]
+
+
+@lru_cache(maxsize=8192)
+def _stepped_roots(sections, FSR, f_Z, kind, Zref, theta_max):
+    """All roots theta_1 < theta_2 < ... <= theta_max of the stepped
+    condition, by a sign scan fine enough for the shortest section and
+    bisection to adjacent floats. Cached on the hashable geometry."""
+    _STEPPED_ZREF[0] = Zref
+    h = lambda t: _stepped_residual(t, sections, FSR, f_Z, kind)   # noqa: E731
+    fmin = min(frac for _, frac in sections)
+    step = np.pi / 64.0 * min(1.0, fmin * 4.0)     # >= 16 samples per
+    roots = []                                       # quarter turn of any piece
+    t0 = step * 1e-3 if kind is None else step * 1e-3
+    h0 = h(t0)
+    t = t0
+    while t < theta_max + step:
+        t1 = t + step
+        h1 = h(t1)
+        if h0 == 0.0:
+            roots.append(t)
+        elif h0 * h1 < 0.0:
+            lo, hi, hlo = t, t1, h0
+            for _ in range(200):
+                mid = 0.5 * (lo + hi)
+                if mid == lo or mid == hi:
+                    break
+                hm = h(mid)
+                if hm == 0.0:
+                    lo = hi = mid
+                    break
+                if hlo * hm < 0.0:
+                    hi = mid
+                else:
+                    lo, hlo = mid, hm
+            roots.append(0.5 * (lo + hi))
+        t, h0 = t1, h1
+    # an open-open stepped line has w = 0 exactly at theta = 0 (the free DC
+    # mode); that root is the DC mode, handled separately, not mode 1
+    return tuple(r for r in roots if r > 1e-9)
+
+
+def line_fsr_for_target_general(f_target, n, load, sections, Ztx):
+    """FSR putting the n-th mode of a (possibly stepped, possibly loaded)
+    line at `f_target` (9.5).
+
+    Uniform + loaded has the closed form line_fsr_for_target. Stepped and
+    UNloaded, theta_n does not depend on FSR at all (the condition is
+    geometric), so FSR = pi f_target / theta_n exactly. Stepped and loaded,
+    theta_n depends on FSR through x(f) = f/f_Z, and f_n(FSR) is monotone
+    increasing, so bisection on FSR to adjacent floats.
+    """
+    n = int(n)
+    if not sections:
+        if load is None:
+            return float(f_target) / n
+        return line_fsr_for_target(f_target, n, load['f_Z'], load['type'])
+    probe = lambda fsr: LineResonator(                       # noqa: E731
+        line_id='solve', FSR=fsr, Ztx=Ztx, f_max=fsr, sections=sections,
+        load=load)
+    if load is None:
+        return float(np.pi * f_target / probe(1.0).mode_theta(n))
+    lo, hi = float(f_target) * 1e-3, float(f_target) * 1e3
+    for _ in range(300):
+        mid = 0.5 * (lo + hi)
+        if mid == lo or mid == hi:
+            break
+        if probe(mid).mode_freq(n) < f_target:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
 @dataclass
 class LineResonator:
     """Transmission-line standing-wave comb macro (GUI glyph: cylinder, "L").
@@ -512,9 +650,17 @@ class LineResonator:
     conj: bool = False
     #: Shunt reactance at one end; see the class docstring and section 7.
     load: Optional[Dict[str, Any]] = None
+    #: Stepped impedance: [{'Z': ohms, 'frac': fraction of electrical
+    #: length}, ...] ordered from x0 to xL (fractions are normalized to sum
+    #: to 1). None (the default) is the uniform line at Ztx, bit-for-bit.
+    #: With sections, Ztx is the REFERENCE impedance the load's f_Z is
+    #: defined against (L = Ztx / 2 pi f_Z), so the physical element does not
+    #: change meaning when the line around it is stepped. Section 9.
+    sections: Optional[List[Dict[str, Any]]] = None
 
     def __post_init__(self):
         self.load = self._normalize_load(self.load)
+        self.sections = self._normalize_sections(self.sections)
         if self.port_end not in _LINE_PORT_ENDS:
             raise ValueError(_LINE_TWO_PORT_MSG.format(
                 line_id=self.line_id, ends=_LINE_PORT_ENDS))
@@ -559,6 +705,58 @@ class LineResonator:
                 f"is the frequency at which |X_elem| = Ztx, got {f_Z!r}")
         return {'end': end, 'type': kind, 'f_Z': float(f_Z)}
 
+    def _normalize_sections(self, sections):
+        """Validate and canonicalize the optional impedance steps (9.1)."""
+        if not sections:
+            return None
+        out = []
+        for i, sec in enumerate(sections):
+            try:
+                Z, frac = float(sec['Z']), float(sec['frac'])
+            except (KeyError, TypeError, ValueError):
+                raise ValueError(
+                    f"LineResonator '{self.line_id}': each section needs "
+                    f"'Z' and 'frac', got {sec!r}")
+            if Z <= 0 or frac <= 0:
+                raise ValueError(
+                    f"LineResonator '{self.line_id}': section {i} must have "
+                    f"Z > 0 and frac > 0, got Z={Z}, frac={frac}")
+            out.append({'Z': Z, 'frac': frac})
+        if len(out) < 2:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': a stepped line needs at "
+                f"least two sections (one section is just Ztx)")
+        total = sum(sec['frac'] for sec in out)
+        for sec in out:
+            sec['frac'] /= total
+        return out
+
+    @property
+    def stepped(self) -> bool:
+        """True when the impedance changes along the line."""
+        return self.sections is not None
+
+    @property
+    def _uniform_analytic(self) -> bool:
+        """The open-open uniform comb: the natural-units reference path,
+        n*FSR roots and closed-form profiles. Everything else goes through
+        the general (piecewise, root-found) basis."""
+        return self.load is None and self.sections is None
+
+    def _sections_from(self, end):
+        """((Z, frac), ...) walking away from `end`."""
+        secs = self.sections or [{'Z': self.Ztx, 'frac': 1.0}]
+        seq = [(sec['Z'], sec['frac']) for sec in secs]
+        return tuple(seq if end == 'x0' else seq[::-1])
+
+    @property
+    def _load_kind(self):
+        return None if self.load is None else self.load['type']
+
+    @property
+    def _load_fz(self):
+        return 1.0 if self.load is None else float(self.load['f_Z'])
+
     @property
     def loaded(self) -> bool:
         """True when one end carries a shunt reactance."""
@@ -586,11 +784,25 @@ class LineResonator:
         never smaller (f_n < n*FSR always).
         """
         n = int(np.ceil(self.f_max / self.FSR))
-        if self.load is None:
+        if self._uniform_analytic:
             return n
+        if self.sections is not None:
+            # stepped: the roots are not one per pi, so count them
+            roots = self._stepped_thetas(np.pi * self.f_max / self.FSR)
+            n = len(roots)
+            # make sure the comb reaches f_max (the scan is inclusive)
+            while self.mode_freq(n) < self.f_max:
+                n += 1
+            return max(n, 1)
         while self.mode_freq(n) < self.f_max:
             n += 1
         return n
+
+    def _stepped_thetas(self, theta_max):
+        """Roots of the stepped condition up to theta_max (cached)."""
+        return _stepped_roots(self._sections_from(self._origin_end),
+                              float(self.FSR), self._load_fz, self._load_kind,
+                              float(self.Ztx), float(theta_max))
 
     def mode_theta(self, n) -> float:
         """theta_n = k_n*ell of mode n >= 1 (exactly n*pi when unloaded)."""
@@ -599,14 +811,23 @@ class LineResonator:
             raise ValueError(
                 f"LineResonator '{self.line_id}': mode index must be >= 1; "
                 f"the n=0 free mode has no k*ell root")
-        if self.load is None:
+        if self._uniform_analytic:
             return float(n) * np.pi
+        if self.sections is not None:
+            # scan generously past where a uniform comb would put mode n
+            # (a step can move roots either way, but never past (n+J) pi)
+            theta_max = (n + len(self.sections) + 1) * np.pi
+            roots = self._stepped_thetas(theta_max)
+            while len(roots) < n:
+                theta_max *= 2.0
+                roots = self._stepped_thetas(theta_max)
+            return float(roots[n - 1])
         return line_loaded_theta(n, float(self.FSR), float(self.load['f_Z']),
                                  self.load['type'])
 
     def mode_freq(self, n) -> float:
         """Linear frequency of mode n >= 1 (n*FSR when unloaded)."""
-        if self.load is None:
+        if self._uniform_analytic:
             return float(int(n)) * self.FSR
         return self.mode_theta(n) * self.FSR / np.pi
 
@@ -616,8 +837,12 @@ class LineResonator:
 
     @property
     def C_line(self) -> float:
-        """Total line capacitance c*ell = 1/(2 Ztx FSR)."""
-        return 1.0 / (2.0 * self.Ztx * self.FSR)
+        """Total line capacitance: c*ell = 1/(2 Ztx FSR) uniform, the sum of
+        the sections' c_j ell_j = frac_j/(2 Z_j FSR) when stepped."""
+        if self.sections is None:
+            return 1.0 / (2.0 * self.Ztx * self.FSR)
+        return float(sum(sec['frac'] / (2.0 * sec['Z'] * self.FSR)
+                         for sec in self.sections))
 
     @property
     def C_load(self) -> float:
@@ -638,6 +863,10 @@ class LineResonator:
                 f"got {end!r}")
         if end == self._origin_end:
             return 1.0
+        if self.sections is not None:
+            u_end, _, _ = _stepped_state(self.mode_theta(n),
+                                         self._sections_from(self._origin_end))
+            return float(u_end)
         return float(np.cos(self.mode_theta(n)))
 
     def mode_mass(self, n) -> float:
@@ -648,8 +877,22 @@ class LineResonator:
         potential and the eigenvalue already carries it.
         """
         th = self.mode_theta(n)
-        line_share = self.C_line * (0.5 + np.sin(2.0 * th) / (4.0 * th))
-        return float(line_share + self.C_load * np.cos(th) ** 2)
+        if self.sections is None:
+            line_share = self.C_line * (0.5 + np.sin(2.0 * th) / (4.0 * th))
+            return float(line_share + self.C_load * np.cos(th) ** 2)
+        # stepped (9.2): per-section closed-form energy integral of
+        # u = a cos s + b sin s over its electrical length delta_j, weighted
+        # by that section's capacitance per electrical length 1/(2 Z_j FSR th)
+        u_end, _, pieces = _stepped_state(th, self._sections_from(self._origin_end))
+        line_share = 0.0
+        for u0, w0, Z, d in pieces:
+            a, b = u0, Z * w0
+            s2 = np.sin(2.0 * d)
+            integral = (a * a * (d / 2.0 + s2 / 4.0)
+                        + b * b * (d / 2.0 - s2 / 4.0)
+                        + a * b * (1.0 - np.cos(2.0 * d)) / 2.0)
+            line_share += integral / (2.0 * Z * self.FSR * th)
+        return float(line_share + self.C_load * u_end ** 2)
 
     def load_participation(self, n, end) -> float:
         """p_n: mode n's share of its own energy stored in the END LOAD.
@@ -678,6 +921,14 @@ class LineResonator:
         couplings below carry the profile explicitly. Reduces to the
         n-independent (2/pi)(Ztx/Z0) FSR on the open-open comb.
         """
+        n = int(n)
+        if n == 0:
+            # the free DC mode of an open-open line (9.3): the line is one
+            # capacitor C_tot, chi -> 2/(2 pi f C_tot Z0), a single pole at
+            # f = 0 with residue 1/(pi Z0 C_tot) -- twice the n >= 1 form,
+            # because it has no negative-frequency partner to share with.
+            # Reduces to the uniform comb's DC coupling exactly.
+            return float(1.0 / (np.pi * self.Z0_port * self.C_line))
         return float(1.0 / (2.0 * np.pi * self.Z0_port * self.mode_mass(n)))
 
     def _comb_ks(self):
@@ -702,7 +953,7 @@ class LineResonator:
         PER-MODE array aligned with freqs — the whole point of section 7.4
         is that the port rate is no longer n-independent.
         """
-        if self.load is None:
+        if self._uniform_analytic:
             poles_nat, kap_nat, gam_nat = _line_comb_natural(
                 self.N, self.Z0_port / self.Ztx, signs=(self.port_end == 'xL'))
             freqs = line_natural_frequency_to_physical(poles_nat, self.FSR)
@@ -712,10 +963,11 @@ class LineResonator:
 
         ks = self._comb_ks()
         end = self.port_end or self._origin_end
-        freqs = np.array([np.sign(k) * self.mode_freq(abs(k)) for k in ks])
+        freqs = np.array([np.sign(k) * self.mode_freq(abs(k)) if k != 0
+                          else 0.0 for k in ks])
         gamma_phys = np.array([self.mode_gamma(abs(k)) for k in ks])
-        kappas = np.array([self.mode_profile(abs(k), end) for k in ks]) \
-            * np.sqrt(gamma_phys)
+        kappas = np.array([self.mode_profile(abs(k), end) if k != 0 else 1.0
+                           for k in ks]) * np.sqrt(gamma_phys)
         return freqs, kappas, gamma_phys, self.N
 
     @property
@@ -763,15 +1015,17 @@ class LineResonator:
             raise ValueError(
                 f"LineResonator '{self.line_id}': end must be 'x0' or 'xL', "
                 f"got {end!r}")
-        if self.load is None:
+        if self._uniform_analytic:
             _, kap_nat, _ = _line_comb_natural(
                 self.N, self.Z0_port / self.Ztx, signs=(end == 'xL'))
             kappas = line_natural_coupling_to_physical(kap_nat, self.FSR)
         else:
-            # same formula, loaded quantities: gamma_n is now mode-dependent
-            # and u_n(far end) = cos(k_n ell) is no longer just (-1)^n.
+            # same formula, general quantities: gamma_n is mode-dependent
+            # and u_n(far end) is no longer just (-1)^n. The DC mode of an
+            # open-open stepped line is flat (u_0 = 1 at both ends).
             kappas = np.array([
-                self.mode_profile(abs(k), end) * np.sqrt(self.mode_gamma(abs(k)))
+                (self.mode_profile(abs(k), end) if k != 0 else 1.0)
+                * np.sqrt(self.mode_gamma(abs(k)))
                 for k in self._comb_ks()])
         return [
             (node_id, float(abs(kappas[i])),
@@ -812,10 +1066,21 @@ class LineResonator:
             raise ValueError(
                 f"LineResonator '{self.line_id}': end must be 'x0' or 'xL'")
         z = np.asarray(z, dtype=complex)
-        theta = np.pi * z / self.FSR                    # k ell
-        cos, sin = np.cos(theta), np.sin(theta)
-        A, B, C, D = cos, -1j * self.Ztx * sin, -1j * sin / self.Ztx, cos
-        Z_open = A / C                                  # = i Ztx cot(k ell)
+        theta = np.pi * z / self.FSR                    # k ell (total)
+        # ABCD of the line walking away from `end`: one section, or the
+        # cascade of the stepped sections (9.4), each
+        # [[cos, -i Z sin], [-i sin/Z, cos]] over its electrical length
+        A = np.ones_like(theta)
+        B = np.zeros_like(theta)
+        C = np.zeros_like(theta)
+        D = np.ones_like(theta)
+        for Z, frac in self._sections_from(end):
+            th = theta * frac
+            cos, sin = np.cos(th), np.sin(th)
+            a, b, c, d = cos, -1j * Z * sin, -1j * sin / Z, cos
+            A, B, C, D = (A * a + B * c, A * b + B * d,
+                          C * a + D * c, C * b + D * d)
+        Z_open = A / C                                  # far end open
         if self.load is None:
             return Z_open
         ZL = self._load_impedance(z)
@@ -923,7 +1188,7 @@ class LineResonator:
 
         exponent = 0.5 if coupling == 'capacitive' else -0.5
         out = []
-        if self.load is None:
+        if self._uniform_analytic:
             # C_n is n-independent on the open-open comb, so the general
             # form below collapses to a pure harmonic ratio. Kept in closed
             # form so every pinned golden stays bit-identical; the two agree
@@ -962,7 +1227,7 @@ class LineResonator:
         the wrong partner.
         """
         f = abs(float(freq))
-        if self.load is None:
+        if self._uniform_analytic:
             return int(min(max(int(round(f / self.FSR)), 1), self.N))
         return int(min(range(1, self.N + 1),
                        key=lambda n: abs(self.mode_freq(n) - f)))
@@ -1026,6 +1291,8 @@ class LineResonator:
             'Z0_port': self.Z0_port,
             'alpha_uniform': self.alpha_uniform,
             'load': dict(self.load) if self.load else None,
+            'sections': ([dict(sec) for sec in self.sections]
+                         if self.sections else None),
         }
 
 
@@ -1035,7 +1302,7 @@ def _normalize_line(line) -> "LineResonator":
         return line
     kwargs = {k: line[k] for k in ('line_id', 'FSR', 'Ztx', 'f_max')}
     for k in ('label', 'port_end', 'Z0_port', 'alpha_uniform', 'conj',
-              'load'):
+              'load', 'sections'):
         if k in line and line[k] is not None:
             kwargs[k] = line[k]
     return LineResonator(**kwargs)
