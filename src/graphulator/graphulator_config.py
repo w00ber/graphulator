@@ -45,6 +45,21 @@ CONJ_LABEL_SCALE = 0.92         # label shrink to accommodate the asterisk
 # Default edge settings
 DEFAULT_EDGE_STYLE = 'loopy'      # 'loopy' | 'single' | 'double' (for new edges)
 DEFAULT_EDGE_LINEWIDTH_MULT = 1.5  # line width for new edges (dialog 'Medium')
+
+# Edge/self-loop line width levels, thinnest first. One table: the edge
+# dialog, the properties panel, the multi-selection panel and the right-click
+# width menu all read it, so a new level appears everywhere at once. The two
+# levels below 'Thin' are for dense graphs, where a 1.0 edge is already a
+# thick band.
+EDGE_LINEWIDTH_OPTIONS = {
+    'XX-Thin': 0.4,
+    'X-Thin': 0.7,
+    'Thin': 1.0,
+    'Medium': 1.5,
+    'Thick': 2.0,
+    'X-Thick': 2.5,
+}
+DEFAULT_EDGE_LINEWIDTH_NAME = 'Medium'
 DEFAULT_EDGE_LOOPTHETA = 30       # loopy-style curvature angle for new edges (degrees)
 DEFAULT_EDGE_LABEL_SIZE_MULT = 1.4    # edge label scale for new edges (dialog 'Medium')
 DEFAULT_EDGE_LABEL_OFFSET_MULT = 0.8  # edge label offset for new edges (dialog 'Medium')
@@ -78,6 +93,10 @@ SELFLOOP_ANGLE_KEYBOARD_INCREMENT = 15  # degrees per keypress (must be multiple
 AUTO_ADJUST_SELFLOOP_ANGLE = True  # When True, new self-loops auto-orient away from edges
 DYNAMIC_ADJUST_SELFLOOP_ANGLE = True  # When True, unpinned self-loops reorient on drag-end
 
+# Schematic glyph settings (ports, txlines and their wiring)
+GLYPH_ROTATION_INCREMENT = 15  # degrees per Ctrl+Left/Right on a selected glyph
+DEFAULT_PORT_AUTO_ORIENT = True  # new ports aim their lead at what they are wired to
+
 # Interface settings
 SHOW_SHORTCUT_OVERLAY = False  # optional on-canvas context-sensitive shortcut hints
 SHORTCUT_OVERLAY_CORNER = 'top-right'  # 'top-left'|'top-right'|'bottom-left'|'bottom-right'
@@ -102,7 +121,7 @@ SETTINGS_PARAMS = {
     'Edge Defaults': [
         ('DEFAULT_EDGE_STYLE', 'Edge Style', 'dropdown',
          [('Loopy', 'loopy'), ('Single', 'single'), ('Double', 'double')], None, None),
-        ('DEFAULT_EDGE_LINEWIDTH_MULT', 'Edge Line Width (×)', 'float', 0.5, 3.0, 0.25),
+        ('DEFAULT_EDGE_LINEWIDTH_MULT', 'Edge Line Width (×)', 'float', 0.25, 3.0, 0.05),
         ('DEFAULT_EDGE_LOOPTHETA', 'Loopy Curvature θ (°)', 'int', -180, 180, 5),
         ('DEFAULT_EDGE_LABEL_SIZE_MULT', 'Edge Label Scale (×)', 'float', 0.5, 3.0, 0.1),
         ('DEFAULT_EDGE_LABEL_OFFSET_MULT', 'Edge Label Offset (×)', 'float', 0.3, 3.0, 0.1),

@@ -30,6 +30,7 @@ It's important to note that, despite the author's affiliation with NIST, this pr
 - **Self-loop support** with customizable angles and labels
 - **Node customization**: colors, sizes, labels, and conjugation markers
 - **Edge label positioning** with rotation and offset controls
+- **Schematic glyphs**: ports (where a signal enters or leaves the drawing) and transmission lines, joined by smooth routed wiring, with user-toggled auto-orientation. A port owns no lead — connections emerge from the point of the pentagon in their own stroke — and a line's open mouth is drawn as a bore, with its conductor coming out of the center
 - **Zoom and pan** with mouse wheel and arrow keys
 - **Export to PDF/SVG** with scaling presets
 - **Save/load graphs** in JSON format
@@ -38,6 +39,7 @@ It's important to note that, despite the author's affiliation with NIST, this pr
 ### Graph Primitives Library
 
 - **Programmatic graph creation** using `graph_primitives` module
+- **Schematic glyph primitives**: `port`, `txline` and the `wire` routing, plus `GraphCircuit.addport` / `addtxline` / `addwire` — the same code the GUI canvas draws with
 - **LaTeX/MathText support** for mathematical labels
 - **Automatic layout** and proportional scaling
 - **Customizable styling** for nodes, edges, and labels
@@ -47,6 +49,7 @@ It's important to note that, despite the author's affiliation with NIST, this pr
 
 - **Node placement**: `G` (single), `Shift+G` (continuous), `Ctrl+G` (auto-increment)
 - **Edge creation**: `E` (single), `Ctrl+E` (continuous)
+- **Glyphs** (Graphulator): `P` (place port), `Shift+P` (continuous), `L` (place transmission line); wire them with the edge tool `E` — click a port or anywhere on a txline (the nearer end wins), then a node, port or txline. Drag a txline's end handle to stretch and aim it, snapping to the grid, with the other end held fixed; drag its body to move the whole glyph. Wires are black and solid by default, with per-wire color, width and dashed/dotted style in the Properties panel. Glyphs copy, cut and paste with `Ctrl+C`/`Ctrl+X`/`Ctrl+V` like nodes and edges, and a pasted copy is wired to itself. With a glyph selected: `←`/`→` length, `↑`/`↓` height, `Ctrl+←`/`Ctrl+→` rotate (which also pins a port's angle), `Ctrl+↑`/`Ctrl+↓` label size, `Shift+arrows` nudge the label; right-click for auto-orient and delete
 - **Selection**: Click to select, `Shift+Click` for multi-select, `Ctrl+A` for select all
 - **Editing**: Arrow keys for pan, `Shift+Arrow` for label nudge, `Ctrl+Arrow` for parameter adjustment
 - **File operations**: `Ctrl+N` (new), `Ctrl+O` (open), `Ctrl+S` (save)
@@ -237,6 +240,7 @@ frequency-dependent hub weights / connector embedding.
 - **Conjugated nodes** with visual distinction (transparent fill, double-line edges)
 - **Copy/paste** (`Ctrl+C/V`) with smart label auto-increment, or raw paste (`Ctrl+Shift+V`)
 - **Undo** (`Ctrl+Z`) for node/edge operations
+- **Multi-selection property editing**: select several nodes, edges or port/line glyphs and edit what they share (sizes, colors, conjugation, outlines, edge style/direction/curvature, self-loop size/angle, glyph length/height/stroke, port auto-orient). Fields that disagree across the selection show gray, blank or partially checked; one edit applies to all of them in a single undo step
 - **Rotation** (`Ctrl+U/I`) and **flipping** (`F`, `Shift+F`) of selections
 - **Grid modes**: square (45 degree increments) and triangular (30 degree), toggle with `T`
 
@@ -246,6 +250,10 @@ frequency-dependent hub weights / connector embedding.
 - **LaTeX toggle** (`Ctrl+L`): switch between fast MathText and publication-quality system LaTeX
 - **Export to PNG, SVG, and PDF** with granular scaling controls for nodes, edges, labels, and self-loops
 - **Export Python code** (`Ctrl+Shift+E`) for reproducing graphs programmatically
+- **Export Python code, grouped by style**: the same drawing with look-alike
+  nodes, edges, ports and wires factored into named style dicts plus lists of
+  geometry — shorter to read, one edit to restyle a whole family, and the
+  lists can be generated programmatically to build far larger graphs
 
 ### Settings & Customization
 
@@ -334,6 +342,23 @@ graph.addnode(label='A', xy=(0, 0),
               selflooplabel=r'$\\Delta_A$',
               selfloopangle=180)
 ```
+
+Add schematic glyphs and wire them up — the same calls Graphulator's code
+export emits, so an exported script reproduces what was on the canvas:
+
+```python
+# a port (pentagon + lead) and a transmission line (cylinder, two stubs)
+graph.addport(label='P1', xy=(-10, 0), autoorient=True)
+graph.addtxline(label='TL1', xy=(0, -8), length=1.4, height=1.0)
+
+# wires: ('node', label_or_id), ('port', ...), ('txline', ..., 'x0'|'xL')
+graph.addwire(start=('port', 'P1'), end=('node', 'A'), label=r'\kappa')
+graph.addwire(start=('txline', 'TL1', 'x0'), end=('port', 'P1'))
+graph.addwire(start=('txline', 'TL1', 'xL'), end=('node', 'B'))
+```
+
+`autoorient=True` aims the port's lead at the centroid of everything it is
+wired to; pass an explicit `angle=` instead to fix it.
 
 ### Jupyter Notebooks
 

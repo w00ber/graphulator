@@ -14,6 +14,7 @@ rather than by editing method bodies, so a fix made here lands in both apps.
 
 import json
 import logging
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -24,6 +25,91 @@ from PySide6.QtGui import QAction, QCursor
 from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Label auto-increment (shared by both apps)
+# ---------------------------------------------------------------------------
+#
+# Both apps step a label forward in several places -- continuous duplicate
+# placement, smart paste, glyph placement -- and each grew its own copy of
+# the pattern table. They are one table here.
+#
+# The subscript may be braced (``A_{12}``) or bare (``A_1``), and it may be
+# NEGATIVE (``A_-2``, ``A_{-2}``): a mode index below the carrier, or a
+# detuning that runs through zero, is an ordinary way to label a graph.
+# Sequencing only ever counts UPWARD, so -2 -> -1 -> 0 -> 1, which is the
+# direction those indices are read in. Before this, a negative label matched
+# nothing and was copied verbatim onto the next node.
+
+_LABEL_SUBSCRIPT_RE = re.compile(r'^([A-Za-z]+)_(?:\{(-?\d+)\}|(-?\d+))$')
+_LABEL_ADJACENT_RE = re.compile(r'^([A-Za-z]+)(-?\d+)$')
+_LABEL_NUMBER_RE = re.compile(r'^(-?\d+)$')
+_LABEL_UPPER_RE = re.compile(r'^([A-Z]+)$')
+_LABEL_LOWER_RE = re.compile(r'^([a-z]+)$')
+
+
+def format_subscript_label(prefix, number):
+    """``A`` + 2 -> ``A_2``; ``A`` + 12 -> ``A_{12}``; ``A`` + -1 -> ``A_{-1}``.
+
+    A subscript longer than one character is braced, because both ``A_12``
+    and ``A_-1`` otherwise render with only their first character lowered.
+    """
+    text = str(number)
+    return f"{prefix}_{{{text}}}" if len(text) > 1 else f"{prefix}_{text}"
+
+
+def letters_to_number(letters):
+    """A=1, B=2, ..., Z=26, AA=27 (case-insensitive)."""
+    num = 0
+    for char in letters.upper():
+        num = num * 26 + (ord(char) - ord('A') + 1)
+    return num
+
+
+def number_to_letters(num, lowercase=False):
+    """The inverse of :func:`letters_to_number`."""
+    result = ''
+    while num > 0:
+        num -= 1
+        result = chr(ord('A') + (num % 26)) + result
+        num //= 26
+    return result.lower() if lowercase else result
+
+
+def auto_increment_label(label):
+    """Next label in whatever sequence ``label`` belongs to.
+
+    Examples: ``A`` -> ``B``, ``Z`` -> ``AA``, ``A_1`` -> ``A_2``,
+    ``A_9`` -> ``A_{10}``, ``A_-2`` -> ``A_{-1}``, ``A0`` -> ``A1``,
+    ``-3`` -> ``-2``, ``99`` -> ``100``. A label that fits no pattern is
+    returned unchanged.
+    """
+    label = str(label)
+
+    match = _LABEL_SUBSCRIPT_RE.match(label)
+    if match:
+        digits = match.group(2) if match.group(2) is not None else match.group(3)
+        return format_subscript_label(match.group(1), int(digits) + 1)
+
+    match = _LABEL_ADJACENT_RE.match(label)
+    if match:
+        return f"{match.group(1)}{int(match.group(2)) + 1}"
+
+    match = _LABEL_NUMBER_RE.match(label)
+    if match:
+        return str(int(match.group(1)) + 1)
+
+    match = _LABEL_UPPER_RE.match(label)
+    if match:
+        return number_to_letters(letters_to_number(match.group(1)) + 1)
+
+    match = _LABEL_LOWER_RE.match(label)
+    if match:
+        return number_to_letters(letters_to_number(match.group(1)) + 1,
+                                 lowercase=True)
+
+    return label
 
 
 class GraphWindowCommonMixin:
@@ -546,44 +632,52 @@ class GraphWindowCommonMixin:
         }
         return color_to_mode.get(color_key, 'A')  # Default to 'A' if not found
 
-    def _compute_best_selfloop_angle(self, node, exclude_edge=None):
-        """Compute the self-loop angle that is farthest from all existing edges on this node.
+    def _selfloop_avoid_angles(self, node, exclude_edge=None):
+        """Directions (degrees, 0-360) a self-loop on `node` should avoid.
 
-        Uses the configurable SELFLOOP_ANGLE_KEYBOARD_INCREMENT to generate candidate
-        angles, then picks the one with the largest minimum angular distance from any
-        connected edge (including other self-loops, but excluding exclude_edge).
-
-        Args:
-            node: The node dict to compute the angle for.
-            exclude_edge: Optional edge dict to exclude from angle collection
-                (used when recomputing an existing self-loop's own angle).
+        The base list is the node's own edges: an existing self-loop counts
+        at its drawn angle, an ordinary edge at the bearing of its far
+        endpoint. Subclasses extend it -- the glyph layer adds the direction
+        each wire arrives from -- so auto-orientation stays aware of
+        everything actually attached to the node, not just its edges.
         """
         node_id = node['node_id']
         node_pos = np.array(node['pos'])
-
-        # Collect angles of all edges connected to this node
-        edge_angles = []
+        angles = []
         for edge in self.edges:
             if edge is exclude_edge:
                 continue
             if edge.get('is_self_loop', False):
-                # Existing self-loop on this node
                 if edge.get('from_node_id') == node_id:
-                    edge_angles.append(edge.get('selfloopangle', 0) % 360)
+                    angles.append(edge.get('selfloopangle', 0) % 360)
             else:
-                # Regular edge - compute angle from this node to the other node
                 if edge.get('from_node_id') == node_id:
                     other = edge.get('to_node', {})
                 elif edge.get('to_node_id') == node_id:
                     other = edge.get('from_node', {})
                 else:
                     continue
-                other_pos = np.array(other['pos'])
-                diff = other_pos - node_pos
-                angle_deg = np.degrees(np.arctan2(diff[1], diff[0])) % 360
-                edge_angles.append(angle_deg)
+                diff = np.array(other['pos']) - node_pos
+                angles.append(
+                    np.degrees(np.arctan2(diff[1], diff[0])) % 360)
+        return angles
 
-        # If no edges, return the default angle
+    def _compute_best_selfloop_angle(self, node, exclude_edge=None):
+        """Compute the self-loop angle that is farthest from everything else on this node.
+
+        Uses the configurable SELFLOOP_ANGLE_KEYBOARD_INCREMENT to generate candidate
+        angles, then picks the one with the largest minimum angular distance from any
+        direction _selfloop_avoid_angles reports (other self-loops and edges, plus
+        whatever a subclass adds), excluding exclude_edge.
+
+        Args:
+            node: The node dict to compute the angle for.
+            exclude_edge: Optional edge dict to exclude from angle collection
+                (used when recomputing an existing self-loop's own angle).
+        """
+        edge_angles = self._selfloop_avoid_angles(node, exclude_edge)
+
+        # Nothing attached: keep the default angle
         if not edge_angles:
             return self.APP_CONFIG.DEFAULT_SELFLOOP_ANGLE
 

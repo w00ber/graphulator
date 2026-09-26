@@ -1328,8 +1328,9 @@ def test_wire_properties_panel_and_round_trip(para):
     assert 'P1' in panel.title_label.text()
 
     # the Line Width combo writes the same multipliers ordinary edges use
+    levels = list(config.EDGE_LINEWIDTH_OPTIONS)
     width_combo = next(c for c in panel.findChildren(QComboBox)
-                       if c.count() and c.itemText(0) == 'Thin')
+                       if c.count() and c.itemText(0) == levels[0])
     width_combo.setCurrentText('X-Thick')
     assert att['linewidth_mult'] == pytest.approx(
         config.EDGE_LINEWIDTH_OPTIONS['X-Thick'])
@@ -1539,3 +1540,69 @@ def test_single_glyph_still_spins_in_place(para):
     win._rotate_selected_nodes(15)
     assert tl['pos'] == (1.0, 2.0)
     assert abs(tl['angle'] - 345.0) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# line glyph: the open mouth is a bore, not a disc
+# ---------------------------------------------------------------------------
+#
+# add_line_resonator auto-creates a terminating port, so a line's own
+# strokes are picked out by zorder rather than by being the extreme artist
+# on the canvas.
+
+def _line_glyph(win, **props):
+    win._auto_enable_explicit_ports("test")
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.0)
+    line.update(props)
+    win._update_plot()
+    return line
+
+
+def test_line_mouth_stub_comes_out_of_the_bore(para):
+    """The conductor emerges from the CENTER of the open mouth and is drawn
+    in front of it with a round cap. From the rim it read as a line stuck to
+    the outside of the mouth. Mirrors Graphulator's txline glyph."""
+    import matplotlib.patches as mpatches
+
+    gp, win, config = para
+    line = _line_glyph(win, h_mult=3.0)
+    lx, ly, w, h, rx = win._line_geometry(line)
+
+    stubs = [ln for ln in win.canvas.ax.lines
+             if ln.get_zorder() == pytest.approx(11.4)]
+    assert len(stubs) == 1, "expected exactly one mouth stub"
+    stub = stubs[0]
+    assert min(stub.get_xdata()) == pytest.approx(lx + w)   # the bore center
+    assert stub.get_solid_capstyle() == 'round'
+
+    # exactly Ellipse: Arc and the Circle end-marks are both subclasses
+    mouth = max((p for p in win.canvas.ax.patches
+                 if type(p) is mpatches.Ellipse),
+                key=lambda e: e.center[0])
+    assert stub.get_zorder() > mouth.get_zorder()
+
+
+def test_line_closed_cap_stub_still_leaves_the_outer_surface(para):
+    """The closed end IS a surface, so its stub starts on the cap."""
+    gp, win, config = para
+    line = _line_glyph(win, h_mult=3.0)
+    lx, ly, w, h, rx = win._line_geometry(line)
+    rx0, _ = win._line_end_cap_depths(line)
+
+    left = min((ln for ln in win.canvas.ax.lines
+                if ln.get_gid() != 'grid'),
+               key=lambda ln: min(ln.get_xdata()))
+    assert max(left.get_xdata()) == pytest.approx(lx - w - rx0)
+
+
+def test_line_end_points_are_unchanged_by_the_bore_fix(para):
+    """The wire attach points must not move: taps, terminations and every
+    saved .pgraph depend on them."""
+    from graphulator.para_features.explicit_ports import LINE_LEAD_LEN
+
+    gp, win, config = para
+    line = _line_glyph(win)
+    lx, ly, w, h, rx = win._line_geometry(line)
+    _, rxL = win._line_end_cap_depths(line)
+    expected = lx + w + rxL + LINE_LEAD_LEN * win.node_radius
+    assert win._line_end_points(line)['xL'][0] == pytest.approx(expected)

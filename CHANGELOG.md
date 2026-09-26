@@ -2,6 +2,179 @@
 
 ## [Unreleased]
 ### Added
+- **Two thinner edge line widths**, `X-Thin` and `XX-Thin`, below the old
+  thinnest `Thin`: a 50-edge fan at width 1.0 draws as a solid band, and
+  there was nothing finer to pick. They appear wherever a width is offered —
+  the add-edge dialog, the single-object and multi-selection properties
+  panels, the self-loop width, Paragraphulator's right-click width menu — and
+  the Settings default now goes down to 0.25× in 0.05 steps.
+  - The levels were hard-coded in **sixteen** places across the two apps
+    (which is why the two apps disagreed about what `Medium` meant). They now
+    come from one table, `config.EDGE_LINEWIDTH_OPTIONS`, so a level added
+    there appears in every widget at once. Paragraphulator's right-click
+    width menu, which had its own fourth set of names and values for the same
+    property, reads the shared table too.
+- **Grouped drawing-code export** (Export ▸ *Python Code (grouped by style)*,
+  in both apps; the Export Scaling tab has a second button for it). The
+  long-standing export writes one fully spelled-out call per object, which
+  for a 15-node, 49-edge graph is 700 lines of near-identical text. The
+  grouped shape factors every keyword that repeats into a named style dict
+  and leaves only the geometry:
+
+  ```python
+  NODE_STYLES = {'red': dict(nodecolor=..., R=0.600, fontscale=1.050, ...)}
+  NODES = {'red': [('A_0', (0.000, 0.000), 3), ...]}
+  for _style, _items in NODES.items():
+      for _label, _xy, _node_id in _items:
+          graph.addnode(label=_label, xy=_xy, node_id=_node_id,
+                        **NODE_STYLES[_style])
+  ```
+
+  Nodes, edges, ports, txlines and wires each get their own `*_STYLES`
+  dict plus a per-style geometry list, so retuning an appearance is one
+  edit instead of fifty, and the lists can be *generated* — the same
+  script that draws what the GUI drew also builds the graph ten times the
+  size from a loop of your own. Objects that need something of their own
+  (a self-loop, a label, a nudge) carry an `overrides` dict in their row;
+  a kind of object with only one member stays an explicit call, since
+  grouping one node behind three blocks of scaffolding helps nobody. The
+  explicit shape remains the default and is unchanged.
+- Both apps now generate their drawing code through one module,
+  `code_export.py`. The two copies had already drifted: Graphulator's grew
+  arrowhead style and scale for edges and self-loops, Paragraphulator's did
+  not, so the same graph exported differently depending on which app drew
+  it. Paragraphulator gains the arrowhead keywords by joining up.
+- **Schematic glyphs in Graphulator**: a **port** (home-plate pentagon
+  with a lead, `P` / `Shift+P` for continuous placement) and a
+  **transmission line** (`txline` in code: a slender cylinder with a closed
+  cap, an open mouth and a stub at each end, `L`), wired together by the
+  same smooth cubic-bezier routing Paragraphulator uses — every wire leaves
+  a lead colinear with it and lands on its target along the target's own
+  normal, so a fan out of one port collimates through the lead before
+  spreading. The wire tool is the edge tool (`E`): click a port or a
+  txline end, then a node, port or txline end. These are drawing-only:
+  Graphulator has no extractor, so nothing is computed from them (unlike
+  Paragraphulator's same-named physics ports and line macros).
+  - **Port auto-orientation**, user-toggled: an unpinned port aims its
+    lead at the centroid of whatever it is wired to, so dragging a node
+    turns its port to face it. Rotating one by hand pins it (starting
+    from the angle on screen, so the first step is a small visible nudge);
+    the Properties panel checkbox and the right-click menu toggle it back.
+  - Wiring a txline works from anywhere on the glyph: a click resolves to
+    whichever of its two ends it is nearer, because a txline is a
+    two-terminal object and "wire this line" always means one of its
+    terminals, never its center.
+  - Keyboard, following the node-resize conventions: `←`/`→` length,
+    `↑`/`↓` height, `Ctrl+←`/`Ctrl+→` rotate 15°, `Ctrl+↑`/`Ctrl+↓` label
+    size, `Shift+arrows` nudge the label inside the glyph, `Ctrl+R` /
+    `Ctrl+Shift+R` rotate the whole selection, `D`/`Delete` delete. A
+    single selected glyph spins in place; two or more objects rotate
+    rigidly about the selection centroid, glyphs carrying their
+    orientation along.
+  - A txline's two **end handles** are draggable: grab one and it stretches
+    and aims the line while the *other* end stays exactly where it was, and
+    the dragged end snaps to the current grid. Grabbing the body still
+    moves the whole glyph.
+  - A **port owns no lead**: the line leaving it is the connection's own
+    stroke, emerging from the point of the pentagon, so its width always
+    agrees with whatever it connects to (a glyph-owned stub had its own
+    width and frequently did not). The wire anchors inside the filled body
+    and is drawn behind it, so the stroke's end cap is hidden rather than
+    poking past the vertex.
+  - The transmission line's **open mouth is a bore**: its stub now runs
+    from the CENTER of the mouth ellipse, drawn in front of it with a round
+    cap, instead of starting at the rim and reading as a line stuck to the
+    outside. Applied to Paragraphulator's line glyph too. The stub tips --
+    and therefore every wire attach point and saved file -- are unchanged.
+  - Wires are **black and solid by default**, with per-wire color, width,
+    line style (solid / dashed / dotted / dash-dot) and label in the
+    Properties panel; all of it round-trips through save/load and the
+    exported script.
+  - Every glyph property is editable in the Properties panel (label,
+    orientation, length/height, label size and nudge, stroke width, stroke
+    / fill / label color), individually and across a multi-selection, and
+    wires get their own color / width / label panel.
+  - Glyphs take part in selection windows, `Ctrl+A`, copy/cut/paste,
+    undo/redo, auto-fit, delete (deleting or cutting a node drops the wires
+    that reached it), the `.graph` format (version 1.1, written only when a
+    graph actually has glyphs), and the exported Python script. A pasted
+    copy is wired to *itself*: its wires follow the pasted node/port, and a
+    wire whose far end was not part of the copy is dropped rather than
+    quietly reattached to the original's target.
+- **`graph_primitives` gains the glyph vocabulary** it draws them with:
+  `port`, `txline`, `wire`/`wirepoints`, the geometry helpers
+  (`portgeometry`, `portleadtip`, `txlinegeometry`, `txlineendpoints`,
+  `nodewireend`, `rotatepoint`, `readableangle`) and `GraphCircuit`'s
+  `addport` / `addtxline` / `addwire`, with anchor specs
+  (`('node', 'A')`, `('txline', 'TL1', 'xL')`, …), port auto-orientation
+  and axis extents that include the glyphs. The canvas and the exported
+  script therefore run the same drawing code. The module now also carries
+  dated revision notes at the top recording that the original library is
+  J. Aumentado's work and which later revisions were done jointly with
+  Claude.
+- **Multi-selection property editing in Paragraphulator** (Graphulator has
+  had it; now it also covers the port/line glyphs). Selecting several
+  nodes, edges or glyphs offers the properties they share — node and label
+  size, conjugation, outline, color; edge width, style, direction,
+  curvature, self-loop size/angle/flip; glyph length, height, stroke and
+  fill, port auto-orient — with the value shown gray, blank or
+  partially-checked where the selection disagrees, and one edit writing to
+  every selected object in a single undo step.
+- Self-loop auto-orientation now also avoids the direction each attached
+  **wire** arrives from, in both apps, not just the node's edges (a wire
+  is as much part of a node's local clutter as an edge is). Graphulator
+  already had self-loop auto-orientation for edges; the avoid-list is now
+  an overridable hook rather than a hard-coded edge scan.
+
+### Fixed
+- **Node colors exported as the wrong color.** A hand-picked color was drawn
+  correctly on screen and came out as an unrelated palette name in the
+  generated code — a graph of three custom colors exported as three
+  identical `config.MYCOLORS['RED']` nodes. Two causes, both fixed: the
+  pickers try to name a picked color by *string* match against `MYCOLORS`
+  (which holds matplotlib names, so `'indianred'` never matches
+  `'#cd5c5c'`) and left `color_key` pointing at the previous color; and the
+  export trusted that key rather than the color the canvas actually draws.
+  The palette lookup now compares resolved colors, so a picked color finds
+  its key whichever way it is spelled, and the export emits the literal
+  color whenever the key no longer names it — a real `MYCOLORS` color still
+  exports by its readable name. Node outline colors go through the same
+  rule.
+- Graphulator: `Ctrl+N`, `Ctrl+O`, `Ctrl+S`, `Ctrl+Shift+S`,
+  `Ctrl+Shift+E` and `Ctrl+Q` did nothing from the keyboard. Each was
+  registered twice — once as a `QShortcut` and again on its menu `QAction`
+  — and Qt treats a sequence owned twice as an "Ambiguous shortcut
+  overload" and dispatches *neither*, so the key went silently dead while
+  the menu item still worked when clicked. Each sequence now has exactly
+  one owner: menu actions own the keys they display (including the new
+  Insert menu's `P` / `Shift+P` / `L` and the edge tool's `E`),
+  `_create_shortcuts` owns the rest. `tests/test_shortcut_overlay.py` now
+  fails on any duplicate in either app, and a new `tests/test_hotkeys.py`
+  presses *every* registered Graphulator sequence and asserts an observable
+  consequence — registration alone does not prove a key works. Its coverage
+  test fails if a key is ever added without a press-test, so no shortcut can
+  be introduced untested or go quietly dead again.
+- Label auto-increment did not understand **negative** subscripts: placing
+  in auto-increment mode from `A_-2` copied the label verbatim onto every
+  following node instead of stepping it. Both apps now read one shared
+  pattern table (`common_window.auto_increment_label`), which accepts bare
+  and braced subscripts, positive or negative, and always counts upward
+  (`A_-2` → `A_{-1}` → `A_0` → `A_1`). Braces are added whenever the
+  subscript is wider than one character, since `A_-1` and `A_12` otherwise
+  render with only their first character lowered. `A_{12}` was likewise
+  unrecognized before and is now incrementable.
+- A transmission line's label was capped at `1.1 R`, so stretching the body
+  left it stranded at a fixed size and made the Label-size control look
+  inert -- it was scaling an already-tiny base. The label inside a body now
+  tracks the body height, capped by the body length so a long one still
+  fits, and the size multiplier scales that. (Height, Length and Stroke
+  width were working; only the label was pinned.)
+- Paragraphulator's smart paste mis-sequenced a series living entirely
+  below zero: `analyze_graph_labels` used `-1` as its "no maximum yet"
+  sentinel, so pasting into `A_-5, A_-4, A_-3` jumped to `A_0`. The
+  sentinel is now `None`.
+
+### Added (continued)
 - **Explicit Ports & Lines (hub-based dissipation)**, gated by a new
   Settings → Interface switch (off = the app behaves exactly as before;
   files containing ports/lines auto-enable it for the session).

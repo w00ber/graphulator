@@ -95,7 +95,11 @@ DEFAULT_EDGE_DIRECTION = 'both'  # or 'forward', 'backward'
 DEFAULT_EDGE_FLIP_LABELS = False
 
 # Edge linewidth options
+# Thinnest first. The two levels below 'Thin' are for dense graphs, where a
+# 1.0 edge is already a thick band.
 EDGE_LINEWIDTH_OPTIONS = {
+    'XX-Thin': 0.4,
+    'X-Thin': 0.7,
     'Thin': 1.0,
     'Medium': 1.25,
     'Thick': 1.5,

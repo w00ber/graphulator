@@ -4,14 +4,59 @@ FEB2020, AUG2021
 JAA
 
 Library for drawing graphs. Build up the primitives (loops, arrows, bubbles).
+
+-------------------------------------------------------------------------------
+REVISION NOTES
+-------------------------------------------------------------------------------
+The original library -- the node/self-loop/edge vocabulary, the bezier
+`drawloop`/`looparrow`/`selfloop` machinery, `plotnode`, `edge`, `prettynode`
+and the `GraphCircuit` container -- was written by J. Aumentado (JAA) in
+Feb 2020 and Aug 2021 and is his work.
+
+Everything dated below is a joint revision: JAA specifying the behaviour and
+the diagrammatic conventions, Claude (Anthropic) doing the refactoring and
+implementation under review. Dates are the dates of the change, not of
+release.
+
+  2026-04-21  Packaged for public release as part of `graphulator` 0.9.0.
+              `GraphCircuit` gained node_id support so graphs may carry
+              duplicate node labels (`allow_duplicate_labels`), with
+              `addedge(fromnode_id=, tonode_id=)` and an ambiguity error
+              that names the colliding ids.
+  2026-06-30  Label sizes became resolution-independent: every text size is
+              derived from the live points-per-data-unit of the axes, so
+              node/self-loop/edge labels keep their proportions at any
+              figure size or axis extent, and the `fontscale`-family
+              arguments became pure multipliers.
+  2026-07-02  Each edge curve and its arrowhead are emitted as ONE compound
+              matplotlib Path in a single PathPatch, so an SVG export keeps
+              them together as a single editable group. Added the `filled`
+              and `stealth` arrowhead styles alongside the original `open`
+              two-stroke head, with a per-edge `arrowscale`.
+  2026-07-03  Restored flush (butt) endcaps on the `single`/`double` edge
+              styles, which the compound-path rewrite had rounded.
+  2026-09-22  Added the schematic glyph vocabulary shared with the GUI apps:
+              `port` (home-plate pentagon + lead), `txline` (slender
+              cylinder with a closed cap, an open mouth and end stubs), and
+              `wire` -- the cubic-bezier routing that leaves a port
+              colinear with its lead and lands on its target along the
+              target's own normal. `GraphCircuit` gained `addport`,
+              `addtxline` and `addwire`, port auto-orientation, and
+              extent bookkeeping so the new glyphs are never clipped.
+              Factored the bold sans-serif math label formatting out of
+              `plotnode` into `mathboldlabel`, which the new glyphs share.
+-------------------------------------------------------------------------------
 '''
 import logging
 import os
+import re
 import warnings
 
+import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
 import matplotlib.path as mpath
 import matplotlib.pyplot as plt
+import matplotlib.transforms as mtransforms
 from matplotlib import rcParams
 from numpy import abs, angle, arctan2, asarray, cos, diff, linspace, pi, real, sin, sqrt
 
@@ -30,6 +75,51 @@ rcParams['font.family'] = 'STIXGeneral'
 # Old LaTeX rendering (very slow):
 # plt.rc('text',usetex=True)
 # rcParams['text.latex.preamble'] = '\\usepackage{{amsmath}}\n\\DeclareMathAlphabet{\\mathbfsf}{\\encodingdefault}{\\sfdefault}{bx}{n}'
+
+
+#------------------------------------------------------------------------------
+# TEXT ------------------------------------------------------------------------
+#------------------------------------------------------------------------------
+
+def mathboldlabel(text, use_latex=False):
+    """Format `text` as bold sans-serif math, honoring `_`/`^` groups.
+
+    Returned WITHOUT the enclosing ``$``, so callers can append decorations
+    (the conjugation star, say) before entering math mode.
+
+    MathText has no sans-serif bold alias, so each run is wrapped in
+    ``\\mathbf{\\mathsf{...}}``; under LaTeX the `sfmath` package already
+    makes the math font sans-serif, so ``\\mathbf{...}`` is enough. Sub- and
+    superscript groups are wrapped individually, otherwise the font command
+    swallows the script operator and the whole label renders at one size.
+    """
+    if use_latex:
+        def apply_font(t):
+            return r'\mathbf{' + t + '}'
+    else:
+        def apply_font(t):
+            return r'\mathbf{\mathsf{' + t + '}}'
+
+    parts = re.split(r'([_^])', str(text))
+    out = []
+    i = 0
+    while i < len(parts):
+        if parts[i] in ('_', '^'):
+            out.append(parts[i])
+            i += 1
+            if i < len(parts):
+                content = parts[i]
+                if content.startswith('{') and content.endswith('}'):
+                    out.append('{' + apply_font(content[1:-1]) + '}')
+                else:
+                    out.append(apply_font(content))
+                i += 1
+        elif parts[i]:
+            out.append(apply_font(parts[i]))
+            i += 1
+        else:
+            i += 1
+    return ''.join(out)
 
 
 #------------------------------------------------------------------------------
@@ -426,52 +516,8 @@ def plotnode(ax = None,
         if debug:
             logger.debug(f"FONT: R={R:.2f}, points_per_data_unit={points_per_data_unit:.2f}, scaled_nodelabelsize={scaled_nodelabelsize:.2f}")
 
-        # Format label with bold sans-serif, handling subscripts/superscripts
-        # In LaTeX mode with sfmath, use \mathbf{...} (sfmath makes it sans-serif)
-        # In MathText mode, use \mathbf{\mathsf{...}} explicitly
-        import re
-
-        # Choose font command based on rendering mode
-        if use_latex:
-            # LaTeX with sfmath: just use \mathbf (sfmath provides sans-serif)
-            def apply_font(text):
-                return r'\mathbf{' + text + '}'
-        else:
-            # MathText/STIX: use both \mathbf and \mathsf
-            def apply_font(text):
-                return r'\mathbf{\mathsf{' + text + '}}'
-
-        # Split on _ and ^ while keeping the delimiters
-        # This regex splits but keeps the _ and ^ characters
-        parts = re.split(r'([_^])', nodelabel)
-
-        formatted_parts = []
-        i = 0
-        while i < len(parts):
-            if parts[i] in ['_', '^']:
-                # This is a sub/superscript operator
-                formatted_parts.append(parts[i])
-                i += 1
-                if i < len(parts):
-                    # Next part is the sub/superscript content
-                    # Apply font to the content
-                    content = parts[i]
-                    if content.startswith('{') and content.endswith('}'):
-                        # Already has braces, apply font to inner content
-                        inner = content[1:-1]
-                        formatted_parts.append('{' + apply_font(inner) + '}')
-                    else:
-                        # Single character, wrap it
-                        formatted_parts.append(apply_font(content))
-                    i += 1
-            elif parts[i]:  # Non-empty part
-                # Regular text, apply font
-                formatted_parts.append(apply_font(parts[i]))
-                i += 1
-            else:
-                i += 1
-
-        formatted_label = ''.join(formatted_parts)
+        # Bold sans-serif math, with _/^ handling (see mathboldlabel)
+        formatted_label = mathboldlabel(nodelabel, use_latex=use_latex)
 
         if conj is False:
             nodelabelbfsf = rf"${formatted_label}$"
@@ -829,6 +875,363 @@ The edges are defined as a list of dictionaries, each with the following keys:
 
 '''
 
+#------------------------------------------------------------------------------
+# SCHEMATIC GLYPHS -------------------------------------------------------------
+#------------------------------------------------------------------------------
+# The glyph vocabulary the GUI apps draw on the canvas, so an exported script
+# reproduces what was on screen. All proportions are in units of the reference
+# node radius R, and every glyph takes `length`/`height` multipliers -- the
+# same two numbers the apps bind to the arrow keys.
+#
+# A PORT is a home-plate pentagon (square back, flat top and bottom,
+# tapered nose) with a straight lead off the apex: it is where a wire enters
+# or leaves the drawing. A TXLINE is a slender cylinder drawn in perspective --
+# closed rounded cap on the left, open elliptical mouth on the right -- with a
+# stub at each end. Wires leave a lead COLINEAR with it, so a fan of wires out
+# of one port collimates through its lead before spreading.
+
+PORT_BODY_W = 1.5      # pentagon straight-body width (x R)
+PORT_BODY_H = 1.35     # pentagon height
+PORT_APEX_W = 0.55     # tapered nose beyond the body
+PORT_LW = 2.0          # default stroke
+
+#: Where a wire anchors INSIDE the port body, as a fraction of the
+#: half-width. A port has no lead of its own: its wires start at a point
+#: buried in the filled body and run out through the apex, so the visible
+#: wire begins exactly at the point of the pentagon. Anchoring at the apex
+#: itself would leave the stroke's end cap sticking out past the vertex
+#: with nothing to cover it -- the polygon has zero width there -- which
+#: reads as a stray nub against the background.
+PORT_WIRE_INSET = 1.0
+
+TXLINE_BODY_W = 2.7          # cylinder half-length
+TXLINE_BODY_H = 0.28         # cylinder half-height
+TXLINE_LEAD_LEN = 0.55       # stub at each end
+TXLINE_LW = 1.6
+
+# Wires are BLACK by default: a wire is ordinary circuit ink, the same
+# weight of statement as an edge, and a gray default quietly read as
+# 'secondary'. Per-wire color / width / style overrides are in the panel.
+WIRE_COLOR = 'black'
+WIRE_LW = 1.4
+
+GLYPH_LABEL_FILL = 0.90    # fraction of the body width a label may occupy
+GLYPH_LABEL_ADVANCE = 0.60 # mean glyph advance / font size (bold sans)
+GLYPH_LABEL_SCALE = 0.35   # matches the apps' PLOT_NODE_LABEL_FONT_SCALE
+
+
+def rotatepoint(x, y, cx, cy, angle_deg):
+    """Rotate (x, y) about (cx, cy) by `angle_deg` degrees CCW."""
+    if not angle_deg:
+        return (x, y)
+    th = angle_deg * pi / 180.0
+    dx, dy = x - cx, y - cy
+    return (cx + dx * cos(th) - dy * sin(th),
+            cy + dx * sin(th) + dy * cos(th))
+
+
+def pointsperdataunit(ax):
+    """Points per data unit of `ax` -- the factor that keeps text sized in
+    points proportional to geometry sized in data units."""
+    if ax is None:
+        return 43.0  # same fallback plotnode uses
+    fig = ax.get_figure()
+    xlim, ylim = ax.get_xlim(), ax.get_ylim()
+    if xlim[1] == xlim[0] or ylim[1] == ylim[0]:
+        return 43.0
+    return min(fig.get_figwidth() * 72 / (xlim[1] - xlim[0]),
+               fig.get_figheight() * 72 / (ylim[1] - ylim[0]))
+
+
+def readableangle(angle_deg):
+    """`angle_deg` folded into the readable half-turn.
+
+    A label rides its glyph so it stays inside the body, but text that ends
+    up upside down is worse than text merely mirrored about the glyph axis --
+    so past a quarter turn it flips, the usual schematic convention.
+    """
+    angle = float(angle_deg) % 360.0
+    if 90.0 < angle <= 270.0:
+        angle -= 180.0
+    return angle
+
+
+def _glyphlabel(ax, text, x, y, fontsize, color='black', rotation=0.0,
+                use_latex=False, zorder=12):
+    """Draw a glyph label in the node-label style (bold sans-serif math)."""
+    if not text or not str(text).strip():
+        return None
+    body = mathboldlabel(text, use_latex=use_latex)
+    return ax.text(x, y, rf"${body}$", ha='center', va='center',
+                   rotation=rotation, rotation_mode='anchor',
+                   fontsize=max(float(fontsize), 1.0), color=color,
+                   zorder=zorder)
+
+
+def portgeometry(xy=(0, 0), R=2.0, length=1.0, height=1.0):
+    """(x, y, w, h, apex_x) of a port, UNROTATED.
+
+    `w`/`h` are the full width/height of the straight part of the body and
+    `apex_x` is the nose tip. A caller rotates these about (x, y) by the
+    glyph angle.
+    """
+    x, y = xy
+    w = PORT_BODY_W * R * length
+    h = PORT_BODY_H * R * height
+    apex_x = x + w / 2 + PORT_APEX_W * R * length
+    return x, y, w, h, apex_x
+
+
+def portapex(xy=(0, 0), R=2.0, angle=0.0, length=1.0, height=1.0):
+    """((x, y), (tx, ty)): the point of the pentagon and the outward unit
+    tangent there -- where a wire VISIBLY leaves the port."""
+    x, y, _, _, apex_x = portgeometry(xy, R, length, height)
+    th = angle * pi / 180.0
+    return (rotatepoint(apex_x, y, x, y, angle), (cos(th), sin(th)))
+
+
+def portwirestart(xy=(0, 0), R=2.0, angle=0.0, length=1.0, height=1.0):
+    """((x, y), (tx, ty)): where a wire ANCHORS on a port.
+
+    Buried inside the filled body, on the glyph axis, so the stroke's end
+    cap is hidden under the polygon and the wire appears to start at the
+    apex (see PORT_WIRE_INSET). The tangent is the glyph axis, so the wire
+    runs straight out through the point of the pentagon.
+    """
+    x, y, w, _, _ = portgeometry(xy, R, length, height)
+    th = angle * pi / 180.0
+    anchor_x = x + PORT_WIRE_INSET * w / 2
+    return (rotatepoint(anchor_x, y, x, y, angle), (cos(th), sin(th)))
+
+
+def txlinegeometry(xy=(0, 0), R=2.0, length=1.0, height=1.0):
+    """(x, y, w, h, rx) of a txline, UNROTATED: half-length, half-height and
+    the end-cap ellipse half-depth (tied to h so the perspective survives
+    stretching)."""
+    x, y = xy
+    w = TXLINE_BODY_W * R * length
+    h = TXLINE_BODY_H * R * height
+    return x, y, w, h, 0.5 * h
+
+
+def txlineendpoints(xy=(0, 0), R=2.0, angle=0.0, length=1.0, height=1.0):
+    """{'x0': ((x, y), (tx, ty)), 'xL': ...}: the two stub tips of a txline
+    with the outward unit tangent at each."""
+    x, y, w, h, rx = txlinegeometry(xy, R, length, height)
+    th = angle * pi / 180.0
+    axis = (cos(th), sin(th))
+    x0 = x - w - rx - TXLINE_LEAD_LEN * R
+    xL = x + w + rx + TXLINE_LEAD_LEN * R
+    return {'x0': (rotatepoint(x0, y, x, y, angle), (-axis[0], -axis[1])),
+            'xL': (rotatepoint(xL, y, x, y, angle), axis)}
+
+
+def nodewireend(nodecent, R, toward):
+    """((x, y), (tx, ty)) where a wire meets a node circle.
+
+    The wire enters radially -- normal to the circle's tangent -- on the side
+    facing `toward` (the emitting lead tip), so it never cuts the disc.
+    """
+    cx, cy = nodecent
+    ux, uy = toward[0] - cx, toward[1] - cy
+    norm = sqrt(ux * ux + uy * uy)
+    if norm < 1e-12:
+        ux, uy = 1.0, 0.0
+    else:
+        ux, uy = ux / norm, uy / norm
+    return ((cx + R * ux, cy + R * uy), (-ux, -uy))
+
+
+def wirepoints(p0, t0, p1, t1, R=2.0, samples=33):
+    """Sampled cubic-bezier wire from p0 (leaving along unit tangent t0) to
+    p1 (arriving travelling along unit tangent t1).
+
+    The node-editor routing style: one smooth rounded curve, no rectilinear
+    jogs, colinear with each port's lead at the ends. The control-point
+    reach is a fraction of the span, clamped so very short wires do not loop
+    and very long ones do not balloon.
+    """
+    p0 = asarray(p0, dtype=float)
+    p1 = asarray(p1, dtype=float)
+    t0 = asarray(t0, dtype=float)
+    t1 = asarray(t1, dtype=float)
+    d = float(sqrt(((p1 - p0) ** 2).sum()))
+    c = min(max(0.45 * d, 0.9 * R), 4.0 * R)
+    c0 = p0 + c * t0
+    c1 = p1 - c * t1
+    ts = linspace(0.0, 1.0, samples)[:, None]
+    return ((1 - ts) ** 3 * p0 + 3 * (1 - ts) ** 2 * ts * c0
+            + 3 * (1 - ts) * ts ** 2 * c1 + ts ** 3 * p1)
+
+
+def wire(ax=None, p0=(0, 0), t0=(1, 0), p1=(1, 0), t1=(1, 0), R=2.0,
+         color=WIRE_COLOR, lw=None, linestyle='-', alpha=0.9,
+         label=None, labelscale=1.0, labelcolor=None, use_latex=False,
+         zorder=4, samples=33):
+    """Draw one routed wire; returns its sampled points."""
+    if ax is None:
+        _, ax = plt.subplots()
+    lw = WIRE_LW if lw is None else lw
+    pts = wirepoints(p0, t0, p1, t1, R=R, samples=samples)
+    ax.add_line(mlines.Line2D(pts[:, 0], pts[:, 1], color=color, linewidth=lw,
+                              linestyle=linestyle, alpha=alpha, zorder=zorder,
+                              solid_capstyle='round'))
+    if label:
+        ppdu = pointsperdataunit(ax)
+        mx, my = pts[len(pts) // 2]
+        fontsize = 0.55 * R * ppdu * GLYPH_LABEL_SCALE * 1.45 * labelscale
+        lc = labelcolor or color
+        ax.text(mx, my, rf"${mathboldlabel(label, use_latex=use_latex)}$",
+                ha='center', va='center', zorder=zorder + 1,
+                fontsize=max(fontsize, 1.0), color=lc,
+                bbox=dict(boxstyle='round,pad=0.18', fc='white', ec=lc,
+                          lw=0.6))
+    return pts
+
+
+def port(ax=None, xy=(0, 0), angle=0.0, R=2.0, length=1.0, height=1.0,
+             label='', color='black', fill='white', labelcolor='black',
+             lw=None, hatch=None, linestyle='-', labelscale=1.0,
+             labelnudge=(0, 0), drawlabel=True, use_latex=False,
+             use_zorder=11, debug=False):
+    """Draw a port glyph: a home-plate pentagon, and nothing else.
+
+    The port has no lead of its own. A wire drawn to it anchors inside the
+    body (`portwirestart`) and emerges through the point of the pentagon,
+    so the line leaving a port is the CONNECTION's own stroke -- one line,
+    one width -- rather than a glyph-owned stub that has to be kept in
+    visual agreement with whatever attaches to it.
+
+    Returns ``{'apex': (x, y), 'tangent': (tx, ty), 'angle': angle}``.
+    """
+    if ax is None:
+        _, ax = plt.subplots()
+    lw = PORT_LW if lw is None else lw
+    x, y, w, h, apex_x = portgeometry(xy, R, length, height)
+
+    def rot(px, py):
+        return rotatepoint(px, py, x, y, angle)
+
+    verts = [rot(x - w / 2, y - h / 2),
+             rot(x + w / 2, y - h / 2),
+             rot(apex_x, y),
+             rot(x + w / 2, y + h / 2),
+             rot(x - w / 2, y + h / 2)]
+    ax.add_patch(mpatches.Polygon(
+        verts, closed=True, facecolor=fill, edgecolor=color, linewidth=lw,
+        linestyle=linestyle, joinstyle='miter', hatch=hatch,
+        zorder=use_zorder))
+
+    if drawlabel and label:
+        ppdu = pointsperdataunit(ax)
+        # sized off the body height, then capped so a long label shrinks to
+        # fit the STRAIGHT part of the body rather than spilling over the nose
+        fontsize = h * GLYPH_LABEL_SCALE * 1.45 * ppdu * labelscale
+        n_chars = max(len(str(label)), 1)
+        fontsize = min(fontsize, GLYPH_LABEL_FILL * w * ppdu
+                       / (GLYPH_LABEL_ADVANCE * n_chars))
+        cx, cy = rot(x + labelnudge[0], y + labelnudge[1])
+        _glyphlabel(ax, label, cx, cy, fontsize, color=labelcolor,
+                    rotation=readableangle(angle), use_latex=use_latex,
+                    zorder=use_zorder + 1)
+
+    apex, tangent = portapex(xy, R, angle, length, height)
+    if debug:
+        ax.plot([apex[0]], [apex[1]], 'r.')
+
+    return {'apex': apex, 'tangent': tangent, 'angle': angle}
+
+
+def txline(ax=None, xy=(0, 0), angle=0.0, R=2.0, length=1.0, height=1.0,
+         label='', color='black', fill='#cccccc', labelcolor='black',
+         lw=None, labelscale=1.0, labelnudge=(0, 0), drawlabel=True,
+         drawendmarks=True, endmarks=(), use_latex=False, use_zorder=10,
+         debug=False):
+    """Draw a txline glyph (slender cylinder, closed cap, open mouth, stubs).
+
+    `endmarks` names the ends drawn as FILLED dots (i.e. the terminated
+    ones); the others are hollow. Returns ``{'ends': {'x0': ((x, y),
+    (tx, ty)), 'xL': ...}}``.
+    """
+    if ax is None:
+        _, ax = plt.subplots()
+    lw = TXLINE_LW if lw is None else lw
+    x, y, w, h, rx = txlinegeometry(xy, R, length, height)
+    # draw axis-aligned, then rotate every artist about the glyph center
+    glyph_tf = (mtransforms.Affine2D().rotate_deg_around(x, y, angle)
+                + ax.transData)
+
+    ax.add_patch(mpatches.Rectangle(
+        (x - w, y - h), 2 * w, 2 * h, facecolor=fill, edgecolor='none',
+        zorder=use_zorder, transform=glyph_tf))
+    ax.add_patch(mpatches.Ellipse(
+        (x - w, y), 2 * rx, 2 * h, facecolor=fill, edgecolor='none',
+        zorder=use_zorder, transform=glyph_tf))
+    ax.add_patch(mpatches.Arc(
+        (x - w, y), 2 * rx, 2 * h, theta1=90, theta2=270, edgecolor=color,
+        linewidth=lw, zorder=use_zorder + 1, transform=glyph_tf))
+    ax.add_patch(mpatches.Ellipse(
+        (x + w, y), 2 * rx, 2 * h, facecolor='white', edgecolor=color,
+        linewidth=lw, zorder=use_zorder + 1, transform=glyph_tf))
+    for yy in (y - h, y + h):
+        ax.add_line(mlines.Line2D([x - w, x + w], [yy, yy], color=color,
+                                  linewidth=lw, zorder=use_zorder + 1,
+                                  transform=glyph_tf))
+    # closed (left) cap: the stub leaves the outside of the rounded cap,
+    # which is the physical outer surface of the line
+    ax.add_line(mlines.Line2D(
+        [x - w - rx - TXLINE_LEAD_LEN * R, x - w - rx], [y, y], color=color,
+        linewidth=lw, zorder=use_zorder + 1, transform=glyph_tf))
+    # open (right) mouth: the conductor comes out of the BORE, so its stub
+    # runs from the CENTER of the mouth ellipse and is drawn in FRONT of it,
+    # with a round cap so it reads as a wire end rather than a cut edge.
+    # From the rim it looked stuck to the outside of the mouth.
+    ax.add_line(mlines.Line2D(
+        [x + w, x + w + rx + TXLINE_LEAD_LEN * R], [y, y], color=color,
+        linewidth=lw, solid_capstyle='round', zorder=use_zorder + 1.4,
+        transform=glyph_tf))
+
+    ends = txlineendpoints(xy, R, angle, length, height)
+    if drawendmarks:
+        for name, (pt, _) in ends.items():
+            filled = name in (endmarks or ())
+            mark = 'black' if filled else 'darkgray'
+            ax.add_patch(mpatches.Circle(
+                pt, 0.12 * R, facecolor=(mark if filled else 'white'),
+                edgecolor=mark, linewidth=1.6, zorder=use_zorder + 1.5))
+
+    if drawlabel and label:
+        ppdu = pointsperdataunit(ax)
+        n_chars = max(len(str(label)), 1)
+        if 2 * h >= 0.85 * R:
+            # Inside the body, sized to the body HEIGHT so stretching the
+            # line grows its label with it. (This used to be capped at
+            # 1.1 R, which pinned the label to a fixed size the moment the
+            # body was stretched at all -- and made `labelscale` look inert,
+            # because it was scaling an already-tiny base.)
+            tx, ty = x, y
+            fontsize = 2 * h * ppdu * GLYPH_LABEL_SCALE * 1.6 * labelscale
+            # ...but never wider than the body it sits in
+            fontsize = min(fontsize, GLYPH_LABEL_FILL * 2 * w * ppdu
+                           / (GLYPH_LABEL_ADVANCE * n_chars))
+        else:
+            # too thin to hold text: float it just above, where nothing
+            # clips it, at a size tied to the node scale
+            tx, ty = x, y + h + 0.45 * R
+            fontsize = 0.9 * R * ppdu * GLYPH_LABEL_SCALE * 1.6 * labelscale
+        tx, ty = rotatepoint(tx + labelnudge[0], ty + labelnudge[1], x, y,
+                             angle)
+        _glyphlabel(ax, label, tx, ty, fontsize,
+                    color=labelcolor, rotation=readableangle(angle),
+                    use_latex=use_latex, zorder=use_zorder + 2)
+
+    if debug:
+        for pt, _ in ends.values():
+            ax.plot([pt[0]], [pt[1]], 'r.')
+
+    return {'ends': ends, 'angle': angle}
+
+
 class GraphCircuit:
     def __init__(self, nodes=None, edges=None, allow_duplicate_labels=False, use_latex=False):
         """Initialize a GraphCircuit object.
@@ -851,6 +1254,13 @@ class GraphCircuit:
         """
         self.nodes = nodes or []
         self.edges = edges or []
+        # Schematic glyphs and their routed wiring (see the SCHEMATIC GLYPHS
+        # section above). These are drawing-only: they carry no graph
+        # semantics, so nothing else in the container needs to know about
+        # them beyond drawing them and sizing the axes to fit.
+        self.ports = []
+        self.txlines = []
+        self.wires = []
         self.allow_duplicate_labels = allow_duplicate_labels
         self.use_latex = use_latex
 
@@ -878,6 +1288,15 @@ class GraphCircuit:
             'arrowthetatweak': -8,
             'lw': 1.5, # do we want this?
             'color': 'black'
+            }
+        self.glyphprefs = {
+            'R': None,          # None -> fall back to nodeprefs['R']
+            'color': 'black',
+            'labelcolor': 'black',
+            'length': 1.0,
+            'height': 1.0,
+            'labelscale': 1.0,
+            'labelnudge': (0, 0),
             }
 
     def __repr__(self):
@@ -1034,6 +1453,273 @@ class GraphCircuit:
                                   **kwargs,
                                   )
             self.nodes.append(nodedict)
+
+    # ---- schematic glyphs ---------------------------------------------------
+
+    def _glyphR(self, R=None):
+        """Reference radius for a glyph: explicit, else the glyph default,
+        else the node default -- so glyphs stay proportional to the nodes."""
+        if R is not None:
+            return R
+        if self.glyphprefs.get('R') is not None:
+            return self.glyphprefs['R']
+        return self.nodeprefs['R']
+
+    def addport(self, label='', xy=(0, 0), angle=0.0, autoorient=False,
+                    port_id=None, **kwargs):
+        """Add a port glyph (home-plate pentagon + lead).
+
+        Parameters
+        ----------
+        label : str
+            Drawn inside the straight part of the body.
+        xy : (float, float)
+            Glyph center.
+        angle : float
+            Degrees CCW; the lead points along it.
+        autoorient : bool
+            When True the lead aims at the centroid of whatever this
+            port is wired to, and `angle` is ignored (this is the
+            "auto-orient" toggle the GUI exposes). A port with no wires
+            falls back to `angle`.
+        port_id : int, optional
+            Explicit id; auto-assigned when omitted. Wires may reference a
+            port by id or by label.
+        **kwargs
+            `R`, `length`, `height`, `color`, `fill`, `labelcolor`, `lw`,
+            `hatch`, `labelscale`, `labelnudge`, `drawlabel`.
+
+        Example
+        -------
+        g.addport(label='P1', xy=(-8, 0), autoorient=True)
+        g.addwire(start=('port', 'P1'), end=('node', 'A'))
+        """
+        term = dict(self.glyphprefs)
+        term.pop('R', None)
+        term.update(kwargs)
+        term['label'] = label
+        term['xy'] = tuple(xy)
+        term['angle'] = float(angle)
+        term['autoorient'] = bool(autoorient)
+        term['R'] = self._glyphR(kwargs.get('R'))
+        if port_id is None:
+            port_id = len(self.ports)
+        term['port_id'] = port_id
+        self.ports.append(term)
+        return term
+
+    def addtxline(self, label='', xy=(0, 0), angle=0.0, txline_id=None, **kwargs):
+        """Add a txline glyph (slender cylinder with a closed cap and an open
+        mouth). `length`/`height` stretch it; see `addport` for the
+        shared keyword arguments.
+
+        Example
+        -------
+        g.addtxline(label='TL1', xy=(0, 0), angle=0, length=1.4, height=1.0)
+        g.addwire(start=('txline', 'TL1', 'xL'), end=('node', 'B'))
+        """
+        cx = dict(self.glyphprefs)
+        cx.pop('R', None)
+        cx.setdefault('fill', '#cccccc')
+        cx.update(kwargs)
+        cx['label'] = label
+        cx['xy'] = tuple(xy)
+        cx['angle'] = float(angle)
+        cx['R'] = self._glyphR(kwargs.get('R'))
+        if txline_id is None:
+            txline_id = len(self.txlines)
+        cx['txline_id'] = txline_id
+        self.txlines.append(cx)
+        return cx
+
+    def addwire(self, start, end, **kwargs):
+        """Wire two anchors together with one smooth routed curve.
+
+        `start` and `end` are anchor specs:
+
+            ('node', 'A')            -- by node label
+            ('node', 3)              -- by node_id (an int means id)
+            ('port', 'P1')       -- by port label or id
+            ('txline', 'TL1', 'xL')    -- a txline END ('x0' or 'xL')
+
+        **kwargs: `color`, `lw`, `linestyle`, `alpha`, `label`,
+        `labelscale`, `labelcolor`.
+        """
+        w = dict(kwargs)
+        w['start'] = tuple(start)
+        w['end'] = tuple(end)
+        self.wires.append(w)
+        return w
+
+    def _findport(self, key):
+        for term in self.ports:
+            if isinstance(key, int) and not isinstance(key, bool):
+                if term['port_id'] == key:
+                    return term
+            elif term['label'] == key:
+                return term
+        raise ValueError(f"No port matching {key!r}")
+
+    def _findtxline(self, key):
+        for cx in self.txlines:
+            if isinstance(key, int) and not isinstance(key, bool):
+                if cx['txline_id'] == key:
+                    return cx
+            elif cx['label'] == key:
+                return cx
+        raise ValueError(f"No txline matching {key!r}")
+
+    def _findnode(self, key):
+        for node in self.nodes:
+            if isinstance(key, int) and not isinstance(key, bool):
+                if node.get('node_id') == key:
+                    return node
+            elif node['nodelabel'] == key:
+                return node
+        raise ValueError(f"No node matching {key!r}")
+
+    def _anchorpos(self, spec):
+        """Bare position of an anchor, used to aim auto-orienting ports
+        BEFORE any angle is known (so the two never depend on each other)."""
+        kind = spec[0]
+        if kind == 'node':
+            return tuple(self._findnode(spec[1])['nodecent'])
+        if kind == 'port':
+            return tuple(self._findport(spec[1])['xy'])
+        if kind == 'txline':
+            cx = self._findtxline(spec[1])
+            end = spec[2] if len(spec) > 2 else 'xL'
+            return txlineendpoints(cx['xy'], cx['R'], cx['angle'],
+                                 cx['length'], cx['height'])[end][0]
+        raise ValueError(f"Unknown wire anchor kind {kind!r}")
+
+    def _portangle(self, term):
+        """Drawing angle of a port: its own when pinned or unwired, else
+        aimed at the CENTROID of everything it is wired to (a cluster
+        therefore pulls proportionally, which a mean of unit directions
+        would not)."""
+        if not term.get('autoorient'):
+            return term['angle']
+        targets = []
+        for w in self.wires:
+            for near, far in ((w['start'], w['end']), (w['end'], w['start'])):
+                if near[0] == 'port':
+                    try:
+                        if self._findport(near[1]) is term:
+                            targets.append(self._anchorpos(far))
+                    except ValueError:
+                        pass
+        if not targets:
+            return term['angle']
+        px, py = term['xy']
+        cx = sum(t[0] for t in targets) / len(targets)
+        cy = sum(t[1] for t in targets) / len(targets)
+        vx, vy = cx - px, cy - py
+        if abs(vx) < 1e-12 and abs(vy) < 1e-12:
+            return term['angle']
+        return float(arctan2(vy, vx) * 180 / pi)
+
+    def _wireanchor(self, spec, toward=None):
+        """((x, y), (tx, ty)) where a wire attaches, and the unit tangent
+        there. `toward` is the OTHER end's point, needed to pick the side of
+        a node circle."""
+        kind = spec[0]
+        if kind == 'node':
+            node = self._findnode(spec[1])
+            R = node.get('R') or self.nodeprefs['R']
+            return nodewireend(node['nodecent'], R,
+                               toward if toward is not None
+                               else node['nodecent'])
+        if kind == 'port':
+            term = self._findport(spec[1])
+            return portwirestart(term['xy'], term['R'],
+                                 self._portangle(term),
+                                 term['length'], term['height'])
+        if kind == 'txline':
+            cx = self._findtxline(spec[1])
+            end = spec[2] if len(spec) > 2 else 'xL'
+            return txlineendpoints(cx['xy'], cx['R'], cx['angle'],
+                                 cx['length'], cx['height'])[end]
+        raise ValueError(f"Unknown wire anchor kind {kind!r}")
+
+    def _terminatedtxlineends(self, cx):
+        """The end names of `cx` that a wire actually lands on -- drawn as
+        filled dots, the rest hollow."""
+        marks = set()
+        for w in self.wires:
+            for spec in (w['start'], w['end']):
+                if spec[0] != 'txline':
+                    continue
+                try:
+                    if self._findtxline(spec[1]) is cx:
+                        marks.add(spec[2] if len(spec) > 2 else 'xL')
+                except ValueError:
+                    pass
+        return tuple(marks)
+
+    def _drawglyphs(self, debug=False):
+        """Draw txlines, ports and their wiring onto self.ax."""
+        for cx in self.txlines:
+            txline(ax=self.ax, xy=cx['xy'], angle=cx['angle'], R=cx['R'],
+                 length=cx['length'], height=cx['height'],
+                 label=cx['label'], color=cx['color'],
+                 fill=cx.get('fill', '#cccccc'),
+                 labelcolor=cx['labelcolor'], lw=cx.get('lw'),
+                 labelscale=cx['labelscale'], labelnudge=cx['labelnudge'],
+                 drawlabel=cx.get('drawlabel', True),
+                 endmarks=self._terminatedtxlineends(cx),
+                 use_latex=self.use_latex, debug=debug)
+
+        for term in self.ports:
+            port(ax=self.ax, xy=term['xy'],
+                     angle=self._portangle(term), R=term['R'],
+                     length=term['length'], height=term['height'],
+                     label=term['label'], color=term['color'],
+                     fill=term.get('fill', 'white'),
+                     labelcolor=term['labelcolor'], lw=term.get('lw'),
+                     hatch=term.get('hatch'),
+                     labelscale=term['labelscale'],
+                     labelnudge=term['labelnudge'],
+                     drawlabel=term.get('drawlabel', True),
+                     use_latex=self.use_latex, debug=debug)
+
+        for w in self.wires:
+            # resolve the far end first: a node needs to know which side it
+            # is being approached from before it can offer an attach point
+            p_far = self._anchorpos(w['end'])
+            p0, t0 = self._wireanchor(w['start'], toward=p_far)
+            p1, t1 = self._wireanchor(w['end'], toward=p0)
+            if w['end'][0] in ('port', 'txline'):
+                # arrive travelling INTO the lead, not out of it
+                t1 = (-t1[0], -t1[1])
+            wire(ax=self.ax, p0=p0, t0=t0, p1=p1, t1=t1,
+                 R=self._glyphR(), color=w.get('color', WIRE_COLOR),
+                 lw=w.get('lw'), linestyle=w.get('linestyle', '-'),
+                 alpha=w.get('alpha', 0.9), label=w.get('label'),
+                 labelscale=w.get('labelscale', 1.0),
+                 labelcolor=w.get('labelcolor'), use_latex=self.use_latex)
+
+    def _glyphextentpoints(self):
+        """Extreme points of every glyph, so _axisequalizer can size the
+        axes to include them (a txline is long enough to leave the frame that
+        the nodes alone would set)."""
+        pts = []
+        for term in self.ports:
+            x, y, w, h, apex_x = portgeometry(
+                term['xy'], term['R'], term['length'], term['height'])
+            angle = self._portangle(term)
+            for px, py in ((x - w / 2, y - h / 2), (x - w / 2, y + h / 2),
+                           (apex_x, y - h / 2), (apex_x, y + h / 2)):
+                pts.append(rotatepoint(px, py, x, y, angle))
+        for cx in self.txlines:
+            x, y, w, h, rx = txlinegeometry(cx['xy'], cx['R'], cx['length'],
+                                          cx['height'])
+            half_w = w + rx + TXLINE_LEAD_LEN * cx['R']
+            half_h = max(h, 0.45 * cx['R'] + 0.9 * cx['R'])  # label floats above
+            for px, py in ((x - half_w, y - half_h), (x - half_w, y + half_h),
+                           (x + half_w, y - half_h), (x + half_w, y + half_h)):
+                pts.append(rotatepoint(px, py, x, y, cx['angle']))
+        return pts
 
     def _getnodecoords(self, nodelabel1=None, nodelabel2=None, nodeid1=None, nodeid2=None):
         """
@@ -1300,6 +1986,9 @@ class GraphCircuit:
                  **ed_kwargs
                 )
 
+        # Draw the schematic glyphs (ports, txlines) and their wiring
+        self._drawglyphs(debug=debug)
+
         # Make sure the axes are tight
         plt.tight_layout()
         # plt.axis('equal')
@@ -1413,12 +2102,22 @@ class GraphCircuit:
         # # Make the aspect ratio of the axes equal
         # self.ax.set_aspect('equal')
 
-        maxx = max([node['nodecent'][0] for node in self.nodes])
-        minx = min([node['nodecent'][0] for node in self.nodes])
-        maxy = max([node['nodecent'][1] for node in self.nodes])
-        miny = min([node['nodecent'][1] for node in self.nodes])
+        # Glyph corners join the node centers, so a long txline or a port
+        # lead can never fall outside the frame the nodes alone would set.
+        xs = [node['nodecent'][0] for node in self.nodes]
+        ys = [node['nodecent'][1] for node in self.nodes]
+        for px, py in self._glyphextentpoints():
+            xs.append(px)
+            ys.append(py)
+        if not xs:
+            return
 
-        maxnodeR = max([node['R'] for node in self.nodes])
+        maxx, minx = max(xs), min(xs)
+        maxy, miny = max(ys), min(ys)
+
+        maxnodeR = max([node['R'] for node in self.nodes], default=None)
+        if maxnodeR is None:
+            maxnodeR = self._glyphR()
 
 
         centerx,centery = (maxx+minx)/2,(maxy+miny)/2

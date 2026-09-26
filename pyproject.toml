@@ -122,6 +122,8 @@ ignore = [
 "tests/test_gui_dialogs.py" = ["F811", "I001"]
 "tests/test_intermode_lee2013.py" = ["F811", "I001"]
 "tests/test_pump_sector_rule.py" = ["F811", "I001"]
+"tests/test_label_increment.py" = ["F811", "I001"]
+"tests/test_para_multi_properties.py" = ["F811", "I001"]
 # The reference oracle is vendored VERBATIM and compared against operation
 # for operation; reformatting it (E702 semicolons, import order) would
 # silently break the thing every physics gate is measured against.

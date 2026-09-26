@@ -2249,6 +2249,40 @@ class ExplicitPortsMixin:
             return 'glyph'
         return super()._shortcut_context()
 
+    def _selfloop_avoid_angles(self, node, exclude_edge=None):
+        """Angles a self-loop on `node` should keep away from.
+
+        Extends the base list (the node's edges) with the direction each
+        attachment wire and each line tap arrives from, so a self-loop does
+        not auto-orient straight into a port's wire -- the wires are as much
+        a part of the node's local clutter as its edges are.
+        """
+        angles = super()._selfloop_avoid_angles(node, exclude_edge)
+        if not (self.ports or self.line_resonators):
+            return angles
+        node_id = node['node_id']
+        cx, cy = node['pos']
+        node_by_id = {n['node_id']: n for n in self.nodes}
+
+        def add(pts):
+            if pts is None:
+                return
+            ex, ey = pts[-1]
+            angles.append(
+                float(np.degrees(np.arctan2(ey - cy, ex - cx))) % 360)
+
+        for port in self.ports:
+            for att in port['attachments']:
+                if att['node_id'] == node_id:
+                    add(self._attachment_wire(port, att, node_by_id))
+        for line in self.line_resonators:
+            for end in ('x0', 'xL'):
+                for conn in self._end_conns(line, end):
+                    if (conn.get('kind') == 'node'
+                            and conn.get('node_id') == node_id):
+                        add(self._tap_wire(line, end, conn, node_by_id))
+        return angles
+
     def _rotate_selected_glyph(self, glyph, angle_degrees):
         """Rotate one glyph from the context menu (selection-independent,
         so it works even when the keyboard shortcut is unavailable)."""
@@ -4191,14 +4225,21 @@ class ExplicitPortsMixin:
                     [xb, xb], [ly - max(h_a, h_b), ly + max(h_a, h_b)],
                     color=stroke, linewidth=lw, zorder=11.2,
                     transform=glyph_tf))
-            # terminal stubs centered on both ends
-            for x0, x1 in ((lx - w - rx_first - LINE_LEAD_LEN * r,
-                            lx - w - rx_first),
-                           (lx + w + rx_last,
-                            lx + w + rx_last + LINE_LEAD_LEN * r)):
-                ax.add_line(mlines.Line2D([x0, x1], [ly, ly],
-                                          color=stroke, linewidth=lw,
-                                          zorder=11, transform=glyph_tf))
+            # Terminal stubs. The CLOSED (left) cap is the physical outer
+            # surface of the line, so its stub leaves the outside of the
+            # rounded cap. The OPEN (right) mouth is a bore, so its stub
+            # runs from the CENTER of the mouth ellipse and is drawn in
+            # FRONT of it, with a round cap -- from the rim it read as a
+            # line stuck to the outside of the mouth rather than a
+            # conductor emerging from it.
+            ax.add_line(mlines.Line2D(
+                [lx - w - rx_first - LINE_LEAD_LEN * r, lx - w - rx_first],
+                [ly, ly], color=stroke, linewidth=lw, zorder=11,
+                transform=glyph_tf))
+            ax.add_line(mlines.Line2D(
+                [lx + w, lx + w + rx_last + LINE_LEAD_LEN * r], [ly, ly],
+                color=stroke, linewidth=lw, solid_capstyle='round',
+                zorder=11.4, transform=glyph_tf))
 
             # end leads: open (hollow), terminated (filled + wire to the
             # port glyph), or pending a connection (blue)
