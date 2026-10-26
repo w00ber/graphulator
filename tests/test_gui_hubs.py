@@ -1,0 +1,1608 @@
+"""GUI tests for Explicit Ports mode (handoff spec 6.9), headless.
+
+Covers: programmatic scene API (port + 2 nodes + attachments), the Settings
+gate, save/load round-trip with the v3.0 sections + auto-enable, generated
+code executing and matching the live S, and the legacy .pgraph
+saved-then-loaded migration reproducing the golden S.
+"""
+
+import json
+import os
+import pickle
+
+import numpy as np
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+if hasattr(os, "geteuid") and os.geteuid() == 0:
+    # QtWebEngine refuses to sandbox as root (CI containers)
+    os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
+
+HERE = os.path.dirname(__file__)
+# 3MODE_AMP_CHAIN: every B_ext port has its self-loop, so the GUI
+# serializer's "null B_ext without a self-loop" rule (pre-existing) does not
+# alter it on resave. (CIRC_FULL_SCATT carries a B_ext on a node without a
+# self-loop, which a GUI resave has always dropped.)
+LEGACY_PGRAPH = os.path.join(HERE, os.pardir,
+                             "misc", "PGRAPH_TESTS", "3MODE_AMP_CHAIN.pgraph")
+GOLDEN_PKL = os.path.join(HERE, "golden", "3MODE_AMP_CHAIN.pkl")
+
+
+@pytest.fixture()
+def para(tmp_path):
+    """Fresh window per test (Explicit Ports toggles global config)."""
+    try:
+        from PySide6.QtWidgets import QApplication
+        # the QApplication must exist before the matplotlib QtAgg backend
+        # loads (imported by graphulator_para), or backend detection fails
+        _app = QApplication.instance() or QApplication([])
+
+        import graphulator.graphulator_para as gp
+        from graphulator import graphulator_para_config as config
+    except ImportError as exc:
+        pytest.skip(f"GUI stack unavailable: {exc}")
+    try:
+        win = gp.Graphulator()
+    except Exception as exc:
+        pytest.skip(f"Could not create main window: {exc}")
+    original = config.EXPLICIT_PORTS_MODE
+    yield gp, win, config
+    config.EXPLICIT_PORTS_MODE = original
+
+
+def add_node(win, node_id, label, x, freq=5.0, B_int=0.0, conj=False):
+    node = {'node_id': node_id, 'label': label, 'pos': (x, 0.0),
+            'color': 'cornflowerblue', 'color_key': 'BLUE',
+            'node_size_mult': 1.0, 'label_size_mult': 1.0, 'conj': conj}
+    win.nodes.append(node)
+    win.node_id_counter = max(win.node_id_counter, node_id + 1)
+    win.scattering_assignments[node_id] = {'freq': freq, 'B_int': B_int}
+    return node
+
+
+def build_shared_port_scene(win, config):
+    """Two modes sharing one explicit port (the headline use case)."""
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    add_node(win, 0, 'A', 0.0, freq=5.0)
+    add_node(win, 1, 'B', 2.0, freq=6.0)
+    port = win.add_port(label='P1', pos=(4.0, 0.0), monitored=True)
+    win.add_port_attachment(port, 0, rate=0.2, sign=1)
+    win.add_port_attachment(port, 1, rate=0.2, sign=-1)
+    return port
+
+
+def compute_live_S(win, f_start=-2.0, f_stop=2.0, points=21):
+    """Live-pipeline S via the same job route the Show S worker uses."""
+    from graphulator.graphulator_para import _compute_sparams_job
+    f = np.linspace(f_start, f_stop, points)
+    job = win._build_sparams_job(None, f, f_start, f_stop, points)
+    assert job is not None
+    result = _compute_sparams_job(job)
+    assert result is not None
+    return result
+
+
+def test_placement_requires_explicit_mode(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = False
+    win._toggle_port_mode()
+    assert win.placement_mode is None
+    win._toggle_line_mode()
+    assert win.placement_mode is None
+
+    config.EXPLICIT_PORTS_MODE = True
+    win._toggle_port_mode()
+    assert win.placement_mode == 'port'
+    win._toggle_port_mode()
+    assert win.placement_mode is None
+    win._toggle_line_mode()
+    assert win.placement_mode == 'line'
+    win._exit_placement_mode()
+    assert win.placement_mode is None
+
+
+def test_shared_port_live_S_is_hub_based(para):
+    """The live pipeline builds the rank-one shared-port damping: S is 1x1,
+    unitary (lossless), and channel label = hub label."""
+    gp, win, config = para
+    build_shared_port_scene(win, config)
+
+    result = compute_live_S(win)
+    S = result['S']
+    assert S.shape[1:] == (1, 1)
+    # lossless single-channel: |S11| = 1 at machine precision
+    assert np.max(np.abs(np.abs(S[:, 0, 0]) - 1.0)) < 1e-12
+    ref = result['port_ids'][0]
+    assert result['port_dict'][ref]['label'] == 'P1'
+
+    # cross-check the assembly against a direct hub-based computation
+    from graphulator import autograph
+    from tests.hub_matrix_helpers import build_static_extractor, hub_from_column
+    Omega = np.diag([5.0, 6.0])
+    kappa = np.array([np.sqrt(0.2), -np.sqrt(0.2)])
+    ext = build_static_extractor(Omega, hubs=[hub_from_column('P1', kappa)])
+    gsm = autograph.GraphScatteringMatrix(ext, np.linspace(-2, 2, 21))
+    np.testing.assert_allclose(S, gsm.S, rtol=1e-12, atol=1e-14)
+
+
+def test_line_component_computes_alone(para):
+    """A line macro is its own component job; its S11 comes from the comb."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win.add_line_resonator(label='TL1', pos=(0.0, -3.0), FSR=1.5, Ztx=65.0,
+                           f_max=6.0, port_end='xL', Z0_port=50.0)
+    comps = win._find_connected_components()
+    assert len(comps) == 1 and comps[0].get('line_ids') == [0]
+
+    from graphulator.graphulator_para import _compute_sparams_job
+    f = np.linspace(0.5, 4.0, 31)
+    job = win._build_sparams_job(comps[0], f, 0.5, 4.0, 31)
+    result = _compute_sparams_job(job)
+    assert result is not None
+    assert result['S'].shape[1:] == (1, 1)
+    assert np.max(np.abs(np.abs(result['S'][:, 0, 0]) - 1.0)) < 1e-12
+    ref = result['port_ids'][0]
+    assert result['port_dict'][ref]['label'] == 'TL1'
+
+
+def test_save_load_round_trip_and_auto_enable(para, tmp_path):
+    gp, win, config = para
+    port = build_shared_port_scene(win, config)
+    win.add_line_resonator(label='TL1', pos=(0.0, -3.0), FSR=1.5, Ztx=65.0,
+                           f_max=6.0, port_end='xL', Z0_port=50.0,
+                           alpha_uniform=0.01)
+
+    data = json.loads(json.dumps(win._serialize_graph()))  # simulate disk
+    assert data['version'] == '3.0'
+    # P1 plus the line's own (explicit, visible) port glyph
+    assert len(data['ports']) == 2
+    assert len(data['line_resonators']) == 1
+    assert data['line_resonators'][0]['ends']['xL'][0]['kind'] == 'port'
+
+    # load with the mode off: it must auto-enable and restore everything
+    config.EXPLICIT_PORTS_MODE = False
+    win._deserialize_graph(data)
+    assert config.EXPLICIT_PORTS_MODE is True
+    assert len(win.ports) == 2
+    restored = win.ports[0]
+    assert restored['label'] == 'P1'
+    assert restored['attachments'] == port['attachments']
+    line = win.line_resonators[0]
+    assert (line['FSR'], line['Ztx'], line['f_max']) == (1.5, 65.0, 6.0)
+    assert line['port_end'] == 'xL'
+    assert line['alpha_uniform'] == 0.01
+
+    # a graph without ports/lines keeps writing version 2.0
+    win2_data = json.loads(json.dumps(win._serialize_graph()))
+    assert win2_data['version'] == '3.0'
+    win._init_explicit_ports_state()
+    legacy_data = win._serialize_graph()
+    assert legacy_data['version'] == '2.0'
+    assert 'ports' not in legacy_data
+
+
+def test_generated_code_matches_live_S(para):
+    gp, win, config = para
+    build_shared_port_scene(win, config)
+
+    # enter scattering mode so codegen has tree/frequency state
+    win._enter_scattering_mode()
+    win.properties_panel.freq_center_spin.setValue(0.0)
+    win.properties_panel.freq_span_spin.setValue(4.0)
+    win.properties_panel.freq_points_spin.setValue(21)
+
+    code = win.properties_panel._generate_scattering_calculation_code()
+    assert code is not None
+    assert 'hubs' in code and "'P1'" in code
+
+    # execute everything up to (not including) the plotting section
+    code_no_plot = code.split("# Plot S-parameters")[0].rsplit(
+        "# ====", 1)[0]
+    namespace = {}
+    exec(compile(code_no_plot, '<generated>', 'exec'), namespace)
+    gsm = namespace['scattering_matrix']
+
+    live = compute_live_S(win, f_start=-2.0, f_stop=2.0, points=21)
+    np.testing.assert_allclose(gsm.S, live['S'], rtol=1e-12, atol=1e-14)
+    assert gsm.num_ports == 1
+    assert gsm.port_labels == ['P1']
+
+
+def test_legacy_pgraph_saved_then_loaded_is_golden_equal(para, tmp_path):
+    """Stage-5 gate: legacy file -> GUI -> save -> autograph reproduces the
+    Stage-0 golden S (rtol 1e-14; see test_regression_golden for the ulp
+    note)."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = False
+    win._open_graph_file(os.path.abspath(LEGACY_PGRAPH))
+    # a legacy graph must NOT flip the switch
+    assert config.EXPLICIT_PORTS_MODE is False
+    assert win.ports == [] and win.line_resonators == []
+
+    out = tmp_path / "resaved.pgraph"
+    assert win._save_graph_to_file(str(out))
+    saved = json.load(open(out))
+    assert saved['version'] == '2.0'
+    assert 'ports' not in saved
+
+    from graphulator import autograph
+    with open(GOLDEN_PKL, 'rb') as fh:
+        art = pickle.load(fh)
+    extractor = autograph.GraphExtractor()
+    extractor.extract_from_pgraph(autograph.load_pgraph(str(out)))
+    gsm = autograph.GraphScatteringMatrix(extractor, art['f'])
+    np.testing.assert_allclose(gsm.S, art['S'], rtol=1e-14, atol=1e-16)
+    assert gsm.port_ids == art['port_ids']
+
+
+def test_ports_panel_populates_and_bext_column_hides(para):
+    gp, win, config = para
+    build_shared_port_scene(win, config)
+    win._enter_scattering_mode()
+
+    panel = win.properties_panel
+    assert panel.ports_frame.isVisibleTo(win.properties_panel)
+    texts = []
+    for i in range(panel.ports_param_layout.count()):
+        w = panel.ports_param_layout.itemAt(i).widget()
+        if w is not None and hasattr(w, 'text'):
+            texts.append(w.text())
+    joined = ' | '.join(texts)
+    assert 'P1' in joined
+    assert '\N{RIGHTWARDS ARROW} A' in joined
+    assert '\N{RIGHTWARDS ARROW} B' in joined
+
+    # the node table must NOT offer a B_ext column in explicit mode
+    node_texts = []
+    for i in range(panel.nodes_param_layout.count()):
+        w = panel.nodes_param_layout.itemAt(i).widget()
+        if w is not None and hasattr(w, 'text') and not hasattr(w, 'value'):
+            node_texts.append(w.text())
+    assert not any('B_ext' in t for t in node_texts)
+
+
+def test_delete_node_drops_attachments_and_undo_restores(para):
+    gp, win, config = para
+    port = build_shared_port_scene(win, config)
+    assert len(port['attachments']) == 2
+
+    node_b = win.nodes[1]
+    win.selected_nodes = [node_b]
+    win._delete_selected_nodes()
+    assert len(win.ports[0]['attachments']) == 1
+    assert win.ports[0]['attachments'][0]['node_id'] == 0
+
+    win._undo()
+    assert len(win.ports[0]['attachments']) == 2
+
+
+def test_mixed_sector_attachment_rejected_end_to_end(para):
+    """The Phase-1 gate reaches the GUI pipeline: a port spanning sectors
+    fails the sweep with the M_pumped error."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    add_node(win, 0, 'A', 0.0, freq=5.0)
+    add_node(win, 1, 'B*', 2.0, freq=6.0, conj=True)
+    port = win.add_port(label='P1', pos=(4.0, 0.0))
+    win.add_port_attachment(port, 0, rate=0.2)
+    win.add_port_attachment(port, 1, rate=0.2)
+
+    f = np.linspace(-2, 2, 5)
+    job = win._build_sparams_job(None, f, -2.0, 2.0, 5)
+    from graphulator.graphulator_para import _compute_sparams_job
+    with pytest.raises(ValueError, match="M_pumped"):
+        _compute_sparams_job(job)
+
+
+# ---------------------------------------------------------------------------
+# Interactive canvas flows (synthetic events): edge-tool attachment in both
+# click orders, drag-to-move, rotation, and angle persistence.
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace
+
+
+def canvas_event(win, x, y, button=1):
+    return SimpleNamespace(xdata=x, ydata=y, inaxes=win.canvas.ax,
+                           button=button)
+
+
+def build_unattached_scene(win, config):
+    """Two modes and a port with NO attachments, plus a line."""
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    add_node(win, 0, 'A', 0.0, freq=5.0)
+    add_node(win, 1, 'B', 2.0, freq=6.0)
+    port = win.add_port(label='P1', pos=(5.0, 0.0), monitored=True)
+    line = win.add_line_resonator(label='TL1', pos=(0.0, -4.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL')
+    return port, line
+
+
+def test_edge_tool_attachment_port_first(para):
+    gp, win, config = para
+    port, _ = build_unattached_scene(win, config)
+    win._toggle_edge_mode()
+    win._on_click_edge_mode(canvas_event(win, 5.0, 0.0))   # click the port
+    assert win._attach_pending_port is port
+    win._on_click_edge_mode(canvas_event(win, 0.0, 0.0))   # then the node
+    assert win._attach_pending_port is None
+    assert [a['node_id'] for a in port['attachments']] == [0]
+
+
+def test_edge_tool_attachment_node_first(para):
+    """The natural order — click the mode, then the port — must also work."""
+    gp, win, config = para
+    port, _ = build_unattached_scene(win, config)
+    win._toggle_edge_mode()
+    win._on_click_edge_mode(canvas_event(win, 0.0, 0.0))   # click node A
+    assert win.edge_mode_first_node is win.nodes[0]
+    win._on_click_edge_mode(canvas_event(win, 5.0, 0.0))   # then the port
+    assert win.edge_mode_first_node is None
+    assert [a['node_id'] for a in port['attachments']] == [0]
+
+
+def test_line_gets_an_explicit_visible_port(para):
+    """Placing a terminated line creates a REAL port glyph wired to that
+    end — nothing is implied, and the port is editable like any other."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL',
+                                  Z0_port=50.0)
+    assert len(win.ports) == 1
+    port = win.ports[0]
+    assert line['ends']['xL'] == [{'kind': 'port',
+                                   'port_id': port['port_id']}]
+    assert line['ends']['x0'] == []
+
+    # the port's hub column carries the whole comb (2N+1 couplings)
+    hubs = win._gui_hubs_payload()
+    assert len(hubs) == 1
+    assert len(hubs[0]['attachments']) == 2 * 4 + 1
+    assert hubs[0]['label'] == 'TL1'
+
+
+def test_line_termination_matches_implicit_port_physics(para):
+    """The explicit-port refactor is physics-preserving: S is identical to
+    the old implicitly-terminated line."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5, Ztx=65.0,
+                           f_max=6.0, port_end='xL', Z0_port=50.0)
+    from graphulator.graphulator_para import _compute_sparams_job
+    from graphulator import autograph
+
+    f = np.linspace(0.5, 4.0, 31)
+    comps = win._find_connected_components()
+    result = _compute_sparams_job(win._build_sparams_job(comps[0], f, 0.5, 4.0, 31))
+
+    ref = autograph.LineResonator(line_id='line:0', label='TL1', FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL',
+                                  Z0_port=50.0)
+    ext = autograph.GraphExtractor()
+    ext.extract_graph_data(nodes=[], edges=[], scattering_assignments={},
+                           frequency_settings={'start': 0.5, 'stop': 4.0,
+                                               'points': 31},
+                           line_resonators=[ref])
+    gsm = autograph.GraphScatteringMatrix(ext, f)
+    np.testing.assert_array_equal(result['S'][:, 0, 0], gsm.S[:, 0, 0])
+
+
+def test_edge_tool_connects_line_end_to_port(para):
+    """Click a line-end lead, then a port glyph -> that end is terminated.
+    The comb never leaves the macro (no exploding, no extra nodes)."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end=None)
+    assert win.ports == []                                 # nothing implied
+    port = win.add_port(label='PX', pos=(-9.0, 0.0))
+    n_nodes = len(win.nodes)
+
+    x0_pt = win._line_end_points(line)['x0']
+    win._toggle_edge_mode()
+    win._on_click_edge_mode(canvas_event(win, *x0_pt))      # the end lead
+    assert win._attach_pending_line_end == (line, 'x0')
+    win._on_click_edge_mode(canvas_event(win, -9.0, 0.0))   # the port
+    assert win._attach_pending_line_end is None
+    assert line['ends']['x0'][0]['port_id'] == port['port_id']
+    assert len(win.nodes) == n_nodes                        # comb stayed inside
+
+    hubs = win._gui_hubs_payload()
+    assert len(hubs[0]['attachments']) == 2 * 4 + 1
+    # x0 termination is the all-plus profile u_n(0) = +1
+    assert {ph for _, _, ph in hubs[0]['attachments']} == {0.0}
+
+
+def test_port_first_order_also_terminates_line(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end=None)
+    port = win.add_port(label='PX', pos=(-9.0, 0.0))
+    win._toggle_edge_mode()
+    win._on_click_edge_mode(canvas_event(win, -9.0, 0.0))   # port first
+    win._on_click_edge_mode(canvas_event(win, *win._line_end_points(line)['x0']))
+    assert line['ends']['x0'][0]['port_id'] == port['port_id']
+
+
+def test_second_termination_refused_as_phase2(para):
+    """Both ends loaded = a two-port line: blocked until an ABCD two-port
+    reference is written and verified."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL')
+    other = win.add_port(label='P2', pos=(-9.0, 0.0))
+    with pytest.raises(ValueError, match="two-port"):
+        win.connect_line_end_to_port(line, 'x0', other)
+    assert line['ends']['x0'] == []
+
+
+def test_line_shares_a_component_with_its_ports_nodes(para):
+    """A port serving both a line and a device node puts them in one
+    component (they share a hub column)."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    add_node(win, 0, 'A', 0.0, freq=5.0)
+    line = win.add_line_resonator(label='TL1', pos=(0.0, -6.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL')
+    port = win.ports[0]
+    win.add_port_attachment(port, 0, rate=0.2)
+
+    comps = win._find_connected_components()
+    assert len(comps) == 1
+    assert comps[0]['line_ids'] == [line['line_id']]
+    assert 0 in comps[0]['node_ids']
+
+    # one hub column carrying the device attachment AND the comb
+    hubs = win._gui_hubs_payload()
+    assert len(hubs) == 1
+    assert len(hubs[0]['attachments']) == 1 + (2 * 4 + 1)
+
+
+def test_legacy_port_end_migrates_to_explicit_port(para):
+    """Files written before explicit ends materialize the implied port."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    data = {
+        'version': '3.0', 'format': 'pgraph', 'nodes': [], 'edges': [],
+        'line_resonators': [{
+            'line_id': 0, 'label': 'TLold', 'pos': [0.0, 0.0],
+            'FSR': 1.5, 'Ztx': 65.0, 'f_max': 6.0, 'port_end': 'xL',
+            'Z0_port': 50.0, 'alpha_uniform': 0.0,
+        }],
+    }
+    win._deserialize_ports_and_lines(data)
+    assert len(win.ports) == 1
+    migrated = win.line_resonators[0]
+    assert migrated['ends']['xL'][0]['port_id'] == win.ports[0]['port_id']
+    assert len(win._gui_hubs_payload()[0]['attachments']) == 2 * 4 + 1
+
+
+def test_drag_moves_port_with_snap(para):
+    gp, win, config = para
+    port, _ = build_unattached_scene(win, config)
+    # click on the port in normal mode arms the drag
+    assert win._maybe_handle_ports_normal_click(
+        canvas_event(win, 5.0, 0.0), False, False)
+    assert win._glyph_drag_pending == ('port', port)
+    # move past the threshold with the button held, then release
+    win._on_motion(canvas_event(win, 7.9, 1.1))
+    assert win._glyph_dragging == ('port', port)
+    win._on_release(canvas_event(win, 7.9, 1.1))
+    assert port['pos'] == (8.0, 1.0)                       # snapped to grid
+    # undo restores the original position
+    win._undo()
+    assert win.ports[0]['pos'] == (5.0, 0.0)
+
+
+def test_click_without_motion_does_not_move(para):
+    gp, win, config = para
+    port, _ = build_unattached_scene(win, config)
+    win._maybe_handle_ports_normal_click(canvas_event(win, 5.0, 0.0),
+                                         False, False)
+    win._on_release(canvas_event(win, 5.0, 0.0))
+    assert port['pos'] == (5.0, 0.0)
+    assert win._glyph_drag_pending is None
+
+
+def test_rotate_selected_line_and_hit_test(para):
+    gp, win, config = para
+    _, line = build_unattached_scene(win, config)
+    win.selected_lines = [line]
+
+    # six Ctrl+I steps = 90 degrees; glyph angle, not node positions, changes
+    for _ in range(6):
+        win._rotate_selected_nodes(-15)
+    assert line['angle'] == pytest.approx(90.0)
+
+    # the (wide) cylinder now extends along y: a point above the center hits,
+    # a point far along x (inside the unrotated glyph) misses
+    r = win.node_radius
+    from graphulator.para_features.explicit_ports import LINE_BODY_W
+    far = LINE_BODY_W * r * 0.9
+    assert win._find_line_at_position(0.0, -4.0 + far) is line
+    assert win._find_line_at_position(far, -4.0) is None
+
+
+def test_glyph_angle_round_trips(para):
+    gp, win, config = para
+    port, line = build_unattached_scene(win, config)
+    port['angle'] = 180.0
+    line['angle'] = 90.0
+    data = json.loads(json.dumps(win._serialize_graph()))
+    win._deserialize_graph(data)
+    assert win.ports[0]['angle'] == 180.0
+    assert win.line_resonators[0]['angle'] == 90.0
+    # attachment links start at the rotated lead tip: for a 180-degree port
+    # the tip sits to the LEFT of the glyph center
+    tip_x, tip_y = win._port_lead_tip(win.ports[0])
+    assert tip_x < win.ports[0]['pos'][0]
+    assert tip_y == pytest.approx(win.ports[0]['pos'][1])
+
+
+# ---------------------------------------------------------------------------
+# Auto-orientation, attachment selection/deletion, rubber-band parity
+# ---------------------------------------------------------------------------
+
+
+def build_vertical_pair_scene(win, config):
+    """Nodes above and below the port's left side (auto-orient exercises)."""
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    node_a = add_node(win, 0, 'A', 0.0, freq=5.0)
+    node_a['pos'] = (0.0, 2.0)
+    node_b = add_node(win, 1, 'B', 0.0, freq=6.0)
+    node_b['pos'] = (0.0, -2.0)
+    port = win.add_port(label='P1', pos=(4.0, 0.0))
+    return port
+
+
+def test_port_auto_orients_toward_attachments(para):
+    gp, win, config = para
+    port = build_vertical_pair_scene(win, config)
+
+    # unattached: keeps the stored angle
+    assert win._port_effective_angle(port) == 0.0
+
+    # one attachment: apex points straight at the node
+    win.add_port_attachment(port, 0, rate=0.2)
+    expected = np.degrees(np.arctan2(2.0, -4.0))           # toward (0, 2)
+    assert win._port_effective_angle(port) == pytest.approx(expected)
+
+    # two symmetric attachments: centroid direction (straight left)
+    win.add_port_attachment(port, 1, rate=0.2)
+    assert win._port_effective_angle(port) == pytest.approx(180.0)
+
+    # hit-testing follows the auto-orientation: glyph now extends LEFT
+    # (probe just inside the rotated apex, derived from the geometry)
+    _, _, w, _, apex_x, _ = win._port_geometry(port)
+    probe_x = 4.0 - (apex_x - 4.0) + 0.05
+    assert win._find_port_at_position(probe_x, 0.0) is port
+    # ... and the attachment links leave from the rotated lead tip
+    tip_x, tip_y = win._port_lead_tip(port)
+    assert tip_x < 4.0 and tip_y == pytest.approx(0.0)
+
+
+def test_manual_rotation_pins_and_survives_save(para):
+    gp, win, config = para
+    port = build_vertical_pair_scene(win, config)
+    win.add_port_attachment(port, 0, rate=0.2)
+    auto = win._port_effective_angle(port)
+
+    win.selected_ports = [port]
+    win._rotate_selected_nodes(-15)                        # Ctrl+I step
+    assert port['angle_pinned'] is True
+    assert win._port_effective_angle(port) == pytest.approx((auto + 15) % 360)
+
+    data = json.loads(json.dumps(win._serialize_graph()))
+    win._deserialize_graph(data)
+    assert win.ports[0]['angle_pinned'] is True
+
+    # unpinning resumes auto-orient
+    win.ports[0]['angle_pinned'] = False
+    assert win._port_effective_angle(win.ports[0]) == pytest.approx(auto)
+
+
+def test_attachment_link_select_delete_undo(para):
+    gp, win, config = para
+    port = build_vertical_pair_scene(win, config)
+    win.add_port_attachment(port, 0, rate=0.2)
+    win.add_port_attachment(port, 1, rate=0.2)
+
+    tip = win._port_lead_tip(port)
+    mid = ((tip[0] + 0.0) / 2, (tip[1] + 2.0) / 2)        # link to node A
+    consumed = win._maybe_handle_ports_normal_click(
+        canvas_event(win, *mid), False, False)
+    assert consumed is True
+    assert len(win.selected_attachments) == 1
+
+    win._delete_selected_nodes()                           # D key handler
+    assert [a['node_id'] for a in port['attachments']] == [1]
+    assert win.selected_attachments == []
+
+    win._undo()
+    assert len(win.ports[0]['attachments']) == 2
+
+
+def test_rubber_band_selects_glyphs(para):
+    gp, win, config = para
+    port = build_vertical_pair_scene(win, config)
+    line = win.add_line_resonator(label='TL1', pos=(6.0, -6.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0)
+    win.selection_window = True
+    win.selection_window_start = (2.0, -8.0)
+    win._on_release_selection_window(canvas_event(win, 8.0, 2.0))
+    assert port in win.selected_ports
+    assert line in win.selected_lines
+
+    win._delete_selected_nodes()
+    assert port not in win.ports
+    assert win.line_resonators == []
+
+
+def test_same_end_multiport_is_allowed(para):
+    """Several loads may tap the SAME end (e.g. a stub resonator read out by
+    two ports): each contributes its own rank-one u_n(end) damper to its own
+    hub column, which reproduces ABCD within the comb-truncation floor."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL',
+                                  Z0_port=50.0)
+    first = win.ports[0]
+    second = win.add_port(label='P2', pos=(9.0, 3.0))
+    win.connect_line_end_to_port(line, 'xL', second)
+
+    assert [c['port_id'] for c in line['ends']['xL']] == \
+        [first['port_id'], second['port_id']]
+    assert win._line_end_ports(line, 'xL') == [first, second]
+
+    # two hub columns, each carrying the whole comb at the same end
+    hubs = win._gui_hubs_payload()
+    assert len(hubs) == 2
+    n_modes = 2 * 4 + 1
+    assert all(len(h['attachments']) == n_modes for h in hubs)
+
+    from graphulator.graphulator_para import _compute_sparams_job
+    f = np.linspace(0.5, 4.0, 41)
+    comps = win._find_connected_components()
+    res = _compute_sparams_job(win._build_sparams_job(comps[0], f, 0.5, 4.0, 41))
+    S = res['S']
+    assert S.shape[1:] == (2, 2)
+    # lossless: each column carries unit power out of the two channels
+    power = np.abs(S[:, 0, 0]) ** 2 + np.abs(S[:, 1, 0]) ** 2
+    assert np.max(np.abs(power - 1.0)) < 1e-12
+
+
+def test_line_only_graph_enters_scattering_mode(para):
+    """A line-only graph has no GUI nodes (its comb is inside the macro) but
+    is still a valid scattering problem."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5, Ztx=65.0,
+                           f_max=6.0, port_end='xL', Z0_port=50.0)
+    assert win.nodes == []
+    win._toggle_scattering_mode()
+    assert win.scattering_mode is True
+    ok, _ = win._validate_scattering_parameters()
+    assert ok is True
+
+
+# ---------------------------------------------------------------------------
+# Node taps onto a line end (harmonic-referenced; see test_line_taps for the
+# profile's pin against the cmtline_core a-basis reference)
+# ---------------------------------------------------------------------------
+
+def add_gui_edge(win, from_node, to_node, rate=0.05, f_p=0.0, phase=0.0):
+    """A drawable GUI edge (full field set for _draw_edges)."""
+    edge = {'from_node_id': from_node['node_id'],
+            'to_node_id': to_node['node_id'], 'is_self_loop': False,
+            'from_node': from_node, 'to_node': to_node,
+            'double_line': False, 'color': 'black', 'linewidth': 1.5,
+            'linewidth_mult': 1.0, 'label_size_mult': 1.0,
+            'style': 'single', 'direction': 'both', 'flip_labels': False,
+            'looptheta': 30}
+    win.edges.append(edge)
+    win.scattering_assignments[(from_node['node_id'],
+                                to_node['node_id'])] = {
+        'f_p': f_p, 'rate': rate, 'phase': phase}
+    return edge
+
+
+def build_tapped_line_scene(win, config):
+    """Mode C (freq 4.4) tapped onto x0 of TL1 (FSR 1.5, N = 4), xL
+    terminated on the line's own auto-created port glyph."""
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    node = add_node(win, 0, 'C', 0.0, freq=4.4)
+    line = win.add_line_resonator(label='TL1', pos=(0.0, -3.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL',
+                                  Z0_port=50.0)
+    conn = win.connect_line_end_to_node(line, 'x0', node, rate=0.03)
+    return node, line, conn
+
+
+def test_tap_auto_nref_and_fanout(para):
+    """One drawn tap fans out into the +-n comb pairs with the verified
+    capacitive profile; n_ref defaults to the nearest harmonic."""
+    gp, win, config = para
+    node, line, conn = build_tapped_line_scene(win, config)
+
+    # freq 4.4 / FSR 1.5 = 2.93 -> nearest harmonic 3, chosen automatically
+    assert conn['n_ref'] == 3
+
+    pairs = win._gui_tap_edges()
+    assert len(pairs) == 2 * 4          # n = 1..4, one edge per +-n member
+    from graphulator.autograph import LineResonator
+    from graphulator.para_features.explicit_ports import line_payload
+    res = LineResonator(**line_payload(line))
+    by_target = {}
+    for edge, params in pairs:
+        assert edge['from_node_id'] == 0
+        assert params['f_p'] == 0.0     # conservative static coupling
+        by_target[edge['to_node_id']] = params
+    for n in range(1, 5):
+        for k in (n, -n):
+            p = by_target[res.mode_node_id(k)]
+            # rate at n_ref = 3 is the user's 0.03; capacitive tap at x0:
+            # all-plus signs, (n/3)^(1/2) profile
+            assert p['rate'] == pytest.approx(0.03 * (n / 3) ** 0.5)
+            assert p['phase'] == 0.0
+    # the DC comb mode is never tapped
+    assert res.mode_node_id(0) not in by_target
+
+
+def test_tap_live_S_unitary_and_coupling_type_matters(para):
+    gp, win, config = para
+    node, line, conn = build_tapped_line_scene(win, config)
+
+    # the tap merges C and TL1 into one component
+    comps = win._find_connected_components()
+    assert len(comps) == 1
+    assert comps[0]['line_ids'] == [0]
+    assert 0 in comps[0]['node_ids']
+
+    conn['rate'] = 0.2      # strong tap so the profile choice is visible
+    res_cap = compute_live_S(win, f_start=3.0, f_stop=6.0, points=41)
+    S_cap = res_cap['S']
+    assert S_cap.shape[1:] == (1, 1)
+    # everything is lossless: |S11| = 1 to machine precision
+    assert np.max(np.abs(np.abs(S_cap[:, 0, 0]) - 1.0)) < 1e-12
+
+    # switching the END's coupling type changes the physics
+    line['end_coupling']['x0'] = 'inductive'
+    win._invalidate_scattering_data()
+    res_ind = compute_live_S(win, f_start=3.0, f_stop=6.0, points=41)
+    S_ind = res_ind['S']
+    assert np.max(np.abs(np.abs(S_ind[:, 0, 0]) - 1.0)) < 1e-12
+    assert np.max(np.abs(S_ind - S_cap)) > 1e-3
+
+
+def test_tap_round_trip_serialization(para):
+    gp, win, config = para
+    node, line, conn = build_tapped_line_scene(win, config)
+    line['end_coupling']['x0'] = 'inductive'
+    conn['sign'] = -1
+
+    data = json.loads(json.dumps(win._serialize_graph()))
+    assert data['version'] == '3.0'
+    saved_line = data['line_resonators'][0]
+    saved_conn = [c for c in saved_line['ends']['x0']
+                  if c['kind'] == 'node'][0]
+    assert saved_conn == {'kind': 'node', 'node_id': 0, 'rate': 0.03,
+                          'sign': -1, 'n_ref': 3}
+    assert saved_line['end_coupling'] == {'x0': 'inductive',
+                                          'xL': 'capacitive'}
+
+    win._deserialize_graph(data)
+    restored = win.line_resonators[0]
+    assert restored['ends']['x0'][0] == saved_conn
+    assert restored['end_coupling']['x0'] == 'inductive'
+    assert [c['kind'] for c in restored['ends']['xL']] == ['port']
+
+
+def test_tap_panel_has_nref_spinbox(para):
+    """User requirement: the reference harmonic is settable in the Ports &
+    Lines panel."""
+    gp, win, config = para
+    build_tapped_line_scene(win, config)
+    win._enter_scattering_mode()
+    panel = win.properties_panel
+    panel._update_scattering_ports_table()
+
+    layout = panel.ports_param_layout
+    nref_spins = []
+    for i in range(layout.count()):
+        w = layout.itemAt(i).widget()
+        if w is not None and hasattr(w, 'prefix') and w.prefix() == 'n=':
+            nref_spins.append(w)
+    assert len(nref_spins) == 1
+    spin = nref_spins[0]
+    assert spin.value() == 3
+    assert spin.maximum() == 4          # 1..N
+
+    # editing it drives the connection dict (the live model input)
+    spin.setValue(2)
+    line = win.line_resonators[0]
+    assert line['ends']['x0'][0]['n_ref'] == 2
+
+
+def test_generated_code_with_tap_matches_live_S(para):
+    """Single-component export: tap edges are emitted literally and the
+    script reproduces the live S."""
+    gp, win, config = para
+    build_tapped_line_scene(win, config)
+
+    win._enter_scattering_mode()
+    win.properties_panel.freq_center_spin.setValue(4.5)
+    win.properties_panel.freq_span_spin.setValue(3.0)
+    win.properties_panel.freq_points_spin.setValue(41)
+
+    code = win.properties_panel._generate_scattering_calculation_code()
+    assert code is not None
+    assert '# line tap' in code and 'LineResonator' in code
+
+    code_no_plot = code.split("# Plot S-parameters")[0].rsplit("# ====", 1)[0]
+    namespace = {}
+    exec(compile(code_no_plot, '<generated>', 'exec'), namespace)
+    gsm = namespace['scattering_matrix']
+
+    live = compute_live_S(win, f_start=3.0, f_stop=6.0, points=41)
+    np.testing.assert_allclose(gsm.S, live['S'], rtol=1e-12, atol=1e-14)
+    assert gsm.port_labels == ['TL1']
+
+
+def test_multicomponent_generated_code_matches_live_S(para):
+    """Disconnected graph: (A, B sharing P1) + (C tapped onto TL1). The
+    export emits each component literally, mirroring the live jobs — hub
+    attachments referencing comb-mode ids and tap edges included."""
+    gp, win, config = para
+    from graphulator.graphulator_para import _compute_sparams_job
+
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    a = add_node(win, 0, 'A', 0.0, freq=5.0)
+    b = add_node(win, 1, 'B', 2.0, freq=6.0)
+    p1 = win.add_port(label='P1', pos=(4.0, 0.0))
+    win.add_port_attachment(p1, 0, rate=0.2, sign=1)
+    win.add_port_attachment(p1, 1, rate=0.2, sign=-1)
+    add_gui_edge(win, a, b, rate=0.05)
+
+    c = add_node(win, 2, 'C', 8.0, freq=4.4)
+    line = win.add_line_resonator(label='TL1', pos=(8.0, -3.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end='xL',
+                                  Z0_port=50.0)
+    win.connect_line_end_to_node(line, 'x0', c, rate=0.03)
+
+    comps = win._find_connected_components()
+    assert len(comps) == 2
+
+    f = np.linspace(3.0, 6.0, 41)
+    live = {}
+    for comp in comps:
+        job = win._build_sparams_job(comp, f, 3.0, 6.0, 41,
+                                     multi_component=True)
+        result = _compute_sparams_job(job)
+        assert result is not None
+        live[comp['index']] = result
+
+    win._enter_scattering_mode()
+    win.scattering_components = comps
+    win.sparams_data = {
+        'frequencies': f,
+        'components': [dict(live[i], component_index=i)
+                       for i in sorted(live)],
+        'num_components': 2,
+    }
+    win.properties_panel.freq_center_spin.setValue(4.5)
+    win.properties_panel.freq_span_spin.setValue(3.0)
+    win.properties_panel.freq_points_spin.setValue(41)
+
+    code = win.properties_panel._generate_scattering_calculation_code()
+    assert code is not None
+    assert 'gsm_components' in code and "'line:0:n" in code
+
+    head = code.split("# Add traces to each component's GSM")[0].rsplit(
+        "# ====", 1)[0]
+    namespace = {}
+    exec(compile(head, '<generated>', 'exec'), namespace)
+    gsms = namespace['gsm_components']
+    assert set(gsms) == set(live)
+    for i in sorted(live):
+        np.testing.assert_allclose(gsms[i].S, live[i]['S'],
+                                   rtol=1e-12, atol=1e-14)
+    # the tapped component carries the line's port channel
+    labels = {i: gsms[i].port_labels for i in gsms}
+    assert labels[0] == ['P1']
+    assert labels[1] == ['TL1']
+
+
+# ---------------------------------------------------------------------------
+# Aesthetics round: routed wires, glyph styling, bundled test scenes
+# ---------------------------------------------------------------------------
+
+SCENES_DIR = os.path.join(HERE, os.pardir, "examples", "test_scenes")
+
+
+def test_wire_leaves_lead_colinear_and_enters_node_radially(para):
+    """Routing contract: exit tangent = lead direction (shared by every
+    wire out of the port), entry normal to the node circle."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    a = add_node(win, 0, 'A', 0.0)
+    b = add_node(win, 1, 'B', 1.0)
+    b['pos'] = (0.0, 5.0)
+    port = win.add_port(label='P1', pos=(4.0, 0.0))
+    win.add_port_attachment(port, 0, rate=0.2)
+    win.add_port_attachment(port, 1, rate=0.2)
+
+    p0, t0 = win._port_wire_start(port)
+    node_by_id = {n['node_id']: n for n in win.nodes}
+    for att in port['attachments']:
+        node = node_by_id[att['node_id']]
+        p1, t1 = win._node_wire_end(node, p0)
+        # fine sampling so chord directions converge to the tangents
+        pts = win._wire_points(p0, t0, p1, t1, samples=4001)
+        # shared exit point and exit tangent (the collimated bundle)
+        np.testing.assert_allclose(pts[0], p0, atol=1e-12)
+        d0 = pts[1] - pts[0]
+        d0 /= np.hypot(*d0)
+        np.testing.assert_allclose(d0, t0, atol=1e-3)
+        # radial entry: the final direction points at the node center
+        d1 = pts[-1] - pts[-2]
+        d1 /= np.hypot(*d1)
+        to_center = np.array(node['pos']) - pts[-1]
+        to_center /= np.hypot(*to_center)
+        np.testing.assert_allclose(d1, to_center, atol=1e-3)
+        # ... and the endpoint sits ON the node circle
+        gap = np.hypot(*(np.array(node['pos']) - pts[-1]))
+        assert gap == pytest.approx(
+            win.node_radius * node.get('node_size_mult', 1.0), rel=1e-9)
+
+
+def test_glyph_style_round_trip_and_stretch(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    port = win.add_port(label='P1', pos=(0.0, 0.0))
+    line = win.add_line_resonator(label='TL1', pos=(0.0, -4.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end=None,
+                                  w_mult=1.5, color='#123456')
+    port.update({'w_mult': 2.0, 'h_mult': 0.5, 'linewidth': 3.0,
+                 'color': '#ff0000', 'fill': '#eeeeee'})
+
+    # stretch changes the live geometry
+    _, _, w1, h1, _, _ = win._port_geometry(port)
+    _, _, w0, h0, _, _ = win._port_geometry(
+        {'pos': (0, 0), 'w_mult': 1.0, 'h_mult': 1.0})
+    assert w1 == pytest.approx(2.0 * w0) and h1 == pytest.approx(0.5 * h0)
+
+    # arrow-key stretch (node-key parity)
+    win.selected_lines = [line]
+    assert win._adjust_glyph_size('up') is True
+    assert line['h_mult'] == pytest.approx(1.1)
+    assert win._adjust_glyph_size('left') is True
+    assert line['w_mult'] == pytest.approx(1.4)
+    win.selected_lines = []
+
+    data = json.loads(json.dumps(win._serialize_graph()))
+    win._deserialize_graph(data)
+    rp = win.ports[0]
+    assert (rp['w_mult'], rp['h_mult'], rp['linewidth']) == (2.0, 0.5, 3.0)
+    assert (rp['color'], rp['fill']) == ('#ff0000', '#eeeeee')
+    rl = win.line_resonators[0]
+    assert (rl['w_mult'], rl['h_mult']) == (1.4, 1.1)
+    assert rl['color'] == '#123456'
+
+
+def test_auto_orient_toggle(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    a = add_node(win, 0, 'A', 0.0)
+    port = win.add_port(label='P1', pos=(4.0, 0.0))
+    win.add_port_attachment(port, 0, rate=0.2)
+    assert win._port_effective_angle(port) == pytest.approx(180.0)
+
+    # turning auto-orient OFF freezes the current effective angle (no snap)
+    win._apply_port_style(port, {'auto_orient': False})
+    assert port['angle_pinned'] is True
+    assert port['angle'] == pytest.approx(180.0)
+    a['pos'] = (4.0, 6.0)
+    assert win._port_effective_angle(port) == pytest.approx(180.0)
+
+    # turning it back ON resumes tracking the centroid
+    win._apply_port_style(port, {'auto_orient': True})
+    assert port['angle_pinned'] is False
+    assert win._port_effective_angle(port) == pytest.approx(90.0)
+
+
+@pytest.mark.parametrize("scene", sorted(
+    f for f in os.listdir(SCENES_DIR) if f.endswith('.pgraph')))
+def test_bundled_scene_loads_and_validates(para, scene):
+    """Every File -> Test scene opens, auto-enables the mode, and passes
+    scattering validation (they double as physics checks)."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = False
+    win._open_graph_file(os.path.join(SCENES_DIR, scene))
+    assert config.EXPLICIT_PORTS_MODE is True
+    ok, msg = win._validate_scattering_parameters()
+    assert ok, f"{scene}: {msg}"
+
+
+def test_bundled_tap_scene_computes_unitary_S(para):
+    gp, win, config = para
+    from graphulator.graphulator_para import _compute_sparams_job
+    win._open_graph_file(os.path.join(SCENES_DIR, "LINE_TAP_2NODES.pgraph"))
+    comps = win._find_connected_components()
+    assert len(comps) == 1
+    f = np.linspace(3.0, 6.0, 21)
+    res = _compute_sparams_job(win._build_sparams_job(comps[0], f, 3.0,
+                                                      6.0, 21))
+    S = res['S']
+    assert S.shape[1:] == (1, 1)
+    assert np.max(np.abs(np.abs(S[:, 0, 0]) - 1.0)) < 1e-12
+
+
+# ---------------------------------------------------------------------------
+# Keyboard routing + glyph properties panel
+# ---------------------------------------------------------------------------
+
+def test_punctuation_shortcuts_bind_shifted_alias(para):
+    """'?' and '+' are TYPED with Shift, so Qt delivers them with
+    ShiftModifier and a bare QKeySequence never matches. Every unmodified
+    punctuation binding gets a companion Shift+<key> shortcut; letters and
+    digits must NOT (Shift+G is its own separate binding)."""
+    gp, win, config = para
+    from PySide6.QtGui import QKeySequence
+    sm = win.shortcut_manager
+
+    for action_id in ('overlay.toggle', 'view.zoom_in'):
+        alias = sm._qt_shift_aliases.get(action_id)
+        assert alias is not None and alias.isEnabled(), action_id
+        primary = sm._qt_shortcuts[action_id].key().toString()
+        assert alias.key() == QKeySequence(f"Shift+{primary}")
+
+    # a letter binding gets no alias (it would collide with Shift+<letter>)
+    letter_alias = sm._qt_shift_aliases.get('node.place_single')
+    assert letter_alias is None or not letter_alias.isEnabled()
+    assert sm._shifted_alias('?') == 'Shift+?'
+    assert sm._shifted_alias('g') == ''
+    assert sm._shifted_alias('Ctrl+U') == ''
+
+
+def test_canvas_click_releases_input_focus(para):
+    """Single-key shortcuts are suppressed while a panel spinbox holds
+    focus (so typing numbers doesn't zoom). Clicking the canvas must hand
+    the keyboard back, or the shortcuts stay dead with no visible cue."""
+    gp, win, config = para
+    from PySide6.QtWidgets import QDoubleSpinBox
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from PySide6.QtWidgets import QApplication
+    build_shared_port_scene(win, config)
+    win._enter_scattering_mode()
+    win.show()
+    QApplication.setActiveWindow(win)      # focus only tracks an active window
+    QApplication.processEvents()
+    spins = win.properties_panel.findChildren(QDoubleSpinBox)
+    assert spins
+    spins[0].setFocus()
+    QApplication.processEvents()
+    if not win._is_input_widget_focused():
+        pytest.skip("platform did not grant keyboard focus (offscreen)")
+
+    QTest.mouseClick(win.canvas, Qt.LeftButton)
+    assert win._is_input_widget_focused() is False
+
+
+def test_auto_enable_notice_does_not_steal_keyboard(para):
+    """The 'Explicit Ports enabled' popup is informational: it must not
+    activate, or it swallows every WindowShortcut-scoped single key."""
+    gp, win, config = para
+    from PySide6.QtCore import Qt
+    config.EXPLICIT_PORTS_MODE = False
+    win._open_graph_file(os.path.join(SCENES_DIR, "PORT_1NODE.pgraph"))
+    assert config.EXPLICIT_PORTS_MODE is True
+    notice = getattr(win, '_explicit_ports_notice', None)
+    if notice is not None:
+        assert notice.testAttribute(Qt.WA_ShowWithoutActivating)
+        assert not notice.isModal()
+
+
+def test_glyph_selection_drives_properties_panel(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    port = win.add_port(label='P1', pos=(0.0, 0.0))
+    line = win.add_line_resonator(label='TL1', pos=(0.0, -5.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end=None)
+    panel = win.properties_panel
+
+    win.selected_ports = [port]
+    win._update_properties_panel()
+    assert panel.current_type == 'port'
+    assert panel.current_object is port
+    assert 'P1' in panel.title_label.text()
+    assert win._shortcut_context() == 'glyph'
+
+    win.selected_ports = []
+    win.selected_lines = [line]
+    win._update_properties_panel()
+    assert panel.current_type == 'line'
+    assert panel.current_object is line
+
+    # a glyph plus a node is a mixed selection: no glyph page
+    win.selected_nodes = [add_node(win, 0, 'A', 3.0)]
+    win._update_properties_panel()
+    assert panel.current_type != 'line'
+
+
+def test_port_label_autosize(para):
+    """The port body grows so the label fits; a manual length edit takes
+    over from autosize instead of fighting it."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    port = win.add_port(label='P1', pos=(0.0, 0.0))
+
+    _, _, w_short, _, _, _ = win._port_geometry(port)
+    port['label'] = 'P_readout_long'
+    _, _, w_long, _, _, _ = win._port_geometry(port)
+    assert w_long > w_short, "long label must widen the body"
+
+    # ... and the drawn label then fits inside it
+    assert win._port_label_w_mult(port) == pytest.approx(
+        w_long / (win.node_radius * 1.5), rel=1e-9)
+
+    # turning autosize off restores the stored width
+    port['autosize'] = False
+    _, _, w_off, _, _, _ = win._port_geometry(port)
+    assert w_off == pytest.approx(w_short)
+
+    # an arrow-key stretch takes over from autosize at the current width
+    port['autosize'] = True
+    win.selected_ports = [port]
+    win._adjust_glyph_size('right')
+    assert port['autosize'] is False
+    assert port['w_mult'] > 1.0
+
+
+def test_context_menu_rotate_is_selection_independent(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    a = add_node(win, 0, 'A', 0.0)
+    port = win.add_port(label='P1', pos=(4.0, 0.0))
+    win.add_port_attachment(port, 0, rate=0.2)
+    line = win.add_line_resonator(label='TL1', pos=(0.0, -6.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end=None)
+
+    # nothing selected: the menu action still rotates its own glyph
+    win.selected_ports, win.selected_lines, win.selected_nodes = [], [], []
+    win._rotate_selected_glyph(port, 15)
+    assert port['angle_pinned'] is True
+    assert port['angle'] == pytest.approx(165.0)   # 180 auto-orient - 15
+    win._rotate_selected_glyph(line, -15)
+    assert line['angle'] == pytest.approx(15.0)
+
+    # the caller's selection is left untouched
+    assert win.selected_ports == [] and win.selected_lines == []
+    # node positions are never disturbed by a glyph rotation
+    assert a['pos'] == (0.0, 0.0)
+
+
+def test_select_all_includes_glyphs(para):
+    """Ctrl+A must take the whole drawing, glyphs included — otherwise a
+    'select everything and rotate' leaves the ports and lines behind."""
+    gp, win, config = para
+    node, line, conn = build_tapped_line_scene(win, config)
+    win._select_all()
+    assert len(win.selected_nodes) == len(win.nodes)
+    assert len(win.selected_ports) == len(win.ports) == 1
+    assert len(win.selected_lines) == len(win.line_resonators) == 1
+    assert win.selected_taps and win.selected_attachments == []
+
+
+def test_whole_graph_rotation_is_rigid(para):
+    """With nodes AND glyphs selected the drawing turns as one body: every
+    pairwise distance is preserved and glyph orientations follow."""
+    gp, win, config = para
+    node, line, conn = build_tapped_line_scene(win, config)
+    port = win.ports[0]
+    port['angle_pinned'] = True          # a pinned port must turn with it
+    port['angle'] = 0.0
+
+    win._select_all()
+
+    def points():
+        return np.array([n['pos'] for n in win.nodes]
+                        + [p['pos'] for p in win.ports]
+                        + [l['pos'] for l in win.line_resonators], dtype=float)
+
+    before = points()
+    d_before = np.linalg.norm(before[:, None] - before, axis=-1)
+
+    win._rotate_selected_nodes(90)
+
+    after = points()
+    d_after = np.linalg.norm(after[:, None] - after, axis=-1)
+    np.testing.assert_allclose(d_after, d_before, atol=1e-9)
+    assert not np.allclose(after, before)          # it really moved
+    assert line['angle'] == pytest.approx(270.0)   # glyph orientation follows
+    assert port['angle'] == pytest.approx(270.0)
+
+    # four quarter turns are the identity
+    for _ in range(3):
+        win._rotate_selected_nodes(90)
+    np.testing.assert_allclose(points(), before, atol=1e-9)
+    assert line['angle'] == pytest.approx(0.0)
+
+
+def test_rigid_rotation_leaves_auto_orient_ports_unpinned(para):
+    """A port that auto-orients must NOT be pinned by a layout rotation:
+    its attachments moved too, so it re-aims itself."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    a = add_node(win, 0, 'A', 0.0)
+    port = win.add_port(label='P1', pos=(4.0, 0.0))
+    win.add_port_attachment(port, 0, rate=0.2)
+    assert win._port_effective_angle(port) == pytest.approx(180.0)
+
+    win._select_all()
+    win._rotate_selected_nodes(90)
+
+    assert port.get('angle_pinned', False) is False
+    # the pair turned together, so the lead still points at the node
+    px, py = port['pos']
+    ax, ay = a['pos']
+    expected = np.degrees(np.arctan2(ay - py, ax - px))
+    assert win._port_effective_angle(port) == pytest.approx(expected)
+
+
+def test_glyph_only_rotation_still_spins_in_place(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    line = win.add_line_resonator(label='TL1', pos=(2.0, -3.0), FSR=1.5,
+                                  Ztx=65.0, f_max=6.0, port_end=None)
+    win.selected_lines = [line]
+    win.selected_nodes = []
+    before = line['pos']
+    win._rotate_selected_nodes(15)
+    assert line['pos'] == before
+    assert line['angle'] == pytest.approx(345.0)
+
+
+# ---------------------------------------------------------------------------
+# Wires: solid, with edge-parity per-wire properties
+# ---------------------------------------------------------------------------
+
+def test_wires_are_solid(para):
+    """The port glyph already says 'dissipative', so no wire is dashed.
+
+    (The one surviving dash is the pending-attachment highlight on a port
+    BODY outline, which is a transient interaction cue, not a wire.)
+    """
+    import inspect
+    from graphulator.para_features import explicit_ports as ep
+    source = inspect.getsource(ep.ExplicitPortsMixin._draw_ports_and_lines)
+    assert '(0, (4, 3))' not in source          # the old wire dash pattern
+    for line in source.splitlines():
+        if '_draw_wire(' in line or 'self._draw_wire' in line:
+            assert 'linestyle' not in line, line
+
+
+def test_wire_style_overrides(para):
+    gp, win, config = para
+    from graphulator.para_features.explicit_ports import (
+        WIRE_COLOR, WIRE_COLOR_INVERTED, WIRE_COLOR_TAP, WIRE_LINEWIDTH)
+    ExplicitPortsMixin = type(win).__mro__[1]
+
+    # defaults follow the wire's role and sign
+    color, lw = win.wire_style({'sign': 1}, WIRE_COLOR)
+    assert color == WIRE_COLOR
+    assert lw == pytest.approx(WIRE_LINEWIDTH * 1.25)
+    assert win.wire_style({}, WIRE_COLOR_INVERTED)[0] == WIRE_COLOR_INVERTED
+    assert win.wire_style({}, WIRE_COLOR_TAP)[0] == WIRE_COLOR_TAP
+
+    # explicit per-wire values win
+    conn = {'color': '#123456', 'linewidth_mult': 2.0}
+    color, lw = win.wire_style(conn, WIRE_COLOR)
+    assert color == '#123456'
+    assert lw == pytest.approx(WIRE_LINEWIDTH * 2.0)
+
+
+def test_wire_properties_panel_and_round_trip(para):
+    gp, win, config = para
+    from PySide6.QtWidgets import QComboBox
+    port = build_shared_port_scene(win, config)
+    att = port['attachments'][0]
+    panel = win.properties_panel
+
+    win.selected_attachments = [(port, att)]
+    win._update_properties_panel()
+    assert panel.current_type == 'attachment'
+    assert panel.current_object is att
+    assert 'P1' in panel.title_label.text()
+
+    # the Line Width combo writes the same multipliers ordinary edges use
+    levels = list(config.EDGE_LINEWIDTH_OPTIONS)
+    width_combo = next(c for c in panel.findChildren(QComboBox)
+                       if c.count() and c.itemText(0) == levels[0])
+    width_combo.setCurrentText('X-Thick')
+    assert att['linewidth_mult'] == pytest.approx(
+        config.EDGE_LINEWIDTH_OPTIONS['X-Thick'])
+
+    att['color'] = '#0055aa'
+    att['label'] = r'\kappa_a'
+    att['label_size_mult'] = 1.4
+
+    data = json.loads(json.dumps(win._serialize_graph()))
+    win._deserialize_graph(data)
+    restored = win.ports[0]['attachments'][0]
+    assert restored['color'] == '#0055aa'
+    assert restored['label'] == r'\kappa_a'
+    assert restored['label_size_mult'] == pytest.approx(1.4)
+    assert restored['linewidth_mult'] == pytest.approx(
+        config.EDGE_LINEWIDTH_OPTIONS['X-Thick'])
+    # the physics is untouched by styling
+    assert restored['rate'] == pytest.approx(att['rate'])
+    assert restored['sign'] == att['sign']
+
+
+def test_tap_properties_panel(para):
+    gp, win, config = para
+    node, line, conn = build_tapped_line_scene(win, config)
+    panel = win.properties_panel
+
+    win.selected_taps = [(line, 'x0', conn)]
+    win._update_properties_panel()
+    assert panel.current_type == 'tap'
+    assert panel.current_object is conn
+    assert 'TL1' in panel.title_label.text()
+
+    # a user label overrides the default n= chip; style round-trips
+    conn['label'] = 'g_tap'
+    conn['color'] = '#884400'
+    data = json.loads(json.dumps(win._serialize_graph()))
+    win._deserialize_graph(data)
+    restored = [c for c in win._end_conns(win.line_resonators[0], 'x0')
+                if c.get('kind') == 'node'][0]
+    assert restored['label'] == 'g_tap'
+    assert restored['color'] == '#884400'
+    assert restored['n_ref'] == conn['n_ref']
+
+
+# ---------------------------------------------------------------------------
+# Export / copy of glyph-only graphs; S-parameter selection column
+# ---------------------------------------------------------------------------
+
+def test_glyph_only_graph_is_exportable(para):
+    """Image exports capture the FIGURE, so a graph of only ports/lines is
+    perfectly exportable — the old `not self.nodes` guard refused it."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5, Ztx=65.0,
+                           f_max=6.0, port_end='xL', Z0_port=50.0)
+    assert win.nodes == []
+    assert win._has_drawable_content() is True
+
+    svg = win._generate_svg_string()
+    assert svg.startswith('<?xml') and len(svg) > 1000
+
+    # the clipboard path must reach the exporter rather than bailing early
+    from graphulator import clipboard_export
+    seen = {}
+    original = clipboard_export.copy_figure_to_clipboard
+
+    def spy(fig, include_png=True):
+        seen['called'] = True
+        return ('spy', ['pdf', 'svg'])
+
+    clipboard_export.copy_figure_to_clipboard = spy
+    try:
+        win._copy_graph_to_clipboard(include_png=False)
+    finally:
+        clipboard_export.copy_figure_to_clipboard = original
+    assert seen.get('called') is True
+
+
+def test_truly_empty_graph_still_refuses_export(para):
+    gp, win, config = para
+    assert win._has_drawable_content() is False
+    assert win._generate_svg_string() == ""
+
+
+def make_sparams_checkboxes(win):
+    """Compute one component's S and populate the selection column."""
+    from graphulator.graphulator_para import _compute_sparams_job
+    win._enter_scattering_mode()
+    comps = win._find_connected_components()
+    f = np.linspace(-2.0, 2.0, 11)
+    res = _compute_sparams_job(win._build_sparams_job(comps[0], f, -2.0,
+                                                      2.0, 11))
+    win.sparams_data = {'frequencies': f, 'num_components': 1,
+                        'components': [dict(res, component_index=0)]}
+    win._update_sparams_checkboxes()
+    return [cb.text() for cb in win.sparams_checkboxes.values()]
+
+
+def test_sparams_trace_names_drop_prefix_and_disambiguate(para):
+    """'S_' is redundant under the panel header, and bare concatenation is
+    ambiguous once labels are longer than one character."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    a = add_node(win, 0, 'A', 0.0, freq=5.0)
+    b = add_node(win, 1, 'B', 2.0, freq=6.0)
+    add_gui_edge(win, a, b, rate=0.05)     # one component, so one 2x2 S
+    for k, node_id in enumerate((0, 1)):
+        port = win.add_port(label=f"PORT{k+1}", pos=(4.0, 2.0 * k))
+        win.add_port_attachment(port, node_id, rate=0.2)
+
+    texts = make_sparams_checkboxes(win)
+    assert len(texts) == 4
+    assert all(not t.startswith('S_') for t in texts)
+    # out <- in, so every name names both ports unambiguously
+    arrow = '\N{LEFTWARDS ARROW}'
+    for t in texts:
+        assert arrow in t
+        left, right = [s.strip() for s in t.split(arrow)]
+        assert left in ('PORT1', 'PORT2') and right in ('PORT1', 'PORT2')
+    assert f"PORT1 {arrow} PORT2" in texts
+
+
+def test_sparams_selection_column_fits_its_labels(para):
+    """The column used to be hard-capped at 120 px with horizontal
+    scrolling off, clipping long port labels."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    add_node(win, 0, 'A', 0.0, freq=5.0)
+    port = win.add_port(label='readout_long_name', pos=(4.0, 0.0))
+    win.add_port_attachment(port, 0, rate=0.2)
+
+    texts = make_sparams_checkboxes(win)
+    widget = win.sparams_selection_widget
+    widest = max(widget.fontMetrics().horizontalAdvance(t) for t in texts)
+    assert widget.maximumWidth() > win.SPARAMS_SELECTION_MIN_W
+    assert widget.maximumWidth() <= win.SPARAMS_SELECTION_MAX_W
+    # either the label fits with its chrome, or we are at the sane maximum
+    assert (widest + 60 <= widget.maximumWidth()
+            or widget.maximumWidth() == win.SPARAMS_SELECTION_MAX_W)
+
+
+def test_sparams_checkbox_state_survives_rebuild(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    add_node(win, 0, 'A', 0.0, freq=5.0)
+    port = win.add_port(label='P1', pos=(4.0, 0.0))
+    win.add_port_attachment(port, 0, rate=0.2)
+
+    make_sparams_checkboxes(win)
+    box = list(win.sparams_checkboxes.values())[0]
+    assert box.property('state_key') is not None
+    box.setChecked(False)
+
+    win._last_all_ports_sig = None          # force a full rebuild
+    win._update_sparams_checkboxes()
+    assert list(win.sparams_checkboxes.values())[0].isChecked() is False
+
+
+def test_multi_glyph_selection_rotates_rigidly(para):
+    """A pumped line, its twin and their ports -- no graph node -- must
+    rotate as ONE layout about the selection centroid, not each glyph
+    about its own center."""
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    tl = win.add_line_resonator(label='TL1', pos=(0.0, 2.0), FSR=1.5,
+                                Ztx=65.0, f_max=6.0, port_end='xL')
+    win.set_line_pump(tl, 'x0', f_p=9.0, rate=0.05, n_ref=3,
+                      twin_pos=(0.0, -2.0))
+    win.selected_lines = list(win.line_resonators)
+    win.selected_ports = list(win.ports)
+    win.selected_nodes = []
+    glyphs = win.selected_lines + win.selected_ports
+    before = np.array([g['pos'] for g in glyphs])
+    angles_before = [g.get('angle', 0.0) for g in win.selected_lines]
+    pivot = before.mean(axis=0)
+
+    win._rotate_selected_nodes(90)
+
+    after = np.array([g['pos'] for g in glyphs])
+    # every glyph moved (rigid), by a 90-degree turn about the shared pivot
+    assert np.all(np.linalg.norm(after - before, axis=1) > 1e-9)
+    r_before = np.linalg.norm(before - pivot, axis=1)
+    r_after = np.linalg.norm(after - pivot, axis=1)
+    np.testing.assert_allclose(r_after, r_before, atol=1e-9)
+    # the layout's shape is preserved: pairwise distances unchanged
+    d = lambda P: np.linalg.norm(P[:, None] - P[None, :], axis=-1)  # noqa: E731
+    np.testing.assert_allclose(d(after), d(before), atol=1e-9)
+    # and the lines' own orientation turned with it
+    for line, a0 in zip(win.selected_lines, angles_before):
+        assert abs(((line['angle'] - a0) % 360.0) - 270.0) < 1e-9
+
+
+def test_single_glyph_still_spins_in_place(para):
+    gp, win, config = para
+    config.EXPLICIT_PORTS_MODE = True
+    win._apply_explicit_ports_mode()
+    tl = win.add_line_resonator(label='TL1', pos=(1.0, 2.0), FSR=1.5,
+                                Ztx=65.0, f_max=6.0, port_end=None)
+    win.selected_lines = [tl]
+    win.selected_ports = []
+    win.selected_nodes = []
+    win._rotate_selected_nodes(15)
+    assert tl['pos'] == (1.0, 2.0)
+    assert abs(tl['angle'] - 345.0) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# line glyph: the open mouth is a bore, not a disc
+# ---------------------------------------------------------------------------
+#
+# add_line_resonator auto-creates a terminating port, so a line's own
+# strokes are picked out by zorder rather than by being the extreme artist
+# on the canvas.
+
+def _line_glyph(win, **props):
+    win._auto_enable_explicit_ports("test")
+    line = win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.0)
+    line.update(props)
+    win._update_plot()
+    return line
+
+
+def test_line_mouth_stub_comes_out_of_the_bore(para):
+    """The conductor emerges from the CENTER of the open mouth and is drawn
+    in front of it with a round cap. From the rim it read as a line stuck to
+    the outside of the mouth. Mirrors Graphulator's txline glyph."""
+    import matplotlib.patches as mpatches
+
+    gp, win, config = para
+    line = _line_glyph(win, h_mult=3.0)
+    lx, ly, w, h, rx = win._line_geometry(line)
+
+    stubs = [ln for ln in win.canvas.ax.lines
+             if ln.get_zorder() == pytest.approx(11.4)]
+    assert len(stubs) == 1, "expected exactly one mouth stub"
+    stub = stubs[0]
+    assert min(stub.get_xdata()) == pytest.approx(lx + w)   # the bore center
+    assert stub.get_solid_capstyle() == 'round'
+
+    # exactly Ellipse: Arc and the Circle end-marks are both subclasses
+    mouth = max((p for p in win.canvas.ax.patches
+                 if type(p) is mpatches.Ellipse),
+                key=lambda e: e.center[0])
+    assert stub.get_zorder() > mouth.get_zorder()
+
+
+def test_line_closed_cap_stub_still_leaves_the_outer_surface(para):
+    """The closed end IS a surface, so its stub starts on the cap."""
+    gp, win, config = para
+    line = _line_glyph(win, h_mult=3.0)
+    lx, ly, w, h, rx = win._line_geometry(line)
+    rx0, _ = win._line_end_cap_depths(line)
+
+    left = min((ln for ln in win.canvas.ax.lines
+                if ln.get_gid() != 'grid'),
+               key=lambda ln: min(ln.get_xdata()))
+    assert max(left.get_xdata()) == pytest.approx(lx - w - rx0)
+
+
+def test_line_end_points_are_unchanged_by_the_bore_fix(para):
+    """The wire attach points must not move: taps, terminations and every
+    saved .pgraph depend on them."""
+    from graphulator.para_features.explicit_ports import LINE_LEAD_LEN
+
+    gp, win, config = para
+    line = _line_glyph(win)
+    lx, ly, w, h, rx = win._line_geometry(line)
+    _, rxL = win._line_end_cap_depths(line)
+    expected = lx + w + rxL + LINE_LEAD_LEN * win.node_radius
+    assert win._line_end_points(line)['xL'][0] == pytest.approx(expected)

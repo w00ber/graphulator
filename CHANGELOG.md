@@ -1,7 +1,660 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- **Two thinner edge line widths**, `X-Thin` and `XX-Thin`, below the old
+  thinnest `Thin`: a 50-edge fan at width 1.0 draws as a solid band, and
+  there was nothing finer to pick. They appear wherever a width is offered —
+  the add-edge dialog, the single-object and multi-selection properties
+  panels, the self-loop width, Paragraphulator's right-click width menu — and
+  the Settings default now goes down to 0.25× in 0.05 steps.
+  - The levels were hard-coded in **sixteen** places across the two apps
+    (which is why the two apps disagreed about what `Medium` meant). They now
+    come from one table, `config.EDGE_LINEWIDTH_OPTIONS`, so a level added
+    there appears in every widget at once. Paragraphulator's right-click
+    width menu, which had its own fourth set of names and values for the same
+    property, reads the shared table too.
+- **Grouped drawing-code export** (Export ▸ *Python Code (grouped by style)*,
+  in both apps; the Export Scaling tab has a second button for it). The
+  long-standing export writes one fully spelled-out call per object, which
+  for a 15-node, 49-edge graph is 700 lines of near-identical text. The
+  grouped shape factors every keyword that repeats into a named style dict
+  and leaves only the geometry:
+
+  ```python
+  NODE_STYLES = {'red': dict(nodecolor=..., R=0.600, fontscale=1.050, ...)}
+  NODES = {'red': [('A_0', (0.000, 0.000), 3), ...]}
+  for _style, _items in NODES.items():
+      for _label, _xy, _node_id in _items:
+          graph.addnode(label=_label, xy=_xy, node_id=_node_id,
+                        **NODE_STYLES[_style])
+  ```
+
+  Nodes, edges, ports, txlines and wires each get their own `*_STYLES`
+  dict plus a per-style geometry list, so retuning an appearance is one
+  edit instead of fifty, and the lists can be *generated* — the same
+  script that draws what the GUI drew also builds the graph ten times the
+  size from a loop of your own. Objects that need something of their own
+  (a self-loop, a label, a nudge) carry an `overrides` dict in their row;
+  a kind of object with only one member stays an explicit call, since
+  grouping one node behind three blocks of scaffolding helps nobody. The
+  explicit shape remains the default and is unchanged.
+- Both apps now generate their drawing code through one module,
+  `code_export.py`. The two copies had already drifted: Graphulator's grew
+  arrowhead style and scale for edges and self-loops, Paragraphulator's did
+  not, so the same graph exported differently depending on which app drew
+  it. Paragraphulator gains the arrowhead keywords by joining up.
+- **Schematic glyphs in Graphulator**: a **port** (home-plate pentagon
+  with a lead, `P` / `Shift+P` for continuous placement) and a
+  **transmission line** (`txline` in code: a slender cylinder with a closed
+  cap, an open mouth and a stub at each end, `L`), wired together by the
+  same smooth cubic-bezier routing Paragraphulator uses — every wire leaves
+  a lead colinear with it and lands on its target along the target's own
+  normal, so a fan out of one port collimates through the lead before
+  spreading. The wire tool is the edge tool (`E`): click a port or a
+  txline end, then a node, port or txline end. These are drawing-only:
+  Graphulator has no extractor, so nothing is computed from them (unlike
+  Paragraphulator's same-named physics ports and line macros).
+  - **Port auto-orientation**, user-toggled: an unpinned port aims its
+    lead at the centroid of whatever it is wired to, so dragging a node
+    turns its port to face it. Rotating one by hand pins it (starting
+    from the angle on screen, so the first step is a small visible nudge);
+    the Properties panel checkbox and the right-click menu toggle it back.
+  - Wiring a txline works from anywhere on the glyph: a click resolves to
+    whichever of its two ends it is nearer, because a txline is a
+    two-terminal object and "wire this line" always means one of its
+    terminals, never its center.
+  - Keyboard, following the node-resize conventions: `←`/`→` length,
+    `↑`/`↓` height, `Ctrl+←`/`Ctrl+→` rotate 15°, `Ctrl+↑`/`Ctrl+↓` label
+    size, `Shift+arrows` nudge the label inside the glyph, `Ctrl+R` /
+    `Ctrl+Shift+R` rotate the whole selection, `D`/`Delete` delete. A
+    single selected glyph spins in place; two or more objects rotate
+    rigidly about the selection centroid, glyphs carrying their
+    orientation along.
+  - A txline's two **end handles** are draggable: grab one and it stretches
+    and aims the line while the *other* end stays exactly where it was, and
+    the dragged end snaps to the current grid. Grabbing the body still
+    moves the whole glyph.
+  - A **port owns no lead**: the line leaving it is the connection's own
+    stroke, emerging from the point of the pentagon, so its width always
+    agrees with whatever it connects to (a glyph-owned stub had its own
+    width and frequently did not). The wire anchors inside the filled body
+    and is drawn behind it, so the stroke's end cap is hidden rather than
+    poking past the vertex.
+  - The transmission line's **open mouth is a bore**: its stub now runs
+    from the CENTER of the mouth ellipse, drawn in front of it with a round
+    cap, instead of starting at the rim and reading as a line stuck to the
+    outside. Applied to Paragraphulator's line glyph too. The stub tips --
+    and therefore every wire attach point and saved file -- are unchanged.
+  - Wires are **black and solid by default**, with per-wire color, width,
+    line style (solid / dashed / dotted / dash-dot) and label in the
+    Properties panel; all of it round-trips through save/load and the
+    exported script.
+  - Every glyph property is editable in the Properties panel (label,
+    orientation, length/height, label size and nudge, stroke width, stroke
+    / fill / label color), individually and across a multi-selection, and
+    wires get their own color / width / label panel.
+  - Glyphs take part in selection windows, `Ctrl+A`, copy/cut/paste,
+    undo/redo, auto-fit, delete (deleting or cutting a node drops the wires
+    that reached it), the `.graph` format (version 1.1, written only when a
+    graph actually has glyphs), and the exported Python script. A pasted
+    copy is wired to *itself*: its wires follow the pasted node/port, and a
+    wire whose far end was not part of the copy is dropped rather than
+    quietly reattached to the original's target.
+- **`graph_primitives` gains the glyph vocabulary** it draws them with:
+  `port`, `txline`, `wire`/`wirepoints`, the geometry helpers
+  (`portgeometry`, `portleadtip`, `txlinegeometry`, `txlineendpoints`,
+  `nodewireend`, `rotatepoint`, `readableangle`) and `GraphCircuit`'s
+  `addport` / `addtxline` / `addwire`, with anchor specs
+  (`('node', 'A')`, `('txline', 'TL1', 'xL')`, …), port auto-orientation
+  and axis extents that include the glyphs. The canvas and the exported
+  script therefore run the same drawing code. The module now also carries
+  dated revision notes at the top recording that the original library is
+  J. Aumentado's work and which later revisions were done jointly with
+  Claude.
+- **Multi-selection property editing in Paragraphulator** (Graphulator has
+  had it; now it also covers the port/line glyphs). Selecting several
+  nodes, edges or glyphs offers the properties they share — node and label
+  size, conjugation, outline, color; edge width, style, direction,
+  curvature, self-loop size/angle/flip; glyph length, height, stroke and
+  fill, port auto-orient — with the value shown gray, blank or
+  partially-checked where the selection disagrees, and one edit writing to
+  every selected object in a single undo step.
+- Self-loop auto-orientation now also avoids the direction each attached
+  **wire** arrives from, in both apps, not just the node's edges (a wire
+  is as much part of a node's local clutter as an edge is). Graphulator
+  already had self-loop auto-orientation for edges; the avoid-list is now
+  an overridable hook rather than a hard-coded edge scan.
+- **A Paragraphulator port's lead takes the width of the widest wire
+  attached to it.** The lead was drawn at the port's own stroke width, so a
+  thicker wire met a thinner lead and stepped at the tip -- and the only
+  way to match them was to hand-tune the port's stroke, which also controls
+  the pentagon. The lead and that wire now read as one continuous line. An
+  unwired port has no seam to match, so it keeps its body stroke.
+  (Graphulator needed nothing: its port draws no lead, so the straight run
+  a wire keeps past the nose *is* the lead, already at the wire's own
+  width.)
+- **Arrow keys style a selected port-node wire**, in both apps, the way they
+  already did for an edge: Up/Down width, Left/Right label size, one undo
+  step per press. A selected wire was the one thing the arrow keys fell
+  through on, to a view pan.
+- **The coral selection dot on a Paragraphulator attachment is gone.** The
+  salmon halo along the wire already says which one is selected, and says
+  it better -- the dot marked a midpoint that a dense fan buried.
+- **A port's nose and lead are FIXED geometry now**, in both apps, and both
+  are user settings (*Port & Wire Defaults ▸ Port Nose Depth / Port Lead
+  Length*, in units of the node radius, read at draw time). The tapered
+  nose used to scale with the port's length multiplier, so stretching a
+  port -- or just giving it a longer label, which autosizes the body in
+  Paragraphulator -- moved the point of the pentagon, and with it the
+  departure point of every wire. The body still stretches; the nose and
+  the lead no longer do. A port may also carry its own `apex` / `lead`
+  override, and the code export writes either out when it differs from the
+  primitive default, since the generated script knows nothing about the
+  session's settings.
+- **A sub-circuit drags as one**, in both apps. Two drag machineries had
+  grown side by side -- the node drag (delta-based, NODES ONLY) and the
+  glyph drag (one glyph, straight to the pointer) -- and clicking a port
+  shrank the selection to that port and dragged it alone, so a selected
+  port + edge + node could not be moved as a group at all. Clicking any
+  already-selected object now drags the whole selection, glyphs included,
+  through one shared routine in `common_window`.
+  - The group move is also **rigid** now: one snapped delta for every
+    member, instead of snapping each member's destination on its own, which
+    sheared a group whose members did not share a grid phase.
+  - Only NODES keep the "position occupied" rule. Glyphs may overlap -- a
+    port sitting on the mode it feeds is a legitimate drawing.
+- **Option/Alt-drag duplicates**, in both apps: the selection stays where it
+  is and a copy lands where the drag ends, wired to itself. It borrows the
+  clipboard machinery (so links are relinked exactly as a paste does) and
+  puts the real clipboard back afterwards, so duplicating never clobbers
+  what you had copied.
+- **Port, line and wire line widths follow the zoom.** matplotlib line
+  widths are POINTS, so a stored width kept a fixed ON-SCREEN thickness
+  while the drawing grew around it: a zoomed-in graph showed hairline
+  strokes on huge nodes, and a zoomed-out one showed slabs. Edges had been
+  scaled by the zoom since the start; the glyphs and their wires were still
+  drawing in raw points. The reference zoom they are all quoted at now
+  lives in one place, `common_window.REFERENCE_POINTS_PER_DATA_UNIT`.
+- **A fan of wires out of a Graphulator port splits at an offset**, matching
+  Paragraphulator. Every wire leaving a port now keeps a straight run along
+  the port axis before it starts to curve; they share a start, a tangent
+  and that run, so they coincide along it and the bundle reads as ONE stub
+  that splits past the apex, instead of N strokes diverging from the point
+  of the pentagon. The port still draws no lead of its own, so an unwired
+  port is unchanged. `wirepoints` gained `lead0` / `lead1`, so an exported
+  script routes the same way the canvas does.
+- **Rounded dash caps on wires**, with a setting (*Port & Wire Defaults ▸
+  Rounded Wire Dash Caps*, on by default, read at draw time). matplotlib
+  leaves a dotted line as a row of tiny rectangles; round caps are what
+  make dots read as dots. A non-default cap style is carried into the code
+  export, which calls the primitives directly and knows nothing about the
+  session's settings.
+- **One selection look for wires, edges and self-loops**, in both apps. A
+  selected port-node wire already drew a salmon halo along its path, while
+  a selected edge or self-loop got a coral DOT at its midpoint -- which
+  said "something here is selected" without saying *which* edge, and
+  vanished under a dense fan. Edges and self-loops now take the halo too:
+  the same primitive is drawn underneath first, in salmon and wider, with
+  its labels suppressed so they do not double-draw. The color and extra
+  width live on `GraphWindowCommonMixin`, so the two apps cannot drift.
+- A rubber band now takes a wire by its **midpoint**, the rule an edge
+  already used, rather than requiring both of its ends inside. A band drawn
+  across a bundle of wires -- which is how you reach for "these wires" --
+  encloses no endpoints at all, so the stricter rule selected nothing.
+- **A Settings tab for port, line and wire defaults**, in both apps
+  (*Port & Wire Defaults*). "How do I set the default appearance of a port
+  and a port-node wire?" previously had no answer but editing module
+  constants: the dialog had no tab for them and nothing read a config value
+  at creation time. The tab now carries stroke width, stroke / fill color,
+  label color, auto-orient and the rotation step for the glyphs; wire color,
+  width and line style for the wiring; and in Paragraphulator the
+  port/loss-hub choice plus the coupling rate a new attachment or line tap
+  is created with. The glyph *geometry* constants stay in the drawing code,
+  where a generated script and the canvas read the same numbers.
+  - **Wire colors are resolved at draw time.** A wire stores no color until
+    one is picked, so changing the default restyles every wire that has no
+    override of its own — including Paragraphulator's three signed defaults
+    (sign +, sign −, and the conservative tap). Width and style are stamped
+    in at creation instead, since those are per-wire panel controls and a
+    live default would fight an explicit edit. The code export compares
+    against the *primitive* defaults, so a wire riding on a configured
+    default is still written out explicitly: the generated script calls the
+    primitives directly and knows nothing about the session's settings.
+- **Paragraphulator remembers the last port / line placed**, as Graphulator
+  already did for its glyphs: the placement dialog is pre-filled from the
+  previous one so a run of glyphs comes out consistent without re-typing
+  it, falling back to the configured defaults. The label and the
+  port/loss-hub choice are deliberately not remembered (one
+  auto-increments, the other has its own action), and applying Settings
+  drops the memory so a changed default actually reaches the next glyph.
+- **Ports, lines and their wiring now travel on the clipboard** in
+  Paragraphulator. Copy, cut and paste carried only nodes, edges and
+  constraint groups, so selecting a sub-circuit and pasting it gave back
+  bare modes with its ports, lines, attachments and taps silently dropped —
+  worse on *cut*, where the glyphs survived but the selection did not. A
+  link travels only when both of its ends do, exactly as an edge does, and
+  a pasted link is relinked to the pasted mode rather than quietly sharing
+  the original's. Smart paste auto-increments port and line labels against
+  their own namespaces (`P1` → `P2`, not against the node numbering); raw
+  paste keeps them. A pumped line's conjugate twin and the twin's mirror
+  ports are left out of the copy and **regenerated** from the pump config
+  on paste, since they are derived objects.
+  - Cutting a mode now also clears the attachments and taps that pointed at
+    it, which only deletion did. A link left pointing at a cut node drew as
+    nothing but still reached the extractor.
+- **Several port-node wires can be selected and edited at once**, in both
+  apps. Shift-clicking wires already accumulated a selection, but the
+  properties panel had no surface for more than one — Graphulator fell
+  through to "No Selection" and Paragraphulator said so out loud
+  ("nothing they share is editable"). The shared panel now offers width,
+  line style, label size and color for Graphulator's wires, and rate, sign,
+  width, label size and color for Paragraphulator's attachments and taps
+  (which edit together; the label names which kinds are in play, since the
+  two rates are not the same quantity). A lone wire still gets its own
+  richer panel; `n_ref` stays there, being indexed per line.
+  - The **rubber band now picks up wires** as well as glyphs, so a window
+    over a sub-circuit can restyle or retune its whole wiring in one go. A
+    wire joins when *both* of its ends are inside the band — the set a copy
+    carries — rather than on its midpoint as an edge does: a wire whose far
+    end the band missed would otherwise be edited invisibly.
+
 ### Fixed
+- **Node colors exported as the wrong color.** A hand-picked color was drawn
+  correctly on screen and came out as an unrelated palette name in the
+  generated code — a graph of three custom colors exported as three
+  identical `config.MYCOLORS['RED']` nodes. Two causes, both fixed: the
+  pickers try to name a picked color by *string* match against `MYCOLORS`
+  (which holds matplotlib names, so `'indianred'` never matches
+  `'#cd5c5c'`) and left `color_key` pointing at the previous color; and the
+  export trusted that key rather than the color the canvas actually draws.
+  The palette lookup now compares resolved colors, so a picked color finds
+  its key whichever way it is spelled, and the export emits the literal
+  color whenever the key no longer names it — a real `MYCOLORS` color still
+  exports by its readable name. Node outline colors go through the same
+  rule.
+- Graphulator: `Ctrl+N`, `Ctrl+O`, `Ctrl+S`, `Ctrl+Shift+S`,
+  `Ctrl+Shift+E` and `Ctrl+Q` did nothing from the keyboard. Each was
+  registered twice — once as a `QShortcut` and again on its menu `QAction`
+  — and Qt treats a sequence owned twice as an "Ambiguous shortcut
+  overload" and dispatches *neither*, so the key went silently dead while
+  the menu item still worked when clicked. Each sequence now has exactly
+  one owner: menu actions own the keys they display (including the new
+  Insert menu's `P` / `Shift+P` / `L` and the edge tool's `E`),
+  `_create_shortcuts` owns the rest. `tests/test_shortcut_overlay.py` now
+  fails on any duplicate in either app, and a new `tests/test_hotkeys.py`
+  presses *every* registered Graphulator sequence and asserts an observable
+  consequence — registration alone does not prove a key works. Its coverage
+  test fails if a key is ever added without a press-test, so no shortcut can
+  be introduced untested or go quietly dead again.
+- Label auto-increment did not understand **negative** subscripts: placing
+  in auto-increment mode from `A_-2` copied the label verbatim onto every
+  following node instead of stepping it. Both apps now read one shared
+  pattern table (`common_window.auto_increment_label`), which accepts bare
+  and braced subscripts, positive or negative, and always counts upward
+  (`A_-2` → `A_{-1}` → `A_0` → `A_1`). Braces are added whenever the
+  subscript is wider than one character, since `A_-1` and `A_12` otherwise
+  render with only their first character lowered. `A_{12}` was likewise
+  unrecognized before and is now incrementable.
+- A transmission line's label was capped at `1.1 R`, so stretching the body
+  left it stranded at a fixed size and made the Label-size control look
+  inert -- it was scaling an already-tiny base. The label inside a body now
+  tracks the body height, capped by the body length so a long one still
+  fits, and the size multiplier scales that. (Height, Length and Stroke
+  width were working; only the label was pinned.)
+- Paragraphulator's smart paste mis-sequenced a series living entirely
+  below zero: `analyze_graph_labels` used `-1` as its "no maximum yet"
+  sentinel, so pasting into `A_-5, A_-4, A_-3` jumped to `A_0`. The
+  sentinel is now `None`.
+
+### Added (continued)
+- **Explicit Ports & Lines (hub-based dissipation)**, gated by a new
+  Settings → Interface switch (off = the app behaves exactly as before;
+  files containing ports/lines auto-enable it for the session).
+  - `DissipationHub` model in `autograph`: monitored hubs are ports (shared
+    between modes; a rank-one damper `(i/2)κκ†` in M *and* a channel of S),
+    unmonitored hubs are loss channels. M's external anti-Hermitian part is
+    now computed from the same K used in S (single source of truth), so
+    lossless unitarity/passivity hold by construction; legacy per-node
+    `B_ext` auto-wraps to single-attachment ports, reproducing the previous
+    numerics to machine precision (golden-file regression suite pins this).
+    New API: `assign_hub`, `extract_graph_data(..., hubs=, line_resonators=)`,
+    `.K_loss`, `.K_full`, `.S_full` (dilated, unitary at `B_int=0`),
+    `.absorption` (per-channel energy audit), `.port_labels`.
+  - `LineResonator` macro: an open–open transmission-line standing-wave comb
+    parameterized by `{FSR, Ztx, f_max, port_end, Z0_port, alpha_uniform}`,
+    expanded at extraction into the full comb from DC with signed couplings
+    `κ_n = (±1)ⁿ√γ`, `γ/FSR = (2/π)(Ztx/Z0)`; expansion pinned bitwise to
+    the `cmtline_core` reference and validated against exact ABCD microwave
+    calculations (monotone ~1/N convergence, residual attributed to the
+    truncated comb tail). Uniform loss maps to per-mode
+    `B_int = (2/π)·α·FSR`, verified against a lossy-ABCD reference.
+  - Paragraphulator GUI: port glyph (`P`/`Shift+P`; pentagon + lead), loss
+    hub (hatched placeholder glyph, Insert menu), transmission-line cylinder
+    glyph (`L`) connected by its **end leads** to explicit port glyphs (the
+    comb never leaves the macro and a line is never implicitly terminated;
+    loading both ends is refused pending a verified ABCD two-port
+    reference), attachment wires created with the edge tool, a third
+    **Ports & Lines** parameter panel (per-attachment rates + signs; legacy
+    `B_ext` shown there as auto-ports while its Nodes-table column hides),
+    `.pgraph` format 3.0 with loader migration, hub/macro-aware exported
+    scripts, and a one-way *Explode Line to Nodes* action.
+  - **Node taps onto line ends**: one drawn connection (edge tool, line end
+    → node) couples a graph mode conservatively to every comb mode at once.
+    The per-mode profile is pinned against the reference circuit model
+    (a-basis extraction): capacitive taps couple as `g_n ∝ u_n(end)·√n`,
+    inductive as `g_n ∝ u_n(end)/√n`; the coupling type is a property of
+    the line *end* (set in the line dialog), shared by everything tapped
+    there. The entered rate is defined at a user-chosen **reference
+    harmonic** `n_ref` (the tap dialog highlights the harmonic nearest the
+    mode's frequency; rate/sign/`n_ref` stay editable in the Ports & Lines
+    panel, and the canvas tap link carries an `n=…` chip). Several loads
+    may share one physical line end (e.g. a stub read out by two ports —
+    verified against the ABCD reference), and a standalone terminated line
+    is a complete scattering problem by itself. Exported scripts reproduce
+    the live model in both templates: taps emit as pre-expanded static
+    edges, and multi-component graphs now export one literal block per
+    component (mirroring the live per-component jobs, including comb-mode
+    hub attachments), replacing the runtime component filter.
+  - **Glyph aesthetics & routed wiring** (aligned with the diagrammer
+    reference art): the port is a boxy home-plate pentagon with a long
+    terminal lead and the transmission line a slender coax cylinder
+    (closed left cap, open right mouth, terminal stubs). Both glyphs are
+    stretchable (length/height, arrow keys or dialog), with per-glyph
+    stroke width, stroke color and fill color (dialogs, serialized in
+    .pgraph). Wires route as smooth rounded curves in the ComfyUI/Blender
+    node style: every wire leaves its terminal colinear with the lead (a
+    multi-wire fan collimates through the port lead before spreading),
+    enters nodes normal to the circle, and line-end links arrive at ports
+    along their leads; selection hit-testing follows the curves. Ports
+    auto-orient toward the CENTER of their attached group, with an
+    explicit Auto-orient toggle (dialog + context menu; manual rotation
+    still pins). Auto-fit ('a') now includes port/line glyphs. A new
+    **File → Test** menu ships seven canonical
+    explicit-ports scenes (regenerable via misc/make_test_scenes.py) used
+    for aesthetics iteration and physics checks; each is load-validated in
+    the test suite. Fixed: several nodes tapped onto the same line (or
+    joined only through a shared line) now compute as ONE component — the
+    component discovery previously left the extra tap partners in
+    separate components.
+  - **Properties panel for glyphs**: selecting a port or transmission
+    line now fills the Properties tab with its live-applied properties
+    (label, monitored/loss, auto-orient, auto-size, length/height, stroke
+    width, stroke and fill color; for a line also FSR, Ztx, f_max, Z0,
+    alpha and the per-end tap coupling, each validated through the
+    numerics schema before it is committed). Port bodies auto-size so the
+    label always fits, and a manual length edit takes over from that.
+    Rotation (`Ctrl+U`/`Ctrl+I`) is also on the glyph right-click menu,
+    and the shortcut-hint overlay gains a "Port / line selected" context.
+  - **Whole-graph rotation carries the glyphs.** `Ctrl+A` now selects
+    ports and lines as well as nodes and edges, and rotating a selection
+    that contains nodes turns the whole drawing as a rigid body — glyph
+    positions travel with the modes and each glyph's orientation turns by
+    the same angle (an auto-orienting port is deliberately left unpinned,
+    since its attachments moved too and it re-aims itself). Selecting only
+    glyphs still spins each one in place. Glyph labels now ride their
+    body, flipping past a quarter turn so they never read upside down,
+    and a port's label is centered in the straight part of the body — the
+    same width budget its auto-size grows to satisfy.
+  - **Wires carry edge-parity properties, and are solid.** The dashed
+    linestyle is gone — a wire reaching a port glyph already says
+    "dissipative", so the dash carried no extra information. Every wire
+    (port attachment, line-end termination, node tap) now takes the same
+    controls an ordinary graph edge has: line width (the shared
+    Thin/Medium/Thick/X-Thick multipliers), color with a "Default" reset,
+    label text and label size. Selecting a wire opens a Properties page
+    holding those alongside its physics — rate and sign, plus the
+    reference harmonic for a tap — and the styling round-trips through
+    `.pgraph` without touching the physics. Role-encoding defaults
+    survive: gray for an attachment, firebrick plus a `−` mark when the
+    sign is inverted, teal for a tap (labelled `n=…` until the user sets
+    a label).
+  - **Pumped line termination (gain).** A line end can carry a modulated
+    element pumped at f_p (right-click → *Add pumped termination…*): the app
+    creates a linked **conjugate twin** glyph (the same line in the idler
+    sector — own layout, mirrored physics, its own port glyphs) and one
+    **double-line pump bus** between the pumped ends, which expands at
+    extraction into the rank-one parametric block g gᵀ of the end profile
+    (`docs/pumped_line_termination.md`). The rate is defined at a reference
+    pair (n_ref, its idler partner), with the inductive (or capacitive)
+    envelope for every other pair; the bus is selectable, editable in the
+    Properties panel, serialized, exported, and deleting the twin un-pumps
+    the line. Verified: the block is rank one; the pumped graph is
+    pseudo-unitary (|S_ss|² − |S_is|² = 1 to 1e-15) with real gain; and the
+    normalization rate = 2·FSR·g/π (g from the circuit model) reproduces
+    the oracle's gain and idler lineshapes to 3e-3 in the isolated-mode
+    regime and 3e-2 at a matched port, the residuals being the excluded DC
+    mode and the missing comb tail closure. Node taps on a pumped line are
+    refused for now. `LineResonator` gained `conj`.
+
+### Fixed
+- Export: copying the graph to the clipboard (and the PNG/SVG/PDF exports)
+  refused any graph made only of port or transmission-line glyphs — they
+  guarded on "no nodes", but an image export captures the figure, so a
+  terminated line is perfectly exportable. All four paths now test for
+  drawable content (nodes, ports, or lines). The drawing-*code* export
+  still requires nodes, since it regenerates matplotlib calls from
+  nodes/edges and cannot represent glyphs; its message now says that.
+- S-parameters tab: the trace-selection column was hard-capped at 120 px
+  with horizontal scrolling disabled, so longer port labels were silently
+  clipped. It now sizes to its widest entry (between 120 and 340 px).
+  Trace names also drop the redundant `S_` (the column is headed
+  "S-parameters:") and name the pair explicitly as `out ← in`, since bare
+  concatenation is ambiguous once labels are more than one character
+  (`S_TL1TL1*`). Checkbox state is keyed on the port-label tuple rather
+  than the rendered text, so this rename did not reset selections.
+- Core: spanning-tree edges were stored as the canonically *sorted* pair
+  while the frame accumulation read them as parent→child, so any hop
+  traversed toward a smaller (or lexically earlier) id credited its pump
+  offset to the parent and left the child with no frame — silently
+  falling back to the root drive. Static graphs were unaffected (every
+  offset is zero) and graphs rooted at their lowest id were as well, which
+  is why it went unnoticed; a pumped comb of string ids exposed it. Tree
+  edges are now oriented by traversal, and a node left without a frame is
+  logged instead of defaulted.
+- Core: pumped edges are oriented by comparing the endpoints' natural
+  frequencies, which cannot handle a conjugate comb's negative-frequency
+  members. Edges may now carry an explicit `frame_rule='sector'`
+  (crossing into the conjugate sector is −f_p); macro-emitted pump buses
+  use it, hand-drawn edges keep the heuristic.
+
+### Added (continued)
+  - **Click a mode marker to anchor the pump's rate there** — closes the loop
+    the overlay exists for. Inert while the navigation toolbar is in
+    pan/zoom; clicking an idler image explains that *m* is derived from f_p
+    and n rather than silently doing nothing.
+  - **δL_ℓ/L_ℓ** (the load element's own fractional modulation) reported
+    beside α, when the end load is set and the pumped element *is* the
+    termination. This is the number invariant under re-anchoring — verified
+    to 12 digits through the real edge fan-out — where α and ε are
+    pair-referred. Subscript ℓ for "load": the element is whatever reactance
+    terminates the line, and a capacitive load reads δC_ℓ/C_ℓ, the same
+    statement with C for L.
+  - **Line loss is entered as a rate**, `B_int [mau]`, like every other rate
+    in the app, through the verified map B_int = (2/π)·α·FSR. Retires the
+    α that collided with the pump's α. Tooltip is explicit that the single
+    rate is derived and gated for the **open–open** comb only: a reactive
+    load stores energy the loss does not act on, so per-mode uniformity is
+    not established there (an f_Z = 0.5·FSR line's fundamental sits near
+    *half* the open–open value).
+  - **Mode-marker appearance is in Settings → S-Parameter Plot** (colour,
+    style, width × trace, opacity, cutoff width, label size), inheriting the
+    dialog's existing *Reset to Defaults* / *Save as Defaults*. New defaults:
+    black dashed with round dash caps at half the trace linewidth, and the
+    comb cutoff solid — a different kind of statement from a mode.
+### Fixed (continued)
+  - **The pump's mode index was capped at whatever N the row was built
+    with.** Raise f_max from 3 to 20 (N: 6 → 40) and `n` still refused to
+    pass 6, because the rows are not rebuilt per keystroke (that would steal
+    focus). Ranges are now re-ranged in place, for tap indices too. The
+    field was also one digit wide; widened.
+  - **The pump description named only the amplification partner.** One pump
+    satisfies *three* conditions — f_n + f_m = f_p, f_m − f_n = f_p
+    (up-conversion, which always has a target) and f_n − f_m = f_p
+    (down-conversion) — so the panel now names the anchored pair's family
+    and lists the others the same pump drives. Understating the conversion
+    is precisely the error the triple-line bus exists to prevent.
+  - **Pump strength α** (PRX Quantum convention, α = ε/4 = g/√(ω_nω_m))
+    reported beside the rate, with δL/L_tot alongside. **α ≥ 1 is flagged**
+    — the rate box takes a translucent red wash and the label turns dark
+    red and says "unphysical" — because where that limit sits is not
+    obvious on a loaded comb, whose participations move with the dispersed
+    roots. The line's uniform attenuation is relabelled **α_loss**: two
+    different αs in adjacent rows is exactly the collision that gets
+    misread.
+### Fixed (continued)
+  - **Mode markers were invisible.** The palette opened on `#e8e8e8`,
+    against a `#EAEAF2` plot ground — the overlay drew, and could not be
+    seen. Darker, contrast-checked colours now.
+  - **Index labels never appeared.** A signal mode and a twin's idler image
+    routinely coincide (f_n and f_p − f_m), so the all-or-nothing density
+    test saw a zero gap and suppressed *every* label. Coincident markers
+    now share one chip (`1/2*`, conjugate starred) and thinning is greedy
+    left-to-right, so crowding costs that one label rather than the set.
+    Hover names every mode at a shared frequency, not just one of them.
+  - **Ports & Lines no longer needs horizontal scrolling.** The pump was
+    one wide strip of header + four spinboxes + the full pair description,
+    pushing the pane's minimum past ~1400 px and stopping the plot being
+    kept at half the window. Split into a header (carrying α), an indented
+    control strip, and a word-wrapped description: minimum width now
+    639 px, measured in the tests.
+  - **Mode-frequency overlay on the S-parameter plot** (*Mark Line Modes*,
+    beside *Conjugate Freqs*). Marks every transmission line's normal-mode
+    frequencies — the **loaded** ones when an end load is set — labels them
+    by index, and reports line, index and frequency on hover. Markers run to
+    the comb cutoff (mode N), which is drawn heavier because beyond it the
+    model keeps no explicit modes. Positions are not simply f_n: each
+    channel is read in its own drive frame, so a pumped line's conjugate
+    twin is marked at `f_p − f_m`, where its idler image actually resonates.
+    The frame is inverted from the sweep's own `drive_signals` rather than
+    re-derived per topology, which keeps plain, loaded, conjugated and
+    pumped lines all correct. Intended use: read off which `n` to name in
+    the pump's reference pair. Persists in the `.pgraph` plot settings.
+  - **Worked transmission-line examples** under File → Examples (`TL_1` …
+    `TL_5`), each with a Notes tab explaining the drawing, what to look at
+    in S and which knob does what: an open line on a port; a mode tapped
+    onto a line; the pumped-termination amplifier; the same with the
+    inductor's reactance as an end load and the loaded fundamental solved
+    onto 4.0; two lines on one port (series). `misc/make_line_examples.py`.
+  - In-app help gained a *Ports, Loss Hubs & Transmission Lines* section
+    (shortcuts, connection rules, glyph meanings, end load, truncation,
+    where to tune); the `?` overlay shows *Add port* / *Add transmission
+    line* when the mode is on; README shortcut list updated.
+### Changed
+  - The Explicit Ports & Lines toggle moved from Settings → Interface to its
+    own **Experimental** tab, labelled "EXPERIMENTAL!!! Use at your own
+    risk".
+  - **Comb tail closure.** A line macro keeps N pole pairs, but the modes
+    beyond f_max still load the port: a reactive tail ~ 2γf/(FSR²N) that
+    shifts every in-band resonance and converges only as 1/N (measured law
+    in `misc/comb_truncation_checks.py`: |ΔS| ≈ 2.5 (γ/FSR)(f/FSR)/N, all
+    of it in the phase). That tail is now folded back into the port channel
+    in closed form — exact minus kept, with `exact` the line's input
+    impedance from ABCD (open–open, inductively loaded, port at the loaded
+    end, lossy) — as a per-channel scalar λ(f) = 1/(1 + iχ_t/2) on the hub's
+    damper in M and its K column, plus a direct phase on S. It is a Schur
+    complement, i.e. an identity: N = 2 reproduces exact ABCD to 1e-15 where
+    the raw comb was off by 2, and S_full stays unitary. Channels without a
+    tail have λ = 1 exactly, so legacy graphs are bit-identical. What it
+    does not carry is the tail modes' pump/tap couplings (second order):
+    on the §6 pumped line the closed residual sits on the 2e-3 DC-mode
+    floor from N = 4. Toggle in the Ports & Lines panel ("close comb tail
+    analytically", default on); `GraphScatteringMatrix(..., tail_closure=)`;
+    exported code carries hub `tails`. Docs §8, full derivation in
+    `docs/comb_tail_closure.md`; gate `tests/test_tail_closure.py`.
+  - **Check truncation (2× f_max)** button in Ports & Lines: re-solves every
+    component with all combs doubled and reports the largest change of each
+    displayed trace over the window — the honest way to size N for THIS
+    graph, including the couplings the closure does not carry.
+  - **Ports & Lines is tunable without a graph node.** The panel now spans
+    the full width under Nodes | Edges and carries live spinboxes for each
+    line's FSR/Ztx/f_max/Z0/α, its end load's f_Z, and its pump's
+    f_p/rate/phase/n_ref (partner shown beside), with a per-line note giving
+    N, the closure state and — with the closure off — the truncation
+    estimate at the top of the window. A conjugate twin lists its
+    terminations and points at its primary. The Nodes placeholder for a
+    glyph-only graph now says where the controls are instead of "Enter
+    Scattering mode".
+### Fixed (continued)
+  - S-parameter plot lost its frequency-axis numbers when every channel was
+    a hub port: the per-port frequency rows looked channels up in
+    `self.nodes`, found nothing, hid the tick labels and drew no rows. Hubs
+    now carry a drive frame (`drive_signals[hub_id]`) and the plot labels
+    channels from `port_dict`.
+  - Ctrl+U/I on a selection of several port/line glyphs (no node) spun each
+    glyph about its own center; two or more selected objects now rotate
+    rigidly about the selection centroid. A single glyph still spins in
+    place.
+  - **Loaded (reactively terminated) lines.** A `LineResonator` can now carry
+    a shunt reactance at ONE end, `load={'end','type','f_Z'}`, and the comb is
+    re-derived on that dispersed basis: loaded roots `cot(kℓ) = X_elem/Ztx`
+    (bisection on a pole-free residual), the DC mode dropped for an inductive
+    load, and `u_n(end) = cos(k_nℓ)`, `C_n` and `γ_n = 1/(2π Z0 C_n)` all
+    moving with them — γ is no longer the same for every mode. The end
+    couplings and the tap/pump profiles are rebuilt from `(u_n, f_n, C_n)`;
+    the open–open branch keeps its closed form, so `load=None` (the default)
+    reproduces every pinned golden bit-for-bit and is itself the `f_Z → 0`
+    inductive limit. Gated against exact ABCD in the project's JAA convention
+    at ~1/N, the same tail-limited convergence the unloaded macro shows
+    (1.260/0.569/0.276/0.137 at N=10/20/40/80): `tests/test_loaded_line.py`.
+    The load is parameterized by an explicit TYPE plus f_Z — the frequency
+    where |X_elem| = Ztx — rather than a signed reactance, because this
+    project's `Z_ind = -iωL` makes an inductor's reactance negative, the
+    opposite of the textbook. `line_fsr_for_target` inverts §7.3 in closed
+    form, so you name the LOADED resonance and get the line instead of
+    guessing FSR: offered in the line dialog, the line's Properties page and
+    the pump dialog, where the modulated element is itself the load.
+    **Capacitive loads are refused**, listed-and-disabled rather than hidden:
+    their comb S11 plateaus near 0.94 from N=10 to N=80 instead of falling,
+    so a direct non-resonant term is missing (docs §7.5). New scene:
+    `LINE_PUMPED_LOADED`.
+  - Fixed along the way, each a real defect the loaded basis exposed: `N`
+    counted `ceil(f_max/FSR)` rather than the modes that reach `f_max`;
+    `f_max >= FSR` was enforced on loaded lines, where FSR is the geometric
+    parameter `v/2ℓ` and the fundamental can sit far below it; the idler
+    partner was found at `f_p - n·FSR` instead of `f_p - f_n`, which names a
+    different mode on a dispersed comb; a pumped line's twin was validated
+    before its load was mirrored onto it, so a strongly loaded line could not
+    be pumped at all; and a tap or pump naming a mode outside a shrunken comb
+    raised instead of clamping with a warning.
+  - **Pump bus: three strokes.** In the PRXQ visual language a single line
+    is conversion (beam-splitter) coupling and a double line is amplification
+    (two-mode squeezing). A pump bus is neither — one pump on a comb drives
+    both families at once through the same rank-one block — so it draws their
+    union, three strokes, always. Deliberately NOT computed per graph: on a
+    harmonic comb the two families are satisfied together (separating them
+    needs real dispersion engineering), and a band-edge reachability test
+    measures `f_max` rather than the device — the same line and pump flip
+    from "amplification only" to "both" when `f_max` is raised, because the
+    conversion partners were real modes the short comb omitted. That test is
+    kept for the question it does answer: `pump_truncation_gaps` warns when
+    the comb holds no partner for a family the line has, surfaced as a "raise
+    f_max" note in the bus Properties page and the Ports & Lines row. See
+    `docs/pumped_line_termination.md` §7.6.
+  - Phase-2 items are explicitly blocked pending derivations (complex /
+    mixed-sector hub weights, band-limited combs, two-port lines,
+    frequency-dependent weights); attachments enforce real signed weights
+    and single-sector spans with errors naming the missing `M_pumped`
+    derivation.
+
+### Fixed
+- Keyboard: shortcuts bound to punctuation typed WITH Shift (`?` for the
+  hint overlay, `+` for zoom in) never fired, because the key arrives with
+  `ShiftModifier` and a bare `QKeySequence("?")` cannot match it. Every
+  unmodified punctuation binding now also registers a companion
+  `Shift+<key>` shortcut (letters and digits are excluded, so `G` and
+  `Shift+G` stay distinct), kept in sync when a binding is remapped.
+- Keyboard: single-key shortcuts are suppressed while an input widget has
+  focus (so typing in a spinbox doesn't zoom or place nodes), but clicking
+  back onto the canvas did not release that focus — leaving every
+  single-key shortcut silently dead after any panel edit, with no visible
+  cue. A canvas click now clears input focus (the canvas itself still
+  stays out of the Tab chain).
+- Keyboard: the "Explicit Ports enabled" auto-enable notice was a
+  non-modal popup that took keyboard activation, swallowing every
+  window-scoped single-key shortcut until it was dismissed — so `+`/`-`
+  and `?` appeared broken for any file containing ports or lines. It now
+  shows without activating and hands focus straight back to the canvas.
 - Scattering: S-matrix port labels were wrong for graphs whose ports are not in
   ascending node-id order. The K columns are built by walking the nodes in
   basis order, but every label path (S-parameter checkboxes, plot legends,

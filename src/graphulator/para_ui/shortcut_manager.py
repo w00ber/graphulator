@@ -55,6 +55,9 @@ class ShortcutManager(QObject):
 
         # Qt objects for runtime updates
         self._qt_shortcuts: Dict[str, QShortcut] = {}
+        # Companion Shift+<key> shortcuts for punctuation that is TYPED with
+        # Shift on common layouts (see _shifted_alias)
+        self._qt_shift_aliases: Dict[str, QShortcut] = {}
         self._qt_actions: Dict[str, QAction] = {}
 
         # Original handlers for re-binding after key changes
@@ -291,7 +294,31 @@ class ShortcutManager(QObject):
             shortcut.setEnabled(False)
 
         self._qt_shortcuts[action_id] = shortcut
+
+        # A punctuation key such as '?' or '+' is produced by pressing
+        # Shift+<something>, so Qt delivers it WITH ShiftModifier and a bare
+        # QKeySequence("?") never matches. Bind a companion Shift+<key>
+        # shortcut for those keys so the hotkey fires however the layout
+        # reports it. Letters/digits are excluded: Shift+<letter> is a
+        # distinct, separately bindable shortcut (e.g. G vs Shift+G).
+        alias_seq = self._shifted_alias(key_seq)
+        alias = QShortcut(parent)
+        alias.setContext(context)
+        alias.activated.connect(actual_handler)
+        if alias_seq:
+            alias.setKey(QKeySequence(alias_seq))
+        else:
+            alias.setEnabled(False)
+        self._qt_shift_aliases[action_id] = alias
+
         return shortcut
+
+    @staticmethod
+    def _shifted_alias(key_seq: str) -> str:
+        """'Shift+<key>' for an unmodified punctuation binding, else ''."""
+        if not key_seq or len(key_seq) != 1 or key_seq.isalnum():
+            return ""
+        return f"Shift+{key_seq}"
 
     def bind_action(self, action_id: str, action: QAction) -> bool:
         """
@@ -333,6 +360,16 @@ class ShortcutManager(QObject):
         else:
             shortcut.setKey(QKeySequence())
             shortcut.setEnabled(False)
+
+        alias = self._qt_shift_aliases.get(action_id)
+        if alias is not None:
+            alias_seq = self._shifted_alias(key_seq)
+            if alias_seq:
+                alias.setKey(QKeySequence(alias_seq))
+                alias.setEnabled(True)
+            else:
+                alias.setKey(QKeySequence())
+                alias.setEnabled(False)
 
     def _update_qt_action(self, action_id: str):
         """Update a Qt action's shortcut when the binding changes."""

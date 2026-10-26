@@ -216,3 +216,131 @@ def test_para_show_all_resolves_and_is_fuller(para_win, settings_tmp, context):
         assert len({r[1] for r in full}) == len(full) or len(full) > 0
     finally:
         config.SHORTCUT_OVERLAY_SHOW_ALL = original
+
+
+# ---- shortcut ownership ----------------------------------------------
+#
+# Qt refuses to dispatch a key sequence that two objects claim: it logs
+# "Ambiguous shortcut overload" and fires NEITHER, so the key goes silently
+# dead while the menu item still works when clicked. That is exactly how
+# `P`, `Shift+P`, `L` and `E` broke when the Insert menu was added with
+# shortcuts already owned by QShortcut. One owner per sequence.
+
+def _shortcut_owners(win):
+    """{key sequence: [what claims it]}, ignoring unbound entries.
+
+    Paragraphulator keeps QShortcut objects whose sequence is empty until
+    the ShortcutManager assigns one; an empty sequence binds nothing and
+    cannot collide.
+    """
+    from PySide6.QtGui import QAction, QShortcut
+    owners = {}
+    for sc in win.findChildren(QShortcut):
+        key = sc.key().toString().lower()
+        if key:
+            owners.setdefault(key, []).append('QShortcut')
+    for act in win.findChildren(QAction):
+        for seq in act.shortcuts():
+            key = seq.toString().lower()
+            if key:
+                owners.setdefault(key, []).append(f'QAction[{act.text()}]')
+    return owners
+
+
+def test_qt_no_shortcut_is_owned_twice(qt_win, settings_tmp):
+    _, win = qt_win
+    dupes = {k: v for k, v in _shortcut_owners(win).items() if len(v) > 1}
+    assert not dupes, f"ambiguous shortcut overload: {dupes}"
+
+
+def test_para_no_shortcut_is_owned_twice(para_win, settings_tmp):
+    _, win = para_win
+    dupes = {k: v for k, v in _shortcut_owners(win).items() if len(v) > 1}
+    assert not dupes, f"ambiguous shortcut overload: {dupes}"
+
+
+@pytest.mark.parametrize("key,modifier,expected", [
+    ('G', 'none', 'single'),
+    ('G', 'shift', 'continuous'),
+    ('P', 'none', 'port'),
+    ('P', 'shift', 'port_continuous'),
+    ('L', 'none', 'txline'),
+    ('E', 'none', 'edge'),
+    ('E', 'ctrl', 'edge_continuous'),
+    ('C', 'none', 'conjugation'),
+])
+def test_qt_placement_keys_actually_fire(qt_win, settings_tmp, key, modifier,
+                                         expected):
+    """Press the real key and check the mode changed.
+
+    Registration alone is not enough: an ambiguous sequence IS registered on
+    both of its owners and still does nothing.
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    _, win = qt_win
+    win.show()
+    QApplication.processEvents()
+    win.placement_mode = None
+    mods = {'shift': Qt.ShiftModifier, 'ctrl': Qt.ControlModifier}
+    QTest.keyClick(win, getattr(Qt, f'Key_{key}'),
+                   mods.get(modifier, Qt.NoModifier))
+    QApplication.processEvents()
+    try:
+        assert win.placement_mode == expected
+    finally:
+        win.placement_mode = None
+        win._exit_wire_pending()
+
+
+EDGE = {'label1': 'g', 'label2': '', 'linewidth_mult': 1.5,
+        'label_size_mult': 1.4, 'label_offset_mult': 1.0, 'style': 'loopy',
+        'direction': 'both', 'is_self_loop': False, 'flip_labels': False,
+        'looptheta': 30, 'arrowstyle': 'open', 'arrowscale': 1.0}
+
+
+@pytest.mark.parametrize("key,modifier,field", [
+    ('F', 'none', 'flip_labels'),
+    ('Left', 'ctrl', 'looptheta'),
+    ('Right', 'ctrl', 'looptheta'),
+    ('Up', 'none', 'linewidth_mult'),
+    ('Down', 'none', 'linewidth_mult'),
+    ('Left', 'none', 'label_size_mult'),
+    ('Right', 'none', 'label_size_mult'),
+])
+def test_qt_edge_adjustment_keys_actually_fire(qt_win, settings_tmp, key,
+                                               modifier, field):
+    """The edge keys reach a selected edge.
+
+    `E` itself went dead once already (an Insert-menu action claimed the
+    same sequence), and the adjustment keys share that failure mode.
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    _, win = qt_win
+    a = dict(NODE, node_id=0, pos=(0.0, 0.0))
+    b = dict(NODE, node_id=1, label='B', pos=(5.0, 0.0))
+    edge = dict(EDGE, from_node=a, to_node=b, from_node_id=0, to_node_id=1)
+    win.nodes.extend([a, b])
+    win.edges.append(edge)
+    win.selected_nodes = []
+    win.selected_edges = [edge]
+    win.show()
+    QApplication.processEvents()
+
+    mods = {'shift': Qt.ShiftModifier, 'ctrl': Qt.ControlModifier}
+    before = edge[field]
+    try:
+        QTest.keyClick(win, getattr(Qt, f'Key_{key}'),
+                       mods.get(modifier, Qt.NoModifier))
+        QApplication.processEvents()
+        assert edge[field] != before, f"{key} did not reach the edge"
+    finally:
+        win.selected_edges = []
+        win.edges.remove(edge)
+        del win.nodes[-2:]
+        win.edge_rotation_mode = False

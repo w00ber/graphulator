@@ -326,7 +326,7 @@ class EdgeInputDialog(QDialog):
         lw_layout = QHBoxLayout()
         lw_layout.addWidget(QLabel("Line Width:"))
         self.lw_combo = QComboBox()
-        lw_options = ['Thin', 'Medium', 'Thick', 'X-Thick']
+        lw_options = list(config.EDGE_LINEWIDTH_OPTIONS)
         self.lw_combo.addItems(lw_options)
         self.lw_combo.setCurrentText(EdgeInputDialog.last_linewidth)
         self.lw_combo.currentTextChanged.connect(self._update_linewidth_live)

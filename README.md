@@ -30,6 +30,7 @@ It's important to note that, despite the author's affiliation with NIST, this pr
 - **Self-loop support** with customizable angles and labels
 - **Node customization**: colors, sizes, labels, and conjugation markers
 - **Edge label positioning** with rotation and offset controls
+- **Schematic glyphs**: ports (where a signal enters or leaves the drawing) and transmission lines, joined by smooth routed wiring, with user-toggled auto-orientation. A fan of wires out of one port shares a straight stub and splits past the apex, and every stroke's width follows the zoom. The port's nose depth and lead length are fixed geometry (they do not stretch with the body) and both are settable. A port owns no lead — connections emerge from the point of the pentagon in their own stroke — and a line's open mouth is drawn as a bore, with its conductor coming out of the center
 - **Zoom and pan** with mouse wheel and arrow keys
 - **Export to PDF/SVG** with scaling presets
 - **Save/load graphs** in JSON format
@@ -38,6 +39,7 @@ It's important to note that, despite the author's affiliation with NIST, this pr
 ### Graph Primitives Library
 
 - **Programmatic graph creation** using `graph_primitives` module
+- **Schematic glyph primitives**: `port`, `txline` and the `wire` routing, plus `GraphCircuit.addport` / `addtxline` / `addwire` — the same code the GUI canvas draws with
 - **LaTeX/MathText support** for mathematical labels
 - **Automatic layout** and proportional scaling
 - **Customizable styling** for nodes, edges, and labels
@@ -47,10 +49,12 @@ It's important to note that, despite the author's affiliation with NIST, this pr
 
 - **Node placement**: `G` (single), `Shift+G` (continuous), `Ctrl+G` (auto-increment)
 - **Edge creation**: `E` (single), `Ctrl+E` (continuous)
+- **Glyphs** (Graphulator): `P` (place port), `Shift+P` (continuous), `L` (place transmission line); wire them with the edge tool `E` — click a port or anywhere on a txline (the nearer end wins), then a node, port or txline. Drag a txline's end handle to stretch and aim it, snapping to the grid, with the other end held fixed; drag its body to move the whole glyph. Wires are black and solid by default, with per-wire color, width and dashed/dotted style in the Properties panel; select several (shift-click, or a selection window enclosing both ends) to edit what they share at once. The defaults for ports, txlines and wires live under Settings → *Port & Wire Defaults*. Glyphs copy, cut and paste with `Ctrl+C`/`Ctrl+X`/`Ctrl+V` like nodes and edges, and a pasted copy is wired to itself. Select a sub-circuit (shift-click, or a selection window) and drag any member to move the whole thing rigidly; hold Option/Alt while dragging to leave the original and drop a copy where the drag ends. With a glyph selected: `←`/`→` length, `↑`/`↓` height, `Ctrl+←`/`Ctrl+→` rotate (which also pins a port's angle), `Ctrl+↑`/`Ctrl+↓` label size, `Shift+arrows` nudge the label; right-click for auto-orient and delete
 - **Selection**: Click to select, `Shift+Click` for multi-select, `Ctrl+A` for select all
 - **Editing**: Arrow keys for pan, `Shift+Arrow` for label nudge, `Ctrl+Arrow` for parameter adjustment
 - **File operations**: `Ctrl+N` (new), `Ctrl+O` (open), `Ctrl+S` (save)
 - **View**: `A` (auto-fit), `+/-` (zoom), `R` (rotate grid)
+- **Ports & lines** (Paragraphulator, with *Explicit Ports & Lines* enabled under Settings → Experimental): `P` (place port), `Shift+P` (continuous), `L` (place transmission line); connect with the edge tool `E` — port → node attaches, line end lead → port terminates, line end lead → node taps; right-click a line for its pumped termination; `Ctrl+U`/`Ctrl+I` rotate a glyph (or a whole multi-object selection rigidly). Glyphs and their wiring copy, cut and paste with `Ctrl+C`/`Ctrl+X`/`Ctrl+V` like nodes and edges, and a pasted copy is relinked to itself; each placement dialog is pre-filled from the last glyph placed. Dragging any member of a selection moves the whole sub-circuit rigidly, and Option/Alt-drag drops a copy instead. `?` toggles the on-screen hints, `Help → Help` has the full guide
 
 ---
 
@@ -87,6 +91,153 @@ It's important to note that, despite the author's affiliation with NIST, this pr
   - Real-time updates as parameters change
 - **Fine control on all spinboxes**: `Shift` for 1/10 step, `Alt` for 10x step
 
+### Explicit Ports, Loss Hubs & Transmission Lines (hub-based dissipation)
+
+> **Experimental** — enable under *Settings → Experimental*. The model is
+> gated against exact microwave references (see `tests/`), but the design
+> language is still moving; use at your own risk and expect file-format
+> additions. Worked examples with notes: *File → Examples → TL_…*.
+
+Enable **Explicit Ports & Lines** in Settings → Interface to work with shared
+ports and transmission-line mode combs. With the switch off, everything looks
+and behaves exactly as before (per-node `B_ext` self-loops); opening a file
+that contains ports or lines switches it on automatically for the session.
+
+The underlying model is a single dissipation species, the **dissipation hub**:
+one physical absorber attached to one or many modes with signed coupling
+amplitudes. A *monitored* hub is a **port** — its damping `(i/2)κκ†` enters
+the equation-of-motion matrix M *and* it contributes a scattering channel — 
+while an *unmonitored* **loss hub** damps without a channel (energy exits
+unobserved). Because M's external anti-Hermitian part is computed from the
+same K that builds S, the input–output identity
+`S†S = 𝟙 − (M⁻¹K)† Γ_int (M⁻¹K)` holds by construction: lossless graphs are
+unitary and passive graphs never show spurious gain, even when a shared port
+makes the external damping non-diagonal (cross-damping). Legacy per-node
+`B_ext` auto-wraps into single-attachment ports, reproducing the historical
+results to machine precision (pinned by a golden-file regression suite).
+
+- **Port tool** (`P` single, `Shift+P` continuous): a home-plate pentagon
+  with a terminal lead (diagrammer-style); attach it to nodes with the edge
+  tool (`E`) — click the port, then a node. Wiring routes as smooth rounded
+  curves: every wire leaves the lead tip colinear with the lead (a
+  multi-wire fan collimates through it before spreading) and enters each
+  node normal to its circle. Per-link coupling rate and sign live in the
+  **Ports & Lines** panel (below the Nodes panel) or the per-link editor
+  (double-click a link). Ports auto-orient toward the center of their
+  attached group (toggleable per port; manual rotation `Ctrl+U/I` pins).
+  Selecting a glyph fills the **Properties** panel with its editable
+  properties (label, monitored/loss, auto-orient, auto-size, length,
+  height, stroke width, stroke and fill color — plus FSR/Ztx/f_max/Z₀/α
+  and the per-end tap coupling for a line), all live-applied. Glyphs also
+  stretch with the arrow keys when selected and rotate with `Ctrl+U`/`I`
+  (also on the right-click menu). A port's length auto-sizes so its label
+  always fits; stretching it by hand takes over. The **File → Test** menu
+  ships canonical scenes for trying all of this.
+
+- **Pumped termination** (right-click a line → *Add pumped termination…*):
+  a line end terminated in a modulated inductor (or capacitor) pumped at
+  `f_p`. The app draws a linked **conjugate twin** of the line — hollow, its
+  own layout and port, physics mirrored — joined at the pumped ends by a
+  **double-line pump bus**, which stands for the rank-one parametric block
+  between the comb and its twin: one pump amplifies every harmonic pair
+  summing to `f_p` and converts every pair differing by it. The rate is
+  entered at a reference harmonic and its idler partner (shown live in the
+  dialog); see `docs/pumped_line_termination.md` for the derivation, the
+  normalization, and what remains open (loaded-line dispersion, the DC
+  mode, stability).
+
+**Wires** carry the same per-wire controls as ordinary graph edges — line
+width, color, label text and label size — editable in the Properties panel
+when a wire is selected, alongside its physics (rate, sign, and a tap's
+reference harmonic) — or with the arrow keys, as for an edge (↑/↓ width,
+←/→ label size). A port's lead is drawn at the width of the widest wire
+attached to it, so the two meet seamlessly instead of stepping at the tip.
+**Select several** (shift-click, or drag a selection
+window around the sub-circuit) and the panel offers what they share — rate,
+sign, width, label size, color — writing each edit to all of them in one
+undo step; attachments and taps edit together. A wire joins a window
+selection by its midpoint, the rule an edge already used -- so a band drawn
+across a bundle picks the bundle up. A selected wire, edge or self-loop all
+glow the same way, with a salmon halo along the path. Wires are drawn solid:
+reaching a port glyph is already what marks a coupling as dissipative.
+Defaults encode the role at a glance — gray for a port attachment,
+firebrick with a `−` mark when its sign is inverted, teal for a
+conservative node tap (labelled with its `n=…` reference harmonic until
+you give it a label of your own) — and all three are settable under
+Settings → *Port & Wire Defaults*, along with the rate a new attachment or
+tap is created with.
+- **Loss hub** (Insert menu): hatched port variant, same attachments, no
+  scattering channel. Enables a per-channel energy audit
+  (`GraphScatteringMatrix.absorption`, `.S_full`).
+- **Transmission line** (`L`): the cylinder glyph represents an open–open
+  standing-wave mode comb, parameterized by just `FSR`, `Ztx`, `f_max`,
+  `Z0`, and a uniform loss `α`. At extraction it expands into
+  `N = ceil(f_max/FSR)` mode pairs plus DC with signed couplings
+  `κ_n = u_n(end)·√γ`, `γ/FSR = (2/π)(Ztx/Z0)` — validated against an exact
+  ABCD microwave reference (see `examples/demo_line_jpa_port.py`).
+  Cross-damping between comb modes matters whenever γ is comparable to the
+  FSR.
+
+  **End load (optional).** One end may instead be terminated in a shunt
+  reactance, which *disperses* the comb: the modes leave `n·FSR` and
+  `u_n(end)`, `C_n` and `γ_n` move with them — so γ is no longer the same
+  for every mode, and FSR becomes the geometric parameter `v/2ℓ` rather than
+  the mode spacing. The load is given as a type plus `f_Z`, the frequency at
+  which `|X_elem| = Ztx` (not a signed reactance: this project uses
+  `Z_ind = -iωL`, so an inductor's reactance is *negative* here). Because
+  the loaded fundamental is what you actually care about, the dialogs invert
+  it for you — name the target resonance and the app solves
+  `FSR = π f / (arccot(x(f)) + (n−1)π)` in closed form. Inductive loads are
+  validated against exact ABCD at ~1/N; capacitive ones are refused pending
+  a missing direct term (`docs/pumped_line_termination.md` §7).
+
+  **Comb tail closure (on by default).** The modes beyond `f_max` still load
+  the port — a reactive tail ~ 2γf/(FSR²N) that shifts every resonance and
+  converges only as 1/N — so the app folds them back into the port channel
+  in closed form (the line's exact input impedance minus the kept comb). The
+  port loading is then exact at *any* N; what `f_max` still truncates is the
+  pump/tap couplings onto modes beyond it, which are second order. Use
+  *Check truncation (2× f_max)* in the Ports & Lines panel to measure that for
+  your graph, and the panel's checkbox to see the raw truncated comb
+  (`docs/pumped_line_termination.md` §8; full derivation in
+  `docs/comb_tail_closure.md`).
+
+  **The comb stays inside the macro.** A line is connected by its **end
+  leads**: click a lead with the edge tool (`E`), then a port glyph, and
+  that end is terminated — the whole comb joins that port's single hub
+  column under the hood. You never wire (or even see) the individual comb
+  modes, and a line is never *implicitly* terminated: placing a terminated
+  line creates a real, visible, movable port glyph you can relabel, rewire,
+  or delete. That port may also attach to ordinary nodes, since one physical
+  resistor can see both a line and a device. Several loads may share one
+  physical end — e.g. a stub resonator read out by two ports — and a
+  standalone terminated line is already a complete scattering problem
+  (its S₁₁ is the comb's). *Explode to Nodes* (Insert menu, one-way)
+  remains only as a manual escape hatch for inspecting or hand-editing the
+  comb — it is not how you connect a line.
+- **Node taps** (edge tool, line end → node): tapping a graph mode onto a
+  line end couples it conservatively to *every* comb mode at once through
+  one drawn connection. The per-mode profile is pinned to the reference
+  circuit model: a **capacitive** tap (the default) couples as
+  `g_n ∝ u_n(end)·√n`, an **inductive** one as `g_n ∝ u_n(end)/√n`; the
+  coupling type belongs to the *end* (the physical tap point, shared by
+  everything attached there) and is set in the line's dialog. Because the
+  tapped mode's frequency generally sits *between* harmonics, the rate you
+  enter is defined **at a reference harmonic `n_ref`** that you choose when
+  making the tap (the harmonic nearest the mode's frequency is
+  highlighted); the rate, sign, and `n_ref` remain editable in the
+  **Ports & Lines** panel, and the tap link on the canvas carries an
+  `n=…` chip. The DC comb mode is excluded (free mode; the reference's own
+  transform drops it).
+
+**Phase-2 boundary** (deliberately not implemented, blocked on derivations):
+complex/mixed-sector hub weights (Manley–Rowe pumped scattering through
+hubs — awaits the `M_pumped` two-sector derivation; attachment phases are
+restricted to 0°/180°), band-limited comb expansion (low-side closure
+underived), through-lines — *loading both ends* of a line is refused with an
+explicit error, since no verified ABCD two-port reference exists yet — and
+frequency-dependent hub weights / connector embedding.
+
 ### Markdown Notes
 
 - **Built-in notes editor** with live preview, saved with the graph file
@@ -101,6 +252,7 @@ It's important to note that, despite the author's affiliation with NIST, this pr
 - **Conjugated nodes** with visual distinction (transparent fill, double-line edges)
 - **Copy/paste** (`Ctrl+C/V`) with smart label auto-increment, or raw paste (`Ctrl+Shift+V`)
 - **Undo** (`Ctrl+Z`) for node/edge operations
+- **Multi-selection property editing**: select several nodes, edges or port/line glyphs and edit what they share (sizes, colors, conjugation, outlines, edge style/direction/curvature, self-loop size/angle, glyph length/height/stroke, port auto-orient). Fields that disagree across the selection show gray, blank or partially checked; one edit applies to all of them in a single undo step
 - **Rotation** (`Ctrl+U/I`) and **flipping** (`F`, `Shift+F`) of selections
 - **Grid modes**: square (45 degree increments) and triangular (30 degree), toggle with `T`
 
@@ -110,10 +262,14 @@ It's important to note that, despite the author's affiliation with NIST, this pr
 - **LaTeX toggle** (`Ctrl+L`): switch between fast MathText and publication-quality system LaTeX
 - **Export to PNG, SVG, and PDF** with granular scaling controls for nodes, edges, labels, and self-loops
 - **Export Python code** (`Ctrl+Shift+E`) for reproducing graphs programmatically
+- **Export Python code, grouped by style**: the same drawing with look-alike
+  nodes, edges, ports and wires factored into named style dicts plus lists of
+  geometry — shorter to read, one edit to restyle a whole family, and the
+  lists can be generated programmatically to build far larger graphs
 
 ### Settings & Customization
 
-- **Settings dialog** (`Ctrl+,`) with tabs for node defaults, edge defaults, self-loops, S-parameter plot styling, and export scaling
+- **Settings dialog** (`Ctrl+,`) with tabs for node defaults, edge defaults, self-loops, **port/line & wire defaults**, S-parameter plot styling, and export scaling. Wire colors and dash caps are read at draw time, so changing a default restyles every wire that has no override of its own
 - **Customizable keyboard shortcuts** with full rebinding support
 - **Persistent settings** stored in `~/.graphulator/settings.json`
 
@@ -198,6 +354,23 @@ graph.addnode(label='A', xy=(0, 0),
               selflooplabel=r'$\\Delta_A$',
               selfloopangle=180)
 ```
+
+Add schematic glyphs and wire them up — the same calls Graphulator's code
+export emits, so an exported script reproduces what was on the canvas:
+
+```python
+# a port (pentagon + lead) and a transmission line (cylinder, two stubs)
+graph.addport(label='P1', xy=(-10, 0), autoorient=True)
+graph.addtxline(label='TL1', xy=(0, -8), length=1.4, height=1.0)
+
+# wires: ('node', label_or_id), ('port', ...), ('txline', ..., 'x0'|'xL')
+graph.addwire(start=('port', 'P1'), end=('node', 'A'), label=r'\kappa')
+graph.addwire(start=('txline', 'TL1', 'x0'), end=('port', 'P1'))
+graph.addwire(start=('txline', 'TL1', 'xL'), end=('node', 'B'))
+```
+
+`autoorient=True` aims the port's lead at the centroid of everything it is
+wired to; pass an explicit `angle=` instead to fix it.
 
 ### Jupyter Notebooks
 

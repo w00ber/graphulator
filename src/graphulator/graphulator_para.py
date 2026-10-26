@@ -61,7 +61,11 @@ from sympy.functions.elementary.complexes import conjugate as Conjugate
 # Import modules (relative imports for package)
 from . import graph_primitives as gp
 from . import graphulator_para_config as config
-from .common_window import GraphWindowCommonMixin
+from . import code_export
+from .common_window import (GraphWindowCommonMixin,
+                            auto_increment_label,
+                            format_subscript_label,
+                            letters_to_number, number_to_letters)
 
 # Import refactored modules
 from .para_ui.widgets import (
@@ -72,6 +76,7 @@ from .para_ui.widgets import (
 from .para_features.sympy_utils import (
     CustomLaTeXPrinter, latex_custom, latex_matrix_factored, normalize_matrix_latex
 )
+from .para_features.explicit_ports import ExplicitPortsMixin
 from .para_rendering.latex_render import MatrixRenderWorker
 from .para_rendering.label_cache import LabelPathCache
 from .para_rendering.katex_templates import (
@@ -88,7 +93,8 @@ from .para_core.settings_manager import (
 )
 from .para_core.interaction_state import InteractionMode, PlacementMode
 from .para_core.graph_state import capture_graph_state
-from .autograph import GraphExtractor, GraphScatteringMatrix
+from .autograph import (GraphExtractor, GraphScatteringMatrix,
+                        compute_hub_bridge_links)
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +174,7 @@ SETTINGS_PARAMS = {
         ('DEFAULT_NODE_OUTLINE_WIDTH', 'Outline Width', 'float', 0.5, 5.0, 0.5),
         ('DEFAULT_NODE_OUTLINE_ALPHA', 'Outline Opacity', 'float', 0.0, 1.0, 0.1),
         # --- Edge settings ---
-        ('DEFAULT_EDGE_LINEWIDTH_MULT', 'Edge Line Width (×)', 'float', 0.5, 3.0, 0.25),
+        ('DEFAULT_EDGE_LINEWIDTH_MULT', 'Edge Line Width (×)', 'float', 0.25, 3.0, 0.05),
         # Note: Edge Style and Direction are auto-determined from node conjugation states
     ],
     'Conventions': [
@@ -217,6 +223,17 @@ SETTINGS_PARAMS = {
         ('SPARAMS_XLABEL_Y_OFFSET', 'X-Label Y Offset', 'float', -0.2, 0.1, 0.01),
         ('SPARAMS_PLOT_BACKGROUND_COLOR', 'Background Color', 'color', None, None, None),
         ('SPARAMS_PLOT_GRID_COLOR', 'Grid Color', 'color', None, None, None),
+        ('SPARAMS_MODE_MARKER_COLOR', 'Mode Marker Color', 'color', None, None, None),
+        ('SPARAMS_MODE_MARKER_STYLE', 'Mode Marker Style', 'dropdown',
+         [('Dashed', 'dashed'), ('Dotted', 'dotted'),
+          ('Dash-dot', 'dashdot'), ('Solid', 'solid')], None, None),
+        ('SPARAMS_MODE_MARKER_LINEWIDTH_SCALE', 'Mode Marker Width (x trace)',
+         'float', 0.1, 3.0, 0.1),
+        ('SPARAMS_MODE_MARKER_ALPHA', 'Mode Marker Opacity', 'float', 0.05, 1.0, 0.05),
+        ('SPARAMS_MODE_MARKER_CUTOFF_SCALE', 'Mode Marker Cutoff Width (x)',
+         'float', 1.0, 4.0, 0.1),
+        ('SPARAMS_MODE_MARKER_LABEL_SIZE', 'Mode Marker Label Size', 'float',
+         4.0, 16.0, 0.5),
     ],
     'Export Scaling': [
         ('GUI_SELFLOOP_LABEL_SCALE', 'GUI Self-loop Label Distance', 'float', 0.1, 5.0, 0.1),
@@ -230,12 +247,44 @@ SETTINGS_PARAMS = {
         ('EDGELWSCALE', 'Edge Linewidth Scale', 'float', 0.1, 5.0, 0.1),
         ('EDGELABELOFFSET', 'Edge Label Offset', 'float', 0.1, 3.0, 0.05),
     ],
+    # Defaults for the explicit-ports surface. Shown unconditionally: the
+    # settings outlive the session that EXPLICIT_PORTS_MODE was toggled in,
+    # and opening a .pgraph with ports auto-enables the mode anyway.
+    'Port & Wire Defaults': [
+        ('DEFAULT_PORT_MONITORED', 'New Ports Are Monitored (not loss hubs)',
+         'bool', None, None, None),
+        ('DEFAULT_PORT_AUTO_ORIENT', 'Auto-Orient New Ports', 'bool', None, None, None),
+        ('GLYPH_ROTATION_INCREMENT', 'Rotation Step (°)', 'int', 1, 90, 1),
+        ('DEFAULT_PORT_LINEWIDTH', 'Port Stroke Width', 'float', 0.25, 8.0, 0.25),
+        ('DEFAULT_PORT_COLOR', 'Port Stroke Color', 'color', None, None, None),
+        ('DEFAULT_PORT_FILL', 'Port Fill Color', 'color', None, None, None),
+        ('DEFAULT_PORT_APEX_DEPTH', 'Port Nose Depth (×R)', 'float', 0.0, 3.0, 0.05),
+        ('DEFAULT_PORT_LEAD_LENGTH', 'Port Lead Length (×R)', 'float', 0.0, 5.0, 0.1),
+        ('DEFAULT_LINE_LINEWIDTH', 'Line Stroke Width', 'float', 0.25, 8.0, 0.25),
+        ('DEFAULT_LINE_COLOR', 'Line Stroke Color', 'color', None, None, None),
+        ('DEFAULT_LINE_FILL', 'Line Fill Color', 'color', None, None, None),
+        ('DEFAULT_WIRE_COLOR', 'Wire Color (sign +)', 'color', None, None, None),
+        ('DEFAULT_WIRE_COLOR_INVERTED', 'Wire Color (sign −)', 'color', None, None, None),
+        ('DEFAULT_WIRE_COLOR_TAP', 'Tap Wire Color', 'color', None, None, None),
+        ('DEFAULT_WIRE_LINEWIDTH_MULT', 'Wire Width (×)', 'float', 0.2, 5.0, 0.05),
+        ('DEFAULT_WIRE_ROUND_CAPS', 'Rounded Wire Dash Caps', 'bool', None, None, None),
+        ('DEFAULT_ATTACHMENT_RATE', 'Port Attachment Rate [mau]', 'float', 0.0, 1e5, 10.0),
+        ('DEFAULT_TAP_RATE', 'Line Tap Rate [mau]', 'float', 0.0, 1e5, 10.0),
+    ],
     'Interface': [
         ('SHOW_SHORTCUT_OVERLAY', 'Show Shortcut Hints', 'bool', None, None, None),
         ('SHORTCUT_OVERLAY_CORNER', 'Hints Corner', 'dropdown',
          [('Top Left', 'top-left'), ('Top Right', 'top-right'),
           ('Bottom Left', 'bottom-left'), ('Bottom Right', 'bottom-right')], None, None),
         ('SHORTCUT_OVERLAY_SHOW_ALL', 'Show All Shortcuts (not just essentials)', 'bool', None, None, None),
+    ],
+    # Features that change the physics model and are still being validated.
+    # Kept apart from Interface so nobody mistakes them for cosmetics.
+    'Experimental': [
+        ('EXPLICIT_PORTS_MODE',
+         'Explicit Ports & Lines (hub dissipation, transmission lines) '
+         '\u2014 EXPERIMENTAL!!! Use at your own risk',
+         'bool', None, None, None),
     ],
 }
 
@@ -255,6 +304,14 @@ LIVE_PARAMS = (
     'SHOW_SHORTCUT_OVERLAY',   # toggling/corner/detail apply to the overlay immediately
     'SHORTCUT_OVERLAY_CORNER',
     'SHORTCUT_OVERLAY_SHOW_ALL',
+    # Wires store no color until one is picked, so the default is resolved
+    # at draw time and restyles every unoverridden wire as it changes.
+    'DEFAULT_WIRE_COLOR',
+    'DEFAULT_WIRE_COLOR_INVERTED',
+    'DEFAULT_WIRE_COLOR_TAP',
+    'DEFAULT_WIRE_ROUND_CAPS',
+    'DEFAULT_PORT_APEX_DEPTH',   # fixed geometry, read when the port draws
+    'DEFAULT_PORT_LEAD_LENGTH',
 )
 
 
@@ -321,6 +378,11 @@ class PropertiesPanel(QWidget):
         self.graphulator = parent
         self.current_object = None  # Currently displayed object (node or edge)
         self.current_type = None  # 'node', 'edge', or None
+        # Selection signature whose multi-edit widgets are currently built.
+        # Rebuilding destroys and recreates the fields, which kicks focus out
+        # mid-edit -- and a multi-edit field writes on every change, so the
+        # rebuild would fire on the first keystroke.
+        self.displayed_multi = None
         self._matrix_render_worker = None  # Worker thread for async matrix rendering
 
         # Debounce timer for scattering parameter updates
@@ -1144,6 +1206,64 @@ class PropertiesPanel(QWidget):
 
         assignment_splitter.addWidget(nodes_frame)
 
+        # --- Ports & Lines: the third parameter set, spanning the FULL width
+        # under Nodes | Edges (its rows are wide: a line's five physics
+        # spinboxes, a pump's four). Only visible in Explicit Ports mode.
+        self.ports_frame = QFrame()
+        self.ports_frame.setFrameStyle(QFrame.Shape.StyledPanel)
+        ports_layout = QVBoxLayout()
+        self.ports_frame.setLayout(ports_layout)
+
+        ports_title_row = QHBoxLayout()
+        ports_title = QLabel("Ports && Lines")
+        ports_title.setStyleSheet("font-weight: bold;")
+        ports_title_row.addWidget(ports_title)
+        ports_title_row.addStretch()
+        # comb tail closure toggle: the modes beyond f_max still load the
+        # port; closing them analytically makes the port loading exact at
+        # any N (autograph "COMB TAIL CLOSURE"). Off = the raw truncated comb.
+        self.tail_closure_check = QCheckBox("close comb tail analytically")
+        self.tail_closure_check.setChecked(True)
+        self.tail_closure_check.setToolTip(
+            "A line's comb is truncated at f_max, but the modes beyond it "
+            "still load the port: a reactive tail ~ 2\u03b3f/(FSR\u00b2N) "
+            "that shifts every resonance and converges only as 1/N. "
+            "Checked, that tail is folded back into the port channel in "
+            "closed form (exact for the port loading at ANY N; what remains "
+            "is the tail modes' own pump/tap couplings, second order). "
+            "Unchecked, you see the raw truncated comb.")
+        self.tail_closure_check.toggled.connect(self._on_tail_closure_toggled)
+        ports_title_row.addWidget(self.tail_closure_check)
+        self.truncation_check_button = QPushButton("Check truncation (2\u00d7 f_max)")
+        self.truncation_check_button.setToolTip(
+            "Re-solve every component with all lines' f_max doubled and "
+            "report the largest change of each displayed S trace over the "
+            "current window. The honest way to know whether N is enough for "
+            "THIS graph -- including the pump/tap couplings the analytic "
+            "closure does not carry.")
+        self.truncation_check_button.clicked.connect(self._check_truncation)
+        ports_title_row.addWidget(self.truncation_check_button)
+        ports_layout.addLayout(ports_title_row)
+
+        self.ports_scroll = QScrollArea()
+        self.ports_scroll.setWidgetResizable(True)
+        self.ports_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.ports_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.ports_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        self.ports_param_widget = QWidget()
+        self.ports_param_layout = QGridLayout()
+        self.ports_param_layout.setContentsMargins(5, 5, 5, 5)
+        self.ports_param_layout.setHorizontalSpacing(8)
+        self.ports_param_layout.setVerticalSpacing(8)
+        self.ports_param_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.ports_param_widget.setLayout(self.ports_param_layout)
+        self.ports_scroll.setWidget(self.ports_param_widget)
+        ports_layout.addWidget(self.ports_scroll)
+
+        # Hidden until Explicit Ports mode is on and scattering mode active
+        self.ports_frame.setVisible(False)
+
         # --- RIGHT: Edges Section ---
         edges_frame = QFrame()
         edges_frame.setFrameStyle(QFrame.Shape.StyledPanel)
@@ -1201,7 +1321,13 @@ class PropertiesPanel(QWidget):
         # Set initial splitter sizes (66/34 split - nodes get more space)
         assignment_splitter.setSizes([200, 300])
 
-        scattering_layout.addWidget(assignment_splitter, stretch=1)
+        # Nodes | Edges on top, Ports & Lines full-width below
+        params_splitter = QSplitter(Qt.Orientation.Vertical)
+        params_splitter.addWidget(assignment_splitter)
+        params_splitter.addWidget(self.ports_frame)
+        params_splitter.setStretchFactor(0, 2)
+        params_splitter.setStretchFactor(1, 1)
+        scattering_layout.addWidget(params_splitter, stretch=1)
 
         # Add tab and store index for later show/hide
         self.scattering_tab_index = self.tabs.addTab(scattering_tab, "Scattering")
@@ -3324,8 +3450,8 @@ class PropertiesPanel(QWidget):
 
         # Linewidth
         self.linewidth_combo = QComboBox()
-        self.linewidth_combo.addItems(['Thin', 'Medium', 'Thick', 'X-Thick'])
-        lw_map = {1.0: 'Thin', 1.5: 'Medium', 2.0: 'Thick', 2.5: 'X-Thick'}
+        self.linewidth_combo.addItems(list(config.EDGE_LINEWIDTH_OPTIONS))
+        lw_map = {v: k for k, v in config.EDGE_LINEWIDTH_OPTIONS.items()}
         current_lw = edge.get('linewidth_mult', 1.5)
         closest_lw = min(lw_map.keys(), key=lambda k: abs(k - current_lw))
         self.linewidth_combo.setCurrentText(lw_map[closest_lw])
@@ -3382,11 +3508,1218 @@ class PropertiesPanel(QWidget):
 
         self.properties_layout.addLayout(form)
 
+    # ---- Explicit Ports: wire (connection) properties ----
+
+    def _add_wire_appearance_rows(self, form, conn, default_color):
+        """Line width / color / label rows — edge-panel parity for wires."""
+        g = self.graphulator
+
+        width_combo = QComboBox()
+        names = list(config.EDGE_LINEWIDTH_OPTIONS.keys())
+        width_combo.addItems(names)
+        current = float(conn.get(
+            'linewidth_mult',
+            getattr(config, 'DEFAULT_WIRE_LINEWIDTH_MULT', 1.25)))
+        closest = min(config.EDGE_LINEWIDTH_OPTIONS.items(),
+                      key=lambda kv: abs(kv[1] - current))[0]
+        width_combo.setCurrentText(closest)
+        width_combo.currentTextChanged.connect(
+            lambda name: (conn.__setitem__(
+                'linewidth_mult', config.EDGE_LINEWIDTH_OPTIONS[name]),
+                g._update_plot()))
+        form.addRow("Line Width:", width_combo)
+
+        from PySide6.QtWidgets import QColorDialog
+        color_btn = QPushButton()
+        color_btn.setFixedSize(46, 22)
+
+        def paint(name):
+            color_btn.setStyleSheet(
+                f"background-color: {name}; border: 1px solid #888;")
+
+        def pick():
+            col = QColorDialog.getColor(
+                QColor(conn.get('color') or default_color), g)
+            if col.isValid():
+                g._save_state()
+                conn['color'] = col.name()
+                paint(col.name())
+                g._update_plot()
+
+        color_btn.clicked.connect(pick)
+        paint(conn.get('color') or default_color)
+
+        reset = QPushButton("Default")
+        reset.setToolTip("Drop the per-wire color override.")
+
+        def reset_color():
+            g._save_state()
+            conn.pop('color', None)
+            paint(default_color)
+            g._update_plot()
+
+        reset.clicked.connect(reset_color)
+        color_row = QHBoxLayout()
+        color_row.addWidget(color_btn)
+        color_row.addWidget(reset)
+        color_row.addStretch()
+        form.addRow("Color:", color_row)
+
+        label_edit = QLineEdit(conn.get('label', ''))
+        label_edit.setPlaceholderText("(none)")
+        label_edit.textChanged.connect(
+            lambda text: (conn.__setitem__('label', text.strip()),
+                          g._update_plot()))
+        form.addRow("Label:", label_edit)
+
+        label_size = QDoubleSpinBox()
+        label_size.setRange(0.2, 5.0)
+        label_size.setDecimals(2)
+        label_size.setSingleStep(0.1)
+        label_size.setValue(float(conn.get('label_size_mult', 1.0)))
+        label_size.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        label_size.valueChanged.connect(
+            lambda v: (conn.__setitem__('label_size_mult', float(v)),
+                       g._update_plot()))
+        form.addRow("Label Size:", label_size)
+
+    def _wire_rate_row(self, form, conn, key, label, tooltip, scale=1000.0):
+        """Rate spinbox in milli-arb units, writing straight to the wire."""
+        g = self.graphulator
+        box = FineControlSpinBox()
+        box.setRange(config.B_EXT_SPINBOX_MIN, config.B_EXT_SPINBOX_MAX)
+        box.setDecimals(config.B_EXT_SPINBOX_DECIMALS)
+        box.setSingleStep(config.B_EXT_SPINBOX_STEP)
+        box.setValue(float(conn.get(key, 0.0)) * scale)
+        box.setToolTip(tooltip)
+        box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        box.valueChanged.connect(
+            lambda v: (conn.__setitem__(key, float(v) / scale),
+                       g._invalidate_scattering_data(),
+                       g._schedule_scattering_update()
+                       if hasattr(g, '_schedule_scattering_update') else None,
+                       g._update_plot()))
+        form.addRow(label, box)
+        return box
+
+    def _wire_sign_row(self, form, conn):
+        g = self.graphulator
+        combo = QComboBox()
+        combo.addItem("+  (0\N{DEGREE SIGN})", 1)
+        combo.addItem("\N{MINUS SIGN}  (180\N{DEGREE SIGN})", -1)
+        combo.setCurrentIndex(0 if conn.get('sign', 1) >= 0 else 1)
+        combo.setToolTip(
+            "Sign of the coupling amplitude. Phase-1 allows 0\N{DEGREE SIGN} "
+            "/ 180\N{DEGREE SIGN} only; complex weights await the M_pumped "
+            "derivation.")
+        combo.currentIndexChanged.connect(
+            lambda _i: (conn.__setitem__('sign', combo.currentData()),
+                        g._invalidate_scattering_data(),
+                        g._update_plot()))
+        form.addRow("Sign:", combo)
+
+    def show_attachment_properties(self, port, att):
+        """Properties for one port-to-mode wire."""
+        self.clear_properties()
+        self.current_object = att
+        self.current_type = 'attachment'
+        g = self.graphulator
+        node = next((n for n in g.nodes
+                     if n['node_id'] == att['node_id']), None)
+        node_label = node['label'] if node else str(att['node_id'])
+        self.title_label.setText(
+            f"Wire: {port['label']} \N{RIGHTWARDS ARROW} {node_label}")
+
+        form = QFormLayout()
+        self._wire_rate_row(
+            form, att, 'rate', "Rate [mau]:",
+            "External coupling rate of this mode to the port's channel "
+            "[milli-arb. units].")
+        self._wire_sign_row(form, att)
+        self._add_wire_appearance_rows(
+            form, att, g.wire_default_color('port', att.get('sign', 1)))
+        self.properties_layout.addLayout(form)
+
+        info = QLabel(
+            "Dissipative coupling: this mode radiates into the port's "
+            "channel. Rates and signs also appear in the Ports & Lines "
+            "panel.")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666; font-style: italic;")
+        self.properties_layout.addWidget(info)
+        self.properties_layout.addStretch()
+
+    def show_tap_properties(self, line, end, conn):
+        """Properties for one node-tap wire onto a line end."""
+        from .para_features.explicit_ports import (LineResonator,
+                                                   line_payload)
+        self.clear_properties()
+        self.current_object = conn
+        self.current_type = 'tap'
+        g = self.graphulator
+        node = next((n for n in g.nodes
+                     if n['node_id'] == conn['node_id']), None)
+        node_label = node['label'] if node else str(conn['node_id'])
+        self.title_label.setText(
+            f"Tap: {node_label} \N{RIGHTWARDS ARROW} {line['label']} @{end}")
+
+        coupling = (line.get('end_coupling')
+                    or {}).get(end, 'capacitive')
+        form = QFormLayout()
+        self._wire_rate_row(
+            form, conn, 'rate', "Rate @ n_ref [mau]:",
+            "Conservative coupling rate AT the reference harmonic "
+            "[milli-arb. units]; the other comb modes follow the verified "
+            f"{coupling} profile.")
+
+        n_ref = FineControlSpinBox()
+        n_ref.setDecimals(0)
+        try:
+            n_max = LineResonator(**line_payload(line)).N
+        except ValueError:
+            n_max = 1
+        n_ref.setRange(1, n_max)
+        n_ref.setSingleStep(1)
+        n_ref.setPrefix("n=")
+        n_ref.setValue(int(conn.get('n_ref', 1)))
+        n_ref.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        n_ref.setToolTip(
+            f"Reference harmonic the rate is defined at (1..{n_max}).")
+        n_ref.valueChanged.connect(
+            lambda v: (conn.__setitem__('n_ref', int(v)),
+                       g._invalidate_scattering_data(),
+                       g._update_plot()))
+        form.addRow("Reference harmonic:", n_ref)
+
+        self._wire_sign_row(form, conn)
+        self._add_wire_appearance_rows(form, conn,
+                                       g.wire_default_color('tap'))
+        self.properties_layout.addLayout(form)
+
+        info = QLabel(
+            f"Conservative {coupling} tap: one wire stands for the coupling "
+            "to every comb mode. The coupling type belongs to the line END "
+            "(set it in the line's properties).")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666; font-style: italic;")
+        self.properties_layout.addWidget(info)
+        self.properties_layout.addStretch()
+
+    def show_pump_properties(self, line):
+        """Properties of a line's pumped termination (the pump bus)."""
+        from .para_features.explicit_ports import (PUMP_BUS_COLOR,
+                                                   PUMP_COUPLINGS)
+        self.clear_properties()
+        pump = line['pump']
+        self.current_object = pump
+        self.current_type = 'pump'
+        g = self.graphulator
+        twin = g.line_twin(line)
+        twin_label = twin['label'] if twin else '?'
+        self.title_label.setText(
+            f"Pump bus: {line['label']} \N{LEFT RIGHT ARROW} {twin_label}")
+        resonator = g.line_resonator_for(line)
+
+        form = QFormLayout()
+        end_combo = QComboBox()
+        end_combo.addItem("x0", 'x0')
+        end_combo.addItem("xL", 'xL')
+        end_combo.setCurrentIndex(0 if pump.get('end') == 'x0' else 1)
+
+        def set_end(_i):
+            g._save_state()
+            pump['end'] = end_combo.currentData()
+            g._invalidate_scattering_data()
+            g._update_plot()
+
+        end_combo.currentIndexChanged.connect(set_end)
+        form.addRow("Pumped end:", end_combo)
+
+        def spin(key, lo, hi, decimals, step, tooltip, scale=1.0,
+                 suffix=None, refresh=None):
+            box = QDoubleSpinBox()
+            box.setRange(lo, hi)
+            box.setDecimals(decimals)
+            box.setSingleStep(step)
+            box.setValue(float(pump.get(key, 0.0)) * scale)
+            box.setToolTip(tooltip)
+            if suffix:
+                box.setSuffix(suffix)
+            box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+            def apply(value):
+                pump[key] = float(value) / scale
+                if refresh:
+                    refresh()
+                g._invalidate_scattering_data()
+                g._update_plot()
+
+            box.valueChanged.connect(apply)
+            return box
+
+        partner = QLabel()
+        partner.setStyleSheet("color: #666; font-style: italic;")
+
+        def refresh_partner():
+            # re-read the resonator: an end load (edited on the line's own
+            # page) moves every mode frequency this line depends on
+            partner.setText(g.pump_pair_description(line))
+
+        form.addRow("Pump frequency f_p:", spin(
+            'f_p', 1e-9, 1e9, 4, 0.1,
+            "Pump frequency [a.u.]: amplifies every pair with f_n + f_m = f_p "
+            "and converts every pair with |f_n - f_m| = f_p.",
+            refresh=lambda: (refresh_partner(), refresh_modulation())))
+
+        nref = FineControlSpinBox()
+        nref.setDecimals(0)
+        nref.setRange(1, resonator.N)
+        nref.setSingleStep(1)
+        nref.setPrefix("n=")
+        nref.setValue(int(pump.get('n_ref', 1)))
+        nref.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        from .para_features.explicit_ports import PUMP_NREF_TOOLTIP
+        nref.setToolTip(PUMP_NREF_TOOLTIP)
+        partner.setToolTip(PUMP_NREF_TOOLTIP)
+
+        def set_nref(v):
+            pump['n_ref'] = int(v)
+            refresh_partner()
+            refresh_modulation()
+            g._invalidate_scattering_data()
+            g._update_plot()
+
+        nref.valueChanged.connect(set_nref)
+        nref_row = QHBoxLayout()
+        nref_row.addWidget(nref)
+        nref_row.addWidget(partner)
+        form.addRow("Reference harmonic:", nref_row)
+        refresh_partner()
+
+        modulation = QLabel()
+        modulation.setStyleSheet("color: #666;")
+
+        def refresh_modulation():
+            try:
+                alpha, over = g.pump_alpha(line)
+                eps, symbol = g.pump_modulation_fraction(line)
+                modulation.setText(
+                    (f"\u26a0 \N{GREEK SMALL LETTER ALPHA} = {alpha:.4g} "
+                     f"\u2265 1 \u2014 unphysical  ({symbol} = {eps*100:.4g}%)")
+                    if over else
+                    (f"\N{GREEK SMALL LETTER ALPHA} = {alpha:.4g}"
+                     f"   ({symbol} = {eps * 100:.4g}%)"))
+                modulation.setStyleSheet(
+                    "color: #8b0000; font-weight: bold;" if over
+                    else "color: #666;")
+            except (ValueError, RuntimeError):
+                pass
+
+        form.addRow("Rate @ (n, m) [mau]:", spin(
+            'rate', 0.0, 1e6, 3, 1.0,
+            "Parametric coupling between harmonic n of the line and its "
+            "idler partner m in the twin [milli-arb. units]; other pairs "
+            "follow the verified profile.", scale=1000.0,
+            refresh=refresh_modulation))
+        from .para_features.explicit_ports import PUMP_ALPHA_TOOLTIP
+        modulation.setToolTip(PUMP_ALPHA_TOOLTIP)
+        mod_label = QLabel("Pump strength \N{GREEK SMALL LETTER ALPHA}:")
+        mod_label.setToolTip(PUMP_ALPHA_TOOLTIP)
+        form.addRow(mod_label, modulation)
+        refresh_modulation()
+        form.addRow("Pump phase:", spin(
+            'phase', -360.0, 360.0, 1, 15.0, "Pump phase [degrees].",
+            suffix="\N{DEGREE SIGN}"))
+
+        coupling = QComboBox()
+        coupling.addItem("modulated inductor (g_n \N{PROPORTIONAL TO} 1/\N{SQUARE ROOT}n)",
+                         'inductive')
+        coupling.addItem("modulated capacitor (g_n \N{PROPORTIONAL TO} \N{SQUARE ROOT}n)",
+                         'capacitive')
+        coupling.setCurrentIndex(
+            0 if pump.get('coupling', 'inductive') == 'inductive' else 1)
+
+        def set_coupling(_i):
+            g._save_state()
+            pump['coupling'] = coupling.currentData()
+            g._invalidate_scattering_data()
+            g._update_plot()
+
+        coupling.currentIndexChanged.connect(set_coupling)
+        form.addRow("Element:", coupling)
+
+        self._add_wire_appearance_rows(form, pump, PUMP_BUS_COLOR)
+        self.properties_layout.addLayout(form)
+
+        text = ("One rank-one parametric block between the comb and its "
+                "conjugate twin (docs/pumped_line_termination.md): "
+                "amplification AND conversion pairs, all from this pump \u2014 "
+                "on a harmonic comb they come together, which is why the bus "
+                "draws three strokes rather than claiming one or the other. "
+                "The DC comb mode is excluded, as for taps.")
+        load = line.get('load')
+        if load:
+            text += (f"\n\nThis element is also the line's end load "
+                     f"({load['type']}, f_Z = {load['f_Z']:g}), so the comb "
+                     f"above is the dispersed one: modes at "
+                     + ", ".join(f"{f:g}" for f in resonator.mode_freqs()[:5])
+                     + ("\u2026" if resonator.N > 5 else "") + ".")
+        else:
+            text += ("\n\nThe line has no end load, so the comb is still "
+                     "open\u2013open: the termination's own dispersion is "
+                     "ignored. Set one on " + line['label'] + "'s page (or "
+                     "in the pump dialog) to use the loaded basis.")
+        gaps = g.pump_truncation_gaps(line)
+        if gaps:
+            text += ("\n\nf_max is too small for this pump: the "
+                     + " and ".join(sorted(gaps))
+                     + " partners fall beyond the last comb harmonic, so "
+                       "they are missing from the model though not from the "
+                       "line. Raise f_max on " + line['label'] + ".")
+        info = QLabel(text)
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666; font-style: italic;")
+        self.properties_layout.addWidget(info)
+        self.properties_layout.addStretch()
+
+    # ---- Explicit Ports: port / transmission-line glyph properties ----
+
+    def _glyph_color_button(self, glyph, key, default):
+        """Swatch button writing `key` on the glyph, live-applied."""
+        from PySide6.QtWidgets import QColorDialog
+        btn = QPushButton()
+        btn.setFixedSize(46, 22)
+
+        def paint(name):
+            btn.setStyleSheet(
+                f"background-color: {name}; border: 1px solid #888;")
+
+        def pick():
+            col = QColorDialog.getColor(QColor(glyph.get(key, default)),
+                                        self.graphulator)
+            if col.isValid():
+                self.graphulator._save_state()
+                glyph[key] = col.name()
+                paint(col.name())
+                self.graphulator._update_plot()
+
+        btn.clicked.connect(pick)
+        paint(glyph.get(key, default))
+        return btn
+
+    def _glyph_mult_spin(self, glyph, key, tooltip, on_change=None):
+        from .para_features.explicit_ports import (GLYPH_SIZE_MIN,
+                                                   GLYPH_SIZE_MAX)
+        box = QDoubleSpinBox()
+        box.setRange(GLYPH_SIZE_MIN, GLYPH_SIZE_MAX)
+        box.setDecimals(2)
+        box.setSingleStep(0.1)
+        box.setValue(float(glyph.get(key, 1.0)))
+        box.setToolTip(tooltip)
+        box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+        def apply(value):
+            glyph[key] = float(value)
+            if on_change is not None:
+                on_change()
+            self.graphulator._update_plot()
+
+        box.valueChanged.connect(apply)
+        return box
+
+    def _add_glyph_appearance_rows(self, form, glyph, default_lw, default_fill):
+        """Length / height / stroke / colors, shared by both glyph types."""
+        is_port = 'port_id' in glyph
+
+        def drop_autosize():
+            # a manual length edit takes over from label autosizing
+            if is_port:
+                glyph['autosize'] = False
+
+        form.addRow("Length \N{MULTIPLICATION SIGN}:", self._glyph_mult_spin(
+            glyph, 'w_mult',
+            "Stretch the glyph length (\N{LEFTWARDS ARROW}/"
+            "\N{RIGHTWARDS ARROW} when selected)", drop_autosize))
+        form.addRow("Height \N{MULTIPLICATION SIGN}:", self._glyph_mult_spin(
+            glyph, 'h_mult',
+            "Stretch the glyph height (\N{UPWARDS ARROW}/"
+            "\N{DOWNWARDS ARROW} when selected)"))
+
+        lw = QDoubleSpinBox()
+        lw.setRange(0.25, 8.0)
+        lw.setDecimals(2)
+        lw.setSingleStep(0.25)
+        lw.setValue(float(glyph.get('linewidth', default_lw)))
+        lw.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        lw.valueChanged.connect(
+            lambda v: (glyph.__setitem__('linewidth', float(v)),
+                       self.graphulator._update_plot()))
+        form.addRow("Stroke width:", lw)
+        form.addRow("Stroke color:",
+                    self._glyph_color_button(glyph, 'color', 'black'))
+        form.addRow("Fill color:",
+                    self._glyph_color_button(glyph, 'fill', default_fill))
+
+    def show_port_properties(self, port):
+        """Editable properties for a selected port / loss-hub glyph."""
+        from .para_features.explicit_ports import PORT_LINEWIDTH
+        self.clear_properties()
+        self.current_object = port
+        self.current_type = 'port'
+        kind = "Port" if port.get('monitored', True) else "Loss hub"
+        self.title_label.setText(f"{kind}: {port['label']}")
+        g = self.graphulator
+
+        form = QFormLayout()
+        label_edit = QLineEdit(port['label'])
+
+        def set_label(text):
+            port['label'] = text.strip() or port['label']
+            self.title_label.setText(f"{kind}: {port['label']}")
+            g._invalidate_scattering_data()
+            g._update_plot()
+
+        label_edit.textChanged.connect(set_label)
+        form.addRow("Label:", label_edit)
+
+        monitored = QCheckBox("Monitored (scattering port)")
+        monitored.setChecked(bool(port.get('monitored', True)))
+        monitored.setToolTip(
+            "Checked: a port \N{EM DASH} its damping appears in M and it is "
+            "a channel of S.\nUnchecked: a loss hub \N{EM DASH} same "
+            "damping, no channel.")
+
+        def set_monitored(state):
+            g._save_state()
+            port['monitored'] = monitored.isChecked()
+            g._invalidate_scattering_data()
+            g._update_plot()
+
+        monitored.stateChanged.connect(set_monitored)
+        form.addRow(monitored)
+
+        auto = QCheckBox("Auto-orient toward attached group")
+        auto.setChecked(not port.get('angle_pinned', False))
+        auto.setToolTip(
+            "Checked: the lead points at the center of the attached nodes "
+            "and line ends.\nUnchecked: rotation is fixed "
+            "(Ctrl+U / Ctrl+I, or the right-click menu).")
+
+        def set_auto(state):
+            g._save_state()
+            g._apply_port_style(port, {'auto_orient': auto.isChecked()})
+            g._update_plot()
+
+        auto.stateChanged.connect(set_auto)
+        form.addRow(auto)
+
+        autosize = QCheckBox("Auto-size length to label")
+        autosize.setChecked(bool(port.get('autosize', True)))
+        autosize.setToolTip(
+            "Grow the body so the label always fits inside it. Stretching "
+            "the length by hand turns this off.")
+        autosize.stateChanged.connect(
+            lambda _s: (port.__setitem__('autosize', autosize.isChecked()),
+                        g._update_plot()))
+        form.addRow(autosize)
+
+        self._add_glyph_appearance_rows(form, port, PORT_LINEWIDTH, 'white')
+        self.properties_layout.addLayout(form)
+
+        n_att = len(port.get('attachments', []))
+        info = QLabel(
+            f"{n_att} attachment(s). Rates and signs live in the "
+            "Ports & Lines panel (scattering mode); rewire with the edge "
+            "tool (E).")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666; font-style: italic;")
+        self.properties_layout.addWidget(info)
+        self.properties_layout.addStretch()
+
+    def show_line_properties(self, line):
+        """Editable properties for a selected transmission-line glyph."""
+        from .para_features.explicit_ports import (LINE_LINEWIDTH,
+                                                   LineResonator,
+                                                   line_payload, ALPHA_TOOLTIP,
+                                                   LineInputDialog)
+        from .autograph import line_fsr_for_target_general
+        self.clear_properties()
+        self.current_object = line
+        self.current_type = 'line'
+        self.title_label.setText(f"Transmission line: {line['label']}")
+        g = self.graphulator
+
+        form = QFormLayout()
+        primary = g.line_primary(line)
+        if primary is not None:
+            # a conjugate twin is the SAME physical line seen in the idler
+            # sector: label and physics come from the primary
+            self.title_label.setText(f"Conjugate twin: {line['label']}")
+            note = QLabel(
+                f"Linked to {primary['label']}: label and physics "
+                "(FSR, Ztx, f_max, Z0, \N{GREEK SMALL LETTER ALPHA}, tap "
+                "coupling) are mirrored from it \N{EM DASH} edit them there. "
+                "Position, rotation and appearance are this glyph's own.")
+            note.setWordWrap(True)
+            note.setStyleSheet("color: #666; font-style: italic;")
+            form.addRow(note)
+            self._add_glyph_appearance_rows(form, line, LINE_LINEWIDTH, 'white')
+            self.properties_layout.addLayout(form)
+            self.properties_layout.addStretch()
+            return
+
+        label_edit = QLineEdit(line['label'])
+
+        def set_label(text):
+            line['label'] = text.strip() or line['label']
+            self.title_label.setText(f"Transmission line: {line['label']}")
+            g._sync_all_twins()
+            g._invalidate_scattering_data()
+            g._update_plot()
+
+        label_edit.textChanged.connect(set_label)
+        form.addRow("Label:", label_edit)
+
+        def physics_spin(key, lo, hi, decimals, step, tooltip):
+            box = QDoubleSpinBox()
+            box.setRange(lo, hi)
+            box.setDecimals(decimals)
+            box.setSingleStep(step)
+            box.setValue(float(line.get(key, 0.0)))
+            box.setToolTip(tooltip)
+            box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+            def apply(value):
+                # validate through the numerics schema before committing, so
+                # an invalid combination can never poison the live glyph
+                candidate = dict(line)
+                candidate[key] = float(value)
+                try:
+                    LineResonator(**line_payload(candidate))
+                except ValueError:
+                    return
+                line[key] = float(value)
+                g._sync_all_twins()
+                g._invalidate_scattering_data()
+                g._update_plot()
+
+            box.valueChanged.connect(apply)
+            return box
+
+        form.addRow("FSR [au]:", physics_spin(
+            'FSR', 1e-9, 1e9, 4, 0.1,
+            "Free spectral range [a.u.] (comb mode spacing)"))
+        form.addRow("Ztx [\N{GREEK CAPITAL LETTER OMEGA}]:", physics_spin(
+            'Ztx', 1e-6, 1e6, 2, 1.0, "Line characteristic impedance"))
+        form.addRow("f_max [au]:", physics_spin(
+            'f_max', 1e-9, 1e12, 4, 1.0,
+            "Comb extent: N = ceil(f_max/FSR) mode pairs from DC"))
+        form.addRow("Z0 [\N{GREEK CAPITAL LETTER OMEGA}]:", physics_spin(
+            'Z0_port', 1e-6, 1e6, 2, 1.0, "Port termination impedance"))
+        form.addRow("\N{GREEK SMALL LETTER ALPHA} [Np]:", physics_spin(
+            'alpha_uniform', 0.0, 100.0, 6, 0.001, ALPHA_TOOLTIP))
+
+        couplings = (line.get('end_coupling')
+                     or {'x0': 'capacitive', 'xL': 'capacitive'})
+        for end in ('x0', 'xL'):
+            combo = QComboBox()
+            combo.addItem("capacitive  (g_n \N{PROPORTIONAL TO} \N{SQUARE ROOT}n)",
+                          'capacitive')
+            combo.addItem("inductive  (g_n \N{PROPORTIONAL TO} 1/\N{SQUARE ROOT}n)",
+                          'inductive')
+            combo.setCurrentIndex(
+                0 if couplings.get(end, 'capacitive') == 'capacitive' else 1)
+            combo.setToolTip(
+                "Coupling type of a mode tapped at this end \N{EM DASH} a "
+                "property of the physical tap point, shared by everything "
+                "attached there.")
+
+            def set_coupling(_idx, e=end, c=combo):
+                g._save_state()
+                line.setdefault('end_coupling', {})[e] = c.currentData()
+                g._invalidate_scattering_data()
+                g._update_plot()
+
+            combo.currentIndexChanged.connect(set_coupling)
+            form.addRow(f"Tap coupling @ {end}:", combo)
+
+        # ---- end load: a shunt reactance at ONE end (docs sec. 7) ----
+        load = line.get('load')
+        load_combo = QComboBox()
+        for i, (text, value) in enumerate(LineInputDialog.LOAD_CHOICES):
+            load_combo.addItem(text, value)
+            if value is not None and value[1] != 'inductive':
+                item = load_combo.model().item(i)
+                item.setEnabled(False)
+                item.setToolTip(
+                    "Refused: the capacitive comb's S11 plateaus with mode "
+                    "count instead of converging, so a direct non-resonant "
+                    "term is missing. See docs sec. 7.5.")
+        if load:
+            want = (load.get('end'), load.get('type'))
+            load_combo.setCurrentIndex(next(
+                (i for i, (_, v) in enumerate(LineInputDialog.LOAD_CHOICES)
+                 if v == want), 0))
+        load_combo.setToolTip(LineInputDialog.LOAD_TOOLTIP)
+        load_combo.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        form.addRow("End load:", load_combo)
+
+        fz_spin = QDoubleSpinBox()
+        fz_spin.setRange(1e-9, 1e12)
+        fz_spin.setDecimals(6)
+        fz_spin.setSingleStep(0.1)
+        fz_spin.setValue(float((load or {}).get('f_Z', 1.0)))
+        fz_spin.setToolTip(LineInputDialog.FZ_TOOLTIP)
+        fz_spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        fz_label = QLabel("f_Z [au]:")
+        fz_label.setToolTip(LineInputDialog.FZ_TOOLTIP)
+        form.addRow(fz_label, fz_spin)
+
+        target_spin = QDoubleSpinBox()
+        target_spin.setRange(1e-9, 1e12)
+        target_spin.setDecimals(4)
+        target_spin.setSingleStep(0.1)
+        target_spin.setValue(float(line.get('FSR', 1.0)))
+        target_spin.setToolTip("Where the chosen LOADED mode should land.")
+        target_spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        target_mode = QSpinBox()
+        target_mode.setRange(1, 999)
+        target_mode.setValue(1)
+        target_mode.setPrefix("mode ")
+        target_mode.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        solve_btn = QPushButton("Set FSR")
+        solve_btn.setToolTip(
+            "FSR = \u03c0 f / (arccot(x(f)) + (n\u22121)\u03c0) \u2014 the "
+            "resonance condition evaluated AT the target, so the loaded mode "
+            "lands where you asked without iterating on FSR.")
+        solve_row = QHBoxLayout()
+        for w in (target_spin, target_mode, solve_btn):
+            solve_row.addWidget(w)
+        form.addRow("Target resonance:", solve_row)
+
+        load_info = QLabel("")
+        load_info.setWordWrap(True)
+        load_info.setStyleSheet("color: #666; font-style: italic;")
+        form.addRow("", load_info)
+
+        def current_load():
+            value = load_combo.currentData()
+            if value is None:
+                return None
+            end, kind = value
+            return {'end': end, 'type': kind, 'f_Z': float(fz_spin.value())}
+
+        def refresh_load(*_a):
+            chosen = current_load()
+            for w in (fz_spin, target_spin, target_mode, solve_btn):
+                w.setEnabled(chosen is not None)
+            if chosen is None:
+                load_info.setText(
+                    "Open\u2013open comb: modes at n\u00b7FSR, \u03b3 the "
+                    "same for every mode.")
+                return
+            try:
+                res = LineResonator(**line_payload(line))
+            except ValueError as exc:
+                load_info.setText(str(exc))
+                return
+            shown = ", ".join(f"{f:g}" for f in res.mode_freqs()[:6])
+            more = " \u2026" if res.N > 6 else ""
+            load_info.setText(
+                f"Loaded modes: {shown}{more}   (N = {res.N}; the DC mode is "
+                f"shorted away). FSR is v/2\u2113 here, not the spacing.")
+
+        def apply_load(*_a):
+            chosen = current_load()
+            if (line.get('load') or None) == chosen:
+                refresh_load()
+                return
+            g._save_state()
+            try:
+                g.set_line_load(line, chosen)
+            except ValueError as exc:
+                if g.undo_stack:
+                    g.undo_stack.pop()
+                load_info.setText(str(exc))
+                return
+            refresh_load()
+            g._update_plot()
+
+        def solve_fsr():
+            chosen = current_load()
+            if chosen is None:
+                return
+            line['FSR'] = line_fsr_for_target_general(
+                float(target_spin.value()), int(target_mode.value()),
+                chosen, line.get('sections'), float(line['Ztx']))
+            g._sync_all_twins()
+            g._invalidate_scattering_data()
+            g._update_plot()
+            self.show_line_properties(line)      # redraw with the new FSR
+
+        load_combo.currentIndexChanged.connect(apply_load)
+        fz_spin.valueChanged.connect(apply_load)
+        solve_btn.clicked.connect(solve_fsr)
+        refresh_load()
+
+        self._add_glyph_appearance_rows(form, line, LINE_LINEWIDTH, '#cccccc')
+        self.properties_layout.addLayout(form)
+
+        try:
+            res = LineResonator(**line_payload(line))
+            n_modes = len(res.comb_mode_ids())
+            summary = (f"{n_modes} comb modes at extraction (N = {res.N}"
+                       + (", DC shorted by the load)." if res.loaded
+                          else ")."))
+        except ValueError as exc:
+            summary = f"Invalid parameters: {exc}"
+        info = QLabel(summary + " Connect the end leads with the edge tool "
+                      "(E) to a port glyph or a mode.")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666; font-style: italic;")
+        self.properties_layout.addWidget(info)
+        self.properties_layout.addStretch()
+
+    # ---- Multi-selection editing --------------------------------------------
+    #
+    # Ported from Graphulator, which has had shared multi-object editing for a
+    # while; here it also covers the port/line glyphs. A field shows the shared
+    # value when the selection agrees and an indeterminate (gray / blank /
+    # partially-checked) marker when it does not; editing one writes it to
+    # every selected object in ONE undo step.
+
+    @staticmethod
+    def selection_signature(nodes, edges, ports=(), lines=(),
+                            attachments=(), taps=()):
+        """A hashable signature identifying a multi-selection by identity.
+
+        An attachment is a (port, att) pair and a tap a (line, end, conn)
+        triple; the att / conn dict is what carries the editable state, so
+        that is what identifies the link.
+        """
+        return (frozenset(id(n) for n in nodes),
+                frozenset(id(e) for e in edges),
+                frozenset(id(p) for p in ports),
+                frozenset(id(ln) for ln in lines),
+                frozenset(id(a) for _port, a in attachments),
+                frozenset(id(c) for _ln, _e, c in taps))
+
+    def _make_multi_double_spinbox(self, values, apply_fn, minimum, maximum,
+                                   step, suffix="x", decimals=3):
+        """Spinbox for a common float property across a multi-selection.
+
+        When the selected objects share one value it is shown normally; when
+        they differ the smallest is shown in gray and is written to all of
+        them only once the user changes it (or presses Enter in it).
+        """
+        sb = QDoubleSpinBox()
+        sb.setMinimum(minimum)
+        sb.setMaximum(maximum)
+        sb.setSingleStep(step)
+        sb.setDecimals(decimals)
+        if suffix:
+            sb.setSuffix(suffix)
+        values = [float(v) for v in values] or [minimum]
+        distinct = set(values)
+        sb._indeterminate = len(distinct) > 1
+        sb.blockSignals(True)
+        sb.setValue(min(values) if sb._indeterminate else next(iter(distinct)))
+        sb.blockSignals(False)
+        sb.setStyleSheet("color: gray;" if sb._indeterminate else "")
+
+        def commit(val):
+            sb._indeterminate = False
+            sb.setStyleSheet("")
+            apply_fn(float(val))
+        sb.valueChanged.connect(commit)
+        sb.lineEdit().returnPressed.connect(
+            lambda: commit(sb.value()) if sb._indeterminate else None)
+        return sb
+
+    def _make_multi_int_spinbox(self, values, apply_fn, minimum, maximum,
+                                suffix=""):
+        """Integer twin of :meth:`_make_multi_double_spinbox`."""
+        sb = QSpinBox()
+        sb.setMinimum(minimum)
+        sb.setMaximum(maximum)
+        if suffix:
+            sb.setSuffix(suffix)
+        values = [int(v) for v in values] or [minimum]
+        distinct = set(values)
+        sb._indeterminate = len(distinct) > 1
+        sb.blockSignals(True)
+        sb.setValue(min(values) if sb._indeterminate else next(iter(distinct)))
+        sb.blockSignals(False)
+        sb.setStyleSheet("color: gray;" if sb._indeterminate else "")
+
+        def commit(val):
+            sb._indeterminate = False
+            sb.setStyleSheet("")
+            apply_fn(int(val))
+        sb.valueChanged.connect(commit)
+        sb.lineEdit().returnPressed.connect(
+            lambda: commit(sb.value()) if sb._indeterminate else None)
+        return sb
+
+    def _make_multi_combo(self, items, current_values, apply_fn):
+        """Combo for a common discrete property; blank when values differ.
+
+        Uses the user-only `activated` signal, so building it never commits.
+        """
+        cb = QComboBox()
+        cb.addItems(items)
+        distinct = set(v for v in current_values if v is not None)
+        if len(distinct) == 1 and next(iter(distinct)) in items:
+            cb.setCurrentText(next(iter(distinct)))
+        else:
+            cb.setCurrentIndex(-1)      # blank == indeterminate
+        cb.activated.connect(lambda: apply_fn(cb.currentText()))
+        return cb
+
+    def _make_multi_checkbox(self, values, apply_fn):
+        """Tri-state checkbox; partially checked when the values differ."""
+        cb = QCheckBox()
+        distinct = set(bool(v) for v in values)
+        if len(distinct) == 1:
+            cb.setChecked(next(iter(distinct)))
+        else:
+            cb.setTristate(True)
+            cb.setCheckState(Qt.PartiallyChecked)
+
+        def on_click():
+            cb.setTristate(False)
+            apply_fn(cb.isChecked())
+        cb.clicked.connect(on_click)
+        return cb
+
+    def _apply_to_objects(self, objects, key, value, remember_edge=False):
+        """Write a property to every object in `objects` (one undo step)."""
+        g = self.graphulator
+        if not objects:
+            return
+        g._save_state()
+        for obj in objects:
+            obj[key] = value
+        if remember_edge and hasattr(g, '_remember_edge_props'):
+            g._remember_edge_props(objects[-1])
+        g._update_plot()
+
+    def _apply_to_nodes(self, key, value):
+        self._apply_to_objects(list(self.graphulator.selected_nodes), key,
+                               value)
+
+    def _apply_to_edges(self, key, value):
+        self._apply_to_objects(list(self.graphulator.selected_edges), key,
+                               value, remember_edge=True)
+
+    def _apply_to_glyphs(self, key, value):
+        g = self.graphulator
+        self._apply_to_objects(list(g.selected_ports) + list(g.selected_lines),
+                               key, value)
+
+    def _selected_wire_conns(self):
+        """The att / conn dicts behind every selected link."""
+        g = self.graphulator
+        return ([a for _port, a in getattr(g, 'selected_attachments', ())]
+                + [c for _ln, _e, c in getattr(g, 'selected_taps', ())])
+
+    def _apply_to_wires(self, key, value):
+        """Write a property to every selected link (one undo step).
+
+        Rate and sign feed the extractor, so the scattering data is dropped
+        with them; appearance-only keys would not need that, but one path
+        is cheaper than two and an invalidation is idempotent.
+        """
+        g = self.graphulator
+        conns = self._selected_wire_conns()
+        if not conns:
+            return
+        g._save_state()
+        for conn in conns:
+            conn[key] = value
+        g._invalidate_scattering_data()
+        if hasattr(g, '_schedule_scattering_update'):
+            g._schedule_scattering_update()
+        g._update_plot()
+
+    def _choose_multi_wire_color(self):
+        """Choose one color and apply it to every selected link."""
+        g = self.graphulator
+        conns = self._selected_wire_conns()
+        if not conns:
+            return
+        start = QColor(conns[0].get('color')
+                       or g.wire_default_color('port',
+                                               conns[0].get('sign', 1)))
+        color = QColorDialog.getColor(start, g, "Wire color (all selected)")
+        if not color.isValid():
+            return
+        self._apply_to_wires('color', color.name())
+
+    def _apply_multi_auto_orient(self, value):
+        """Toggle auto-orient across every selected port glyph."""
+        g = self.graphulator
+        if not g.selected_ports:
+            return
+        g._save_state()
+        for port in g.selected_ports:
+            g._apply_port_style(port, {'auto_orient': bool(value)})
+        g._update_plot()
+
+    def _choose_multi_node_color(self):
+        """Choose one named color and apply it to every selected node."""
+        g = self.graphulator
+        if not g.selected_nodes:
+            return
+        start = QColor(g.selected_nodes[0].get('color', '#1f77b4'))
+        color = QColorDialog.getColor(start, g,
+                                      "Choose Node Color (all selected)")
+        if not color.isValid():
+            return
+        color_key = (code_export.palette_key(color.name(), config)
+                     or g.selected_nodes[0].get('color_key', 'BLUE'))
+        g._save_state()
+        for node in g.selected_nodes:
+            node['color'] = color.name()
+            node['color_key'] = color_key
+        g._update_plot()
+
+    def _choose_multi_glyph_color(self, key, title):
+        """Choose one color and apply it to every selected glyph."""
+        g = self.graphulator
+        glyphs = list(g.selected_ports) + list(g.selected_lines)
+        if not glyphs:
+            return
+        color = QColorDialog.getColor(QColor(glyphs[0].get(key) or 'black'),
+                                      g, title)
+        if not color.isValid():
+            return
+        g._save_state()
+        for glyph in glyphs:
+            glyph[key] = color.name()
+        g._update_plot()
+
+    def show_multi_properties(self, nodes, edges, ports=(), lines=(),
+                              attachments=(), taps=()):
+        """Editable common properties for a multi-selection."""
+        from .para_features.explicit_ports import (GLYPH_SIZE_MIN,
+                                                   GLYPH_SIZE_MAX,
+                                                   PORT_LINEWIDTH)
+        self.clear_properties()
+        self.current_object = None
+        self.current_type = None
+        self.displayed_multi = self.selection_signature(
+            nodes, edges, ports, lines, attachments, taps)
+        nodes = list(nodes)
+        edges = list(edges)
+        ports = list(ports)
+        lines = list(lines)
+        glyphs = ports + lines
+        attachments = list(attachments)
+        taps = list(taps)
+        wire_conns = ([a for _port, a in attachments]
+                      + [c for _ln, _e, c in taps])
+
+        counts = []
+        if nodes:
+            counts.append(f"{len(nodes)} node(s)")
+        if edges:
+            counts.append(f"{len(edges)} edge(s)")
+        if ports:
+            counts.append(f"{len(ports)} port(s)")
+        if lines:
+            counts.append(f"{len(lines)} line(s)")
+        if attachments:
+            counts.append(f"{len(attachments)} wire(s)")
+        if taps:
+            counts.append(f"{len(taps)} tap(s)")
+        self.title_label.setText(f"Multiple Selection ({' + '.join(counts)})")
+
+        form = QFormLayout()
+
+        if nodes:
+            form.addRow(QLabel("<b>Nodes</b>"))
+            form.addRow("Node Size:", self._make_multi_double_spinbox(
+                [n.get('node_size_mult', 1.0) for n in nodes],
+                lambda val: self._apply_to_nodes('node_size_mult', val),
+                config.NODE_SIZE_SLIDER_MIN / 100.0,
+                config.NODE_SIZE_SLIDER_MAX / 100.0, 0.1))
+            form.addRow("Label Size:", self._make_multi_double_spinbox(
+                [n.get('label_size_mult', 1.0) for n in nodes],
+                lambda val: self._apply_to_nodes('label_size_mult', val),
+                config.NODE_LABEL_SIZE_SLIDER_MIN / 100.0,
+                config.NODE_LABEL_SIZE_SLIDER_MAX / 100.0, 0.1))
+            form.addRow("Conjugated:", self._make_multi_checkbox(
+                [n.get('conj', False) for n in nodes],
+                lambda val: self._apply_to_nodes('conj', val)))
+            form.addRow("Outline:", self._make_multi_checkbox(
+                [n.get('outline_enabled', False) for n in nodes],
+                lambda val: self._apply_to_nodes('outline_enabled', val)))
+            form.addRow("Outline Width:", self._make_multi_double_spinbox(
+                [n.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH)
+                 for n in nodes],
+                lambda val: self._apply_to_nodes('outline_width', val),
+                0.5, 10.0, 0.5, suffix="", decimals=1))
+            form.addRow("Outline Alpha:", self._make_multi_double_spinbox(
+                [n.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA)
+                 for n in nodes],
+                lambda val: self._apply_to_nodes('outline_alpha', val),
+                0.0, 1.0, 0.05, suffix="", decimals=2))
+            color_btn = QPushButton("Choose Color (all nodes)")
+            color_btn.clicked.connect(self._choose_multi_node_color)
+            form.addRow("Color:", color_btn)
+
+        if edges:
+            form.addRow(QLabel("<b>Edges</b>"))
+            lw_map = dict(config.EDGE_LINEWIDTH_OPTIONS)
+            lw_reverse = {v: k for k, v in lw_map.items()}
+            form.addRow("Line Width:", self._make_multi_combo(
+                list(lw_map.keys()),
+                [lw_reverse.get(e.get('linewidth_mult', 1.25)) for e in edges],
+                lambda text: self._apply_to_edges('linewidth_mult',
+                                                  lw_map[text])))
+
+            regular = [e for e in edges if not e.get('is_self_loop', False)]
+            selfloops = [e for e in edges if e.get('is_self_loop', False)]
+
+            # Style/direction/curvature only when the selection is entirely
+            # ordinary edges; loop size/flip only when it is entirely
+            # self-loops. A mixed selection keeps the shared rows above.
+            if regular and not selfloops:
+                form.addRow("Style:", self._make_multi_combo(
+                    ['loopy', 'single', 'double'],
+                    [e.get('style', 'loopy') for e in regular],
+                    lambda text: self._apply_to_edges('style', text)))
+                form.addRow("Direction:", self._make_multi_combo(
+                    ['both', 'forward', 'backward'],
+                    [e.get('direction', 'both') for e in regular],
+                    lambda text: self._apply_to_edges('direction', text)))
+                form.addRow("Loop Theta:", self._make_multi_int_spinbox(
+                    [e.get('looptheta', 30) for e in regular],
+                    lambda val: self._apply_to_edges('looptheta', val),
+                    -180, 180, "\u00b0"))
+                form.addRow("Label Size:", self._make_multi_double_spinbox(
+                    [e.get('label_size_mult', 1.4) for e in regular],
+                    lambda val: self._apply_to_edges('label_size_mult', val),
+                    0.2, 3.0, 0.1))
+
+            if selfloops and not regular:
+                scale_map = dict(config.SELFLOOP_SCALE_OPTIONS)
+                scale_reverse = {v: k for k, v in scale_map.items()}
+                form.addRow("Loop Size:", self._make_multi_combo(
+                    list(scale_map.keys()),
+                    [scale_reverse.get(e.get('selfloopscale', 1.0))
+                     for e in selfloops],
+                    lambda text: self._apply_to_edges('selfloopscale',
+                                                      scale_map[text])))
+                form.addRow("Angle:", self._make_multi_int_spinbox(
+                    [int(e.get('selfloopangle', 0)) % 360 for e in selfloops],
+                    lambda val: self._apply_to_edges('selfloopangle', val),
+                    0, 355, "\u00b0"))
+                form.addRow("Angle Pinned:", self._make_multi_checkbox(
+                    [e.get('angle_pinned', False) for e in selfloops],
+                    lambda val: self._apply_to_edges('angle_pinned', val)))
+                form.addRow("Flip Direction:", self._make_multi_checkbox(
+                    [e.get('flip', False) for e in selfloops],
+                    lambda val: self._apply_to_edges('flip', val)))
+
+        if glyphs:
+            form.addRow(QLabel("<b>Ports &amp; Lines</b>"))
+            form.addRow("Length \u00d7:", self._make_multi_double_spinbox(
+                [g.get('w_mult', 1.0) for g in glyphs],
+                lambda val: self._apply_to_glyphs('w_mult', val),
+                GLYPH_SIZE_MIN, GLYPH_SIZE_MAX, 0.1))
+            form.addRow("Height \u00d7:", self._make_multi_double_spinbox(
+                [g.get('h_mult', 1.0) for g in glyphs],
+                lambda val: self._apply_to_glyphs('h_mult', val),
+                GLYPH_SIZE_MIN, GLYPH_SIZE_MAX, 0.1))
+            form.addRow("Stroke width:", self._make_multi_double_spinbox(
+                [g.get('linewidth', PORT_LINEWIDTH) for g in glyphs],
+                lambda val: self._apply_to_glyphs('linewidth', val),
+                0.25, 8.0, 0.25, suffix="", decimals=2))
+            stroke_btn = QPushButton("Choose Color (all glyphs)")
+            stroke_btn.clicked.connect(
+                lambda: self._choose_multi_glyph_color('color',
+                                                       "Glyph stroke color"))
+            form.addRow("Stroke color:", stroke_btn)
+            fill_btn = QPushButton("Choose Fill (all glyphs)")
+            fill_btn.clicked.connect(
+                lambda: self._choose_multi_glyph_color('fill',
+                                                       "Glyph fill color"))
+            form.addRow("Fill color:", fill_btn)
+            if ports:
+                form.addRow("Auto-orient:", self._make_multi_checkbox(
+                    [not p.get('angle_pinned', False) for p in ports],
+                    self._apply_multi_auto_orient))
+
+        # Wires: port attachments and line taps share rate, sign and
+        # appearance. The two rates are not the same quantity (an
+        # attachment's is dissipative, a tap's is the conservative coupling
+        # at its own n_ref), so the row says which kinds are in play rather
+        # than pretending one label fits both. n_ref itself stays on the
+        # single-tap panel: it is indexed per line and has no shared range.
+        if wire_conns:
+            default_mult = getattr(config, 'DEFAULT_WIRE_LINEWIDTH_MULT',
+                                   1.25)
+            kinds = ([] if not attachments else ["attachment"]) + \
+                    ([] if not taps else ["tap"])
+            form.addRow(QLabel("<b>Wires</b> <i>(%s)</i>"
+                               % " + ".join(kinds)))
+            rate_box = self._make_multi_double_spinbox(
+                [float(c.get('rate', 0.0)) * 1000.0 for c in wire_conns],
+                lambda val: self._apply_to_wires('rate', val / 1000.0),
+                config.B_EXT_SPINBOX_MIN, config.B_EXT_SPINBOX_MAX,
+                config.B_EXT_SPINBOX_STEP, suffix="",
+                decimals=config.B_EXT_SPINBOX_DECIMALS)
+            rate_box.setToolTip(
+                "Coupling rate of every selected wire [milli-arb. units]. "
+                "For a tap this is the rate at that tap's own reference "
+                "harmonic.")
+            form.addRow("Rate [mau]:", rate_box)
+            form.addRow("Sign:", self._make_multi_combo(
+                ["+", "\N{MINUS SIGN}"],
+                ["+" if c.get('sign', 1) >= 0 else "\N{MINUS SIGN}"
+                 for c in wire_conns],
+                lambda text: self._apply_to_wires(
+                    'sign', 1 if text == "+" else -1)))
+            lw_map = dict(config.EDGE_LINEWIDTH_OPTIONS)
+            lw_reverse = {v: k for k, v in lw_map.items()}
+            form.addRow("Line Width:", self._make_multi_combo(
+                list(lw_map.keys()),
+                [lw_reverse.get(float(c.get('linewidth_mult')
+                                      or default_mult))
+                 for c in wire_conns],
+                lambda text: self._apply_to_wires('linewidth_mult',
+                                                  lw_map[text])))
+            form.addRow("Label Size:", self._make_multi_double_spinbox(
+                [c.get('label_size_mult', 1.0) for c in wire_conns],
+                lambda val: self._apply_to_wires('label_size_mult', val),
+                0.2, 5.0, 0.1))
+            wire_color_btn = QPushButton("Choose Color (all wires)")
+            wire_color_btn.clicked.connect(self._choose_multi_wire_color)
+            form.addRow("Color:", wire_color_btn)
+            wire_reset = QPushButton("Default")
+            wire_reset.setToolTip(
+                "Drop the per-wire color override, so these wires follow "
+                "the configured default (and its sign coloring) again.")
+            wire_reset.clicked.connect(
+                lambda: self._apply_to_wires('color', None))
+            form.addRow("", wire_reset)
+
+        self.properties_layout.addLayout(form)
+
+        hint = QLabel("Gray or blank values differ across the selection; "
+                      "edit a field to apply it to all.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: gray; font-size: 10px;")
+        self.properties_layout.addWidget(hint)
+
     def show_no_selection(self):
         """Show message when nothing is selected"""
         self.clear_properties()
         self.current_object = None
         self.current_type = None
+        self.displayed_multi = None
         self.title_label.setText("No Selection")
 
         info = QLabel("Select a node or edge to edit its properties.\n\nShift+click to select multiple objects.")
@@ -3736,6 +5069,13 @@ class PropertiesPanel(QWidget):
     def _update_scattering_node_table(self):
         """Update the node parameter table in the Scattering tab based on current graph"""
 
+        # Keep the Ports & Lines panel in sync FIRST. It has its own gating,
+        # and a glyph-only graph (a pumped line, no nodes) takes this
+        # function's "no nodes" early return below -- when the sync sat at
+        # the end, entering scattering mode on such a graph never built the
+        # panel and the pane stayed hidden at zero height.
+        self._update_scattering_ports_table()
+
         # Clear existing widgets
         while self.nodes_param_layout.count():
             item = self.nodes_param_layout.takeAt(0)
@@ -3744,9 +5084,20 @@ class PropertiesPanel(QWidget):
 
         # If not in scattering mode or no nodes, show placeholder
         if not self.graphulator.scattering_mode or not self.graphulator.nodes:
-            placeholder = QLabel("Enter Scattering mode to assign parameters")
+            if not self.graphulator.scattering_mode:
+                text = "Enter Scattering mode to assign parameters"
+            elif getattr(self.graphulator, 'line_resonators', None):
+                # a glyph-only graph (e.g. a pumped line): everything
+                # tunable lives in the Ports & Lines panel below
+                # (a QLabel shows '&&' literally; only buttons/menus eat one)
+                text = ("No graph nodes \u2014 line, port and pump "
+                        "parameters are in Ports & Lines below")
+            else:
+                text = "No graph nodes"
+            placeholder = QLabel(text)
             placeholder.setStyleSheet("color: gray; font-style: italic;")
             placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            placeholder.setWordWrap(True)
             self.nodes_param_layout.addWidget(placeholder, 0, 0, 1, 4)
             return
 
@@ -3776,9 +5127,13 @@ class PropertiesPanel(QWidget):
         bint_header.setStyleSheet("font-weight: bold;")
         self.nodes_param_layout.addWidget(bint_header, row, 2, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        bext_header = QLabel("B_ext [mau]")
-        bext_header.setStyleSheet("font-weight: bold;")
-        self.nodes_param_layout.addWidget(bext_header, row, 3, alignment=Qt.AlignmentFlag.AlignCenter)
+        # In Explicit Ports mode external coupling moves to the Ports panel
+        # (legacy self-loop B_ext appears there as an auto-port row)
+        explicit_ports = self.graphulator.explicit_ports_enabled
+        if not explicit_ports:
+            bext_header = QLabel("B_ext [mau]")
+            bext_header.setStyleSheet("font-weight: bold;")
+            self.nodes_param_layout.addWidget(bext_header, row, 3, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # Add node parameter rows
         for i, node in enumerate(node_list):
@@ -3860,8 +5215,11 @@ class PropertiesPanel(QWidget):
             bint_spin.editingFinished.connect(lambda nid=node_id, widget=bint_spin: self._on_node_param_changed(nid, 'B_int', widget.value(), widget))
             self.nodes_param_layout.addWidget(bint_spin, row, 2)
 
-            # B_ext spinbox (only if node has self-loop)
-            if has_selfloop:
+            # B_ext spinbox (only if node has self-loop; hidden entirely in
+            # Explicit Ports mode — the Ports panel owns external coupling)
+            if explicit_ports:
+                pass
+            elif has_selfloop:
                 bext_spin = FineControlSpinBox()
                 bext_spin.setRange(config.B_EXT_SPINBOX_MIN, config.B_EXT_SPINBOX_MAX)
                 bext_spin.setDecimals(config.B_EXT_SPINBOX_DECIMALS)
@@ -3907,6 +5265,877 @@ class PropertiesPanel(QWidget):
 
         # Reapply constraint group styling after table rebuild
         self._apply_constraint_styling()
+
+    def _update_scattering_ports_table(self):
+        """Update the Ports & Lines panel (external port coupling rates).
+
+        Rows, in channel order: one section per explicit port/loss hub with
+        one row per attachment (rate [mau] + sign), then auto-port rows for
+        legacy self-loop B_ext nodes, then one summary row per transmission
+        line. Only populated in Explicit Ports mode.
+        """
+        if not hasattr(self, 'ports_param_layout'):
+            return
+
+        g = self.graphulator
+
+        # Show/hide the pane with the mode
+        if hasattr(self, 'ports_frame'):
+            self.ports_frame.setVisible(
+                g.explicit_ports_enabled and g.scattering_mode)
+
+        # Clear existing widgets
+        while self.ports_param_layout.count():
+            item = self.ports_param_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not (g.explicit_ports_enabled and g.scattering_mode):
+            return
+
+        from .para_features.explicit_ports import (ALPHA_TOOLTIP,  # noqa: F401
+                                                   PHASE2_PHASE_TOOLTIP)
+        self._comb_notes = []
+        self._mode_index_spins = []
+        self._pump_partner_label = None
+        self._pump_partner_line = None
+        if hasattr(self, 'tail_closure_check'):
+            self.tail_closure_check.blockSignals(True)
+            self.tail_closure_check.setChecked(
+                bool(getattr(g, 'line_tail_closure', True)))
+            self.tail_closure_check.blockSignals(False)
+
+        node_by_id = {n['node_id']: n for n in g.nodes}
+        row = 0
+
+        def header(text, tooltip=''):
+            nonlocal row
+            label = QLabel(text)
+            label.setStyleSheet("font-weight: bold;")
+            if tooltip:
+                label.setToolTip(tooltip)
+            self.ports_param_layout.addWidget(label, row, 0, 1, 4)
+            row += 1
+
+        if not (g.ports or g.line_resonators
+                or any(e.get('is_self_loop') for e in g.edges)):
+            placeholder = QLabel("Place ports (P) or lines (L) on the canvas")
+            placeholder.setStyleSheet("color: gray; font-style: italic;")
+            self.ports_param_layout.addWidget(placeholder, 0, 0, 1, 4)
+            return
+
+        for port in g.ports:
+            kind = "port" if port.get('monitored', True) else "loss hub"
+            header(f"{port['label']}  ({kind})")
+            if not port['attachments']:
+                note = QLabel("no attachments — inert (use edge mode E)")
+                note.setStyleSheet("color: gray; font-style: italic;")
+                self.ports_param_layout.addWidget(note, row, 0, 1, 4)
+                row += 1
+                continue
+            for att in port['attachments']:
+                node = node_by_id.get(att['node_id'])
+                node_label = node['label'] if node else str(att['node_id'])
+                if node and node.get('conj', False):
+                    node_label += '*'
+                arrow = QLabel(f"\N{RIGHTWARDS ARROW} {node_label}")
+                arrow.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.ports_param_layout.addWidget(arrow, row, 0)
+
+                rate_spin = FineControlSpinBox()
+                rate_spin.setRange(config.B_EXT_SPINBOX_MIN, config.B_EXT_SPINBOX_MAX)
+                rate_spin.setDecimals(config.B_EXT_SPINBOX_DECIMALS)
+                rate_spin.setSingleStep(config.B_EXT_SPINBOX_STEP)
+                rate_spin.setMaximumWidth(config.B_EXT_SPINBOX_WIDTH)
+                rate_spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+                rate_spin.setValue(att['rate'] * 1000)
+                rate_spin.setToolTip("Attachment coupling rate [milliarb. "
+                                     "units]; kappa = sign*sqrt(rate)")
+                rate_spin.valueChanged.connect(
+                    lambda val, a=att: self._on_port_attachment_changed(a, 'rate', val))
+                self.ports_param_layout.addWidget(rate_spin, row, 1)
+
+                sign_btn = QPushButton("+" if att['sign'] >= 0 else "\N{MINUS SIGN}")
+                sign_btn.setMaximumWidth(28)
+                sign_btn.setToolTip("Coupling sign (0\N{DEGREE SIGN}/"
+                                    "180\N{DEGREE SIGN})")
+                sign_btn.clicked.connect(
+                    lambda _=False, a=att, b=sign_btn: self._on_port_attachment_sign_toggled(a, b))
+                self.ports_param_layout.addWidget(sign_btn, row, 2)
+
+                phase_label = QLabel("\N{GREEK SMALL LETTER PHI}=0/180")
+                phase_label.setStyleSheet("color: gray;")
+                phase_label.setToolTip(PHASE2_PHASE_TOOLTIP)
+                self.ports_param_layout.addWidget(phase_label, row, 3)
+                row += 1
+
+        # Legacy self-loop B_ext renders as an auto-port
+        auto_port_nodes = []
+        for node in g.nodes:
+            has_selfloop = any(
+                edge.get('is_self_loop', False)
+                and edge['from_node_id'] == node['node_id']
+                for edge in g.edges)
+            if has_selfloop:
+                auto_port_nodes.append(node)
+        if auto_port_nodes:
+            header("auto-ports (legacy self-loop B_ext)")
+            for node in auto_port_nodes:
+                node_id = _node_key(node)
+                assignments = g.scattering_assignments.get(node_id, {})
+                name = QLabel(node['label'] + ('*' if node.get('conj') else ''))
+                name.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.ports_param_layout.addWidget(name, row, 0)
+
+                bext_spin = FineControlSpinBox()
+                bext_spin.setRange(config.B_EXT_SPINBOX_MIN, config.B_EXT_SPINBOX_MAX)
+                bext_spin.setDecimals(config.B_EXT_SPINBOX_DECIMALS)
+                bext_spin.setSingleStep(config.B_EXT_SPINBOX_STEP)
+                bext_spin.setMaximumWidth(config.B_EXT_SPINBOX_WIDTH)
+                bext_spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+                bext_spin.setProperty('node_id', node_id)
+                bext_spin.setProperty('param_name', 'B_ext')
+                bext_spin.setProperty('obj_type', 'node')
+                bext_spin.setProperty('obj_label', node['label'])
+                if 'B_ext' in assignments:
+                    bext_spin.setValue(assignments['B_ext'] * 1000)
+                    bext_spin.setProperty('user_assigned', True)
+                else:
+                    bext_spin.setValue(config.DEFAULT_NODE_B_EXT)
+                    bext_spin.setStyleSheet("color: lightgray;")
+                    bext_spin.setProperty('user_assigned', False)
+                bext_spin.setToolTip("B_ext [milliarb. units]")
+                bext_spin.valueChanged.connect(
+                    lambda val, nid=node_id, widget=bext_spin:
+                    self._on_node_param_changed(nid, 'B_ext', val, widget))
+                bext_spin.editingFinished.connect(
+                    lambda nid=node_id, widget=bext_spin:
+                    self._on_node_param_changed(nid, 'B_ext', widget.value(), widget))
+                self.ports_param_layout.addWidget(bext_spin, row, 1)
+                self.ports_param_layout.addWidget(QLabel("+"), row, 2)
+                row += 1
+
+        for line in g.line_resonators:
+            if line.get('twin_of') is not None:
+                # a conjugate twin mirrors its primary's physics: one set of
+                # controls, on the primary
+                primary = g.line_primary(line)
+                header(f"{line['label']}  (conjugate twin of "
+                       f"{primary['label'] if primary else '?'})",
+                       "Same physical line seen in the idler sector; edit "
+                       "FSR, Ztx, f_max, Z0, \u03b1, the sections and the "
+                       "load on the primary.")
+                row = self._add_line_end_rows(line, row)
+                continue
+            header(f"{line['label']}  (transmission line)")
+            row = self._add_line_physics_row(line, row)
+            row = self._add_line_sections_row(line, row)
+            load = line.get('load')
+            if load:
+                row = self._add_line_load_row(line, row)
+            row = self._add_line_comb_note(line, row)
+
+            # end connections: terminating ports and node taps
+            resonator = g.line_resonator_for(line)
+            couplings = (line.get('end_coupling')
+                         or {'x0': 'capacitive', 'xL': 'capacitive'})
+            if line.get('pump'):
+                row = self._add_pump_row(line, row)
+            for end in ('x0', 'xL'):
+                for conn in g._end_conns(line, end):
+                    if conn.get('kind') == 'port':
+                        conn_port = next(
+                            (p for p in g.ports
+                             if p['port_id'] == conn['port_id']), None)
+                        plabel = conn_port['label'] if conn_port else '?'
+                        lab = QLabel(f"{end} \N{RIGHTWARDS ARROW} port "
+                                     f"'{plabel}'")
+                        lab.setStyleSheet("color: dimgray;")
+                        lab.setToolTip("This end is terminated on that "
+                                       "port: the whole comb couples "
+                                       "through its channel.")
+                        self.ports_param_layout.addWidget(lab, row, 0, 1, 4)
+                        row += 1
+                    elif conn.get('kind') == 'node':
+                        node = next((n for n in g.nodes
+                                     if n['node_id'] == conn['node_id']),
+                                    None)
+                        nlabel = node['label'] if node else str(
+                            conn['node_id'])
+                        lab = QLabel(f"{end} tap \N{RIGHTWARDS ARROW} "
+                                     f"{nlabel} ({couplings.get(end, 'capacitive')[:3]})")
+                        lab.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                        self.ports_param_layout.addWidget(lab, row, 0)
+
+                        rate_spin = FineControlSpinBox()
+                        rate_spin.setRange(config.B_EXT_SPINBOX_MIN,
+                                           config.B_EXT_SPINBOX_MAX)
+                        rate_spin.setDecimals(config.B_EXT_SPINBOX_DECIMALS)
+                        rate_spin.setSingleStep(config.B_EXT_SPINBOX_STEP)
+                        rate_spin.setMaximumWidth(config.B_EXT_SPINBOX_WIDTH)
+                        rate_spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+                        rate_spin.setValue(conn.get('rate', 0.1) * 1000)
+                        rate_spin.setToolTip(
+                            "Coupling rate AT the reference harmonic "
+                            "[milliarb. units]; other modes follow the "
+                            "verified profile g_n \u221d "
+                            "u_n(end)\u00b7(n/n_ref)^(\u00b1\u00bd)")
+                        rate_spin.valueChanged.connect(
+                            lambda val, c=conn:
+                            self._on_tap_param_changed(c, 'rate', val / 1000.0))
+                        self.ports_param_layout.addWidget(rate_spin, row, 1)
+
+                        sign_btn = QPushButton(
+                            "+" if conn.get('sign', 1) >= 0
+                            else "\N{MINUS SIGN}")
+                        sign_btn.setMaximumWidth(28)
+                        sign_btn.clicked.connect(
+                            lambda _=False, c=conn, b=sign_btn:
+                            self._on_tap_sign_toggled(c, b))
+                        self.ports_param_layout.addWidget(sign_btn, row, 2)
+
+                        nref_spin = FineControlSpinBox()
+                        nref_spin.setDecimals(0)
+                        nref_spin.setRange(1, resonator.N)
+                        nref_spin.setSingleStep(1)
+                        nref_spin.setMaximumWidth(50)
+                        nref_spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+                        nref_spin.setValue(conn.get('n_ref', 1))
+                        nref_spin.setPrefix("n=")
+                        self._mode_index_spins.append((nref_spin, line))
+                        nref_spin.setToolTip(
+                            "Reference harmonic the rate is defined at "
+                            f"(1..{resonator.N}); nearest to the mode's "
+                            "frequency is highlighted when tapping.")
+                        nref_spin.valueChanged.connect(
+                            lambda val, c=conn:
+                            self._on_tap_param_changed(c, 'n_ref', int(val)))
+                        self.ports_param_layout.addWidget(nref_spin, row, 3)
+                        row += 1
+
+        self.ports_param_layout.setColumnStretch(0, 0)
+        self.ports_param_layout.setColumnStretch(1, 1)
+        self.ports_param_layout.setRowStretch(row + 1, 1)
+
+    # ---- Ports & Lines: inline controls for a line, its load and its pump ----
+    #
+    # These rows are the reason a glyph-only graph (a pumped line and its
+    # twin, no graph node) is tunable at all from the Scattering tab. Each
+    # spinbox edits the live dict and reschedules the sweep; the channel
+    # structure (ports) does not change, so no invalidation is needed and
+    # the S plot updates in place like the node parameters do.
+
+    def _physics_spin(self, value, lo, hi, decimals, step, tooltip, on_change,
+                      width=78, prefix=''):
+        box = FineControlSpinBox()
+        box.setRange(lo, hi)
+        box.setDecimals(decimals)
+        box.setSingleStep(step)
+        box.setValue(float(value))
+        box.setMaximumWidth(width)
+        box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        box.setToolTip(tooltip)
+        if prefix:
+            box.setPrefix(prefix)
+        box.valueChanged.connect(on_change)
+        return box
+
+    def _line_param_changed(self, line, key, value):
+        g = self.graphulator
+        candidate = dict(line)
+        candidate[key] = float(value)
+        try:
+            from .para_features.explicit_ports import (LineResonator,
+                                                       line_payload)
+            LineResonator(**line_payload(candidate))
+        except ValueError as exc:
+            self.graphulator._status_message(str(exc), 6000)
+            return
+        line[key] = float(value)
+        g._sync_all_twins()
+        self._schedule_scattering_update()
+        g._update_plot()
+        if hasattr(self, '_refresh_comb_notes'):
+            self._refresh_comb_notes()      # also re-ranges the n spinboxes
+
+    def _add_line_physics_row(self, line, row):
+        from .para_features.explicit_ports import ALPHA_TOOLTIP
+        g = self.graphulator
+        hbox = QHBoxLayout()
+        hbox.setSpacing(6)
+
+        def add(label, key, lo, hi, decimals, step, tip, width=78):
+            lab = QLabel(label)
+            lab.setToolTip(tip)
+            hbox.addWidget(lab)
+            hbox.addWidget(self._physics_spin(
+                line.get(key, 0.0), lo, hi, decimals, step, tip,
+                lambda v, l=line, k=key: self._line_param_changed(l, k, v),
+                width=width))
+
+        add("FSR", 'FSR', 1e-9, 1e9, 9, 0.1,
+            "Free spectral range [a.u.]. With an end load or impedance "
+            "steps this is the geometric parameter v/2\u2113, not the mode "
+            "spacing \u2014 and it is the scale every mode frequency "
+            "derives from, so it carries more decimals than the rest.",
+            width=104)
+        add("Ztx", 'Ztx', 1e-6, 1e6, 1, 1.0,
+            ("Reference impedance: with sections below it no longer sets the "
+             "line's own Z, only the scale the end load's f_Z is defined "
+             "against (L = Ztx/2\u03c0f_Z)."
+             if line.get('sections') else "Line characteristic impedance"),
+            width=64)
+        add("f_max", 'f_max', 1e-9, 1e12, 3, 1.0,
+            "Comb extent: the modes kept explicitly (N pairs). The modes "
+            "beyond are closed into the port analytically when the tail "
+            "closure is on, so N need only span the couplings that matter.")
+        add("Z0", 'Z0_port', 1e-6, 1e6, 1, 1.0, "Port termination impedance",
+            width=64)
+        # Internal loss as a RATE, like every other rate in the app, rather
+        # than as the attenuation alpha*l it is stored as -- which also
+        # retires the alpha that collided with the pump's alpha below. The
+        # map B_int = (2/pi) alpha FSR is exact and linear, so this is a
+        # change of units and not of model; note it therefore TRACKS FSR.
+        self._add_line_loss_spin(hbox, line)
+        hbox.addStretch()
+        edit_btn = QPushButton("Edit\N{HORIZONTAL ELLIPSIS}")
+        edit_btn.setMaximumWidth(60)
+        edit_btn.setToolTip("Label, tap coupling types, end load, impedance "
+                            "steps, target resonance and appearance")
+        edit_btn.clicked.connect(lambda _=False, l=line: g._edit_line(l))
+        hbox.addWidget(edit_btn)
+        holder = QWidget()
+        holder.setLayout(hbox)
+        self.ports_param_layout.addWidget(holder, row, 0, 1, 4)
+        return row + 1
+
+    LOSS_RATE_TOOLTIP = (
+        "Internal loss rate of every comb mode [milli-arb. units].\n\n"
+        "Stored as the line's one-way attenuation \u03b1\u00b7\u2113 "
+        "(nepers) and shown here through the verified map\n"
+        "    B_int = (2/\u03c0)\u00b7\u03b1\u00b7FSR\n"
+        "so it is a change of UNITS, not of model \u2014 and it tracks FSR, "
+        "since a fixed attenuation per length is a different rate on a "
+        "different line.\n\n"
+        "ONE rate for the whole comb: spatially uniform loss damps every "
+        "mode of the OPEN\u2013OPEN basis identically (mode orthogonality), "
+        "which is what the gate in tests/test_uniform_loss.py pins. With an "
+        "end load that uniformity is NOT established: a reactive termination "
+        "stores energy the loss does not act on, so the per-mode "
+        "participation stops being flat (the fundamental of an f_Z = 0.5\u00b7"
+        "FSR line sits near half the open-open value). Treat a loaded line's "
+        "loss as indicative until that is derived and gated.")
+
+    def _add_line_loss_spin(self, hbox, line):
+        """Loss as B_int [mau], converting to/from the stored attenuation."""
+        lab = QLabel("B_int")
+        lab.setToolTip(self.LOSS_RATE_TOOLTIP)
+        hbox.addWidget(lab)
+
+        def to_rate(alpha, fsr):
+            return (2.0 / np.pi) * float(alpha) * float(fsr) * 1000.0
+
+        def from_rate(mau, fsr):
+            return (float(mau) / 1000.0) * np.pi / (2.0 * float(fsr))
+
+        def apply(value):
+            self._line_param_changed(
+                line, 'alpha_uniform', from_rate(value, line['FSR']))
+
+        spin = self._physics_spin(
+            to_rate(line.get('alpha_uniform', 0.0), line['FSR']),
+            0.0, 1e9, 3, 1.0, self.LOSS_RATE_TOOLTIP, apply, width=76)
+        hbox.addWidget(spin)
+        hbox.addWidget(QLabel("mau"))
+
+    SECTIONS_ROW_TOOLTIP = (
+        "The line's geometry, as it physically is: runs of impedance Z, "
+        "each \u03b8 DEGREES long at the reference frequency f_ref \u2014\n"
+        "    Z:\u03b8, Z:\u03b8, \u2026   from x0 to xL\n"
+        "One section is an ordinary uniform line whose LENGTH you gave as "
+        "an angle (its Z becomes Ztx); two or more make it stepped.\n\n"
+        "\u03b8 = 90\u00b0 is a quarter wave at f_ref, 180\u00b0 a half "
+        "wave. The length follows in closed form,\n"
+        "    FSR = 180\u00b7f_ref / \u03a3\u03b8,   frac_j = "
+        "\u03b8_j / \u03a3\u03b8\n"
+        "so there is no back-solving for a length.\n\n"
+        "STORED form is (Z, frac) + FSR. f_ref is an input and display "
+        "convention only: re-quoting at another f_ref changes these numbers "
+        "and cannot move S. A new line inherits the f_ref you last used, "
+        "and that default survives a restart.\n\n"
+        "Stepped lines are re-derived on the piecewise basis (docs sec. 9) "
+        "\u2014 roots of the cascaded source-free condition, per-section "
+        "energy normalization \u2014 verified against the cascaded ABCD to "
+        "1e-15 with the tail closure on.\n\n"
+        "Press Enter to apply; an invalid spec is refused and the field "
+        "reverts.")
+
+    def _add_line_sections_row(self, line, row):
+        """Geometry as 'Z:theta' at a per-line f_ref (docs sec. 9.6)."""
+        from .para_features.explicit_ports import (format_sections_theta,
+                                                   sticky_section_fref)
+        g = self.graphulator
+        hbox = QHBoxLayout()
+        hbox.setSpacing(6)
+        lab = QLabel("geometry:")
+        lab.setToolTip(self.SECTIONS_ROW_TOOLTIP)
+        hbox.addWidget(lab)
+
+        def spec_text():
+            return format_sections_theta(line.get('sections'), line['FSR'],
+                                         line.get('f_ref')
+                                         or sticky_section_fref(),
+                                         Ztx=line.get('Ztx'))
+
+        edit = QLineEdit(spec_text())
+        edit.setToolTip(self.SECTIONS_ROW_TOOLTIP)
+        edit.setPlaceholderText("Z:\u03b8, Z:\u03b8, \u2026")
+        edit.setMaximumWidth(220)
+
+        summary = QLabel("")
+        summary.setStyleSheet("color: #444; font-style: italic;")
+        summary.setToolTip(self.SECTIONS_ROW_TOOLTIP)
+
+        def describe():
+            secs = line.get('sections')
+            if not secs:
+                summary.setText(f"uniform {line['Ztx']:g}\u03a9")
+            else:
+                summary.setText("x0 \u2192 xL:  " + "  |  ".join(
+                    f"{sec['Z']:g}\u03a9 \u00d7 {100 * sec['frac']:.0f}%"
+                    for sec in secs))
+
+        def apply_spec():
+            try:
+                g.set_line_geometry_theta(line, edit.text())
+            except ValueError as exc:
+                g._status_message(str(exc), 8000)
+                edit.setText(spec_text())
+                return
+            edit.setText(spec_text())
+            describe()
+            self._after_line_geometry_change(line)
+
+        edit.editingFinished.connect(apply_spec)
+        hbox.addWidget(edit)
+
+        f_lab = QLabel("@ f_ref")
+        f_lab.setToolTip(self.SECTIONS_ROW_TOOLTIP)
+        hbox.addWidget(f_lab)
+
+        def apply_fref(v):
+            try:
+                g.set_line_fref(line, v)
+            except ValueError as exc:
+                g._status_message(str(exc), 6000)
+                return
+            edit.setText(spec_text())          # same geometry, new numbers
+            self._after_line_geometry_change(line, geometry_moved=False)
+
+        hbox.addWidget(self._physics_spin(
+            float(line.get('f_ref') or sticky_section_fref()),
+            1e-9, 1e12, 4, 0.1,
+            "Frequency the angles above are quoted at. Changing it "
+            "re-renders them and cannot move S; it also becomes the sticky "
+            "default for new lines, persisted across restarts.",
+            apply_fref, width=84))
+
+        hbox.addWidget(summary)
+        describe()
+        hbox.addStretch()
+        holder = QWidget()
+        holder.setLayout(hbox)
+        self.ports_param_layout.addWidget(holder, row, 0, 1, 4)
+        return row + 1
+
+    def _after_line_geometry_change(self, line, geometry_moved=True):
+        g = self.graphulator
+        if geometry_moved:
+            self._schedule_scattering_update()
+        g._update_plot()
+        if hasattr(self, '_refresh_comb_notes'):
+            self._refresh_comb_notes()
+        if geometry_moved and hasattr(self, '_refresh_mode_index_ranges'):
+            self._refresh_mode_index_ranges()
+
+    def _add_line_load_row(self, line, row):
+        load = line['load']
+        hbox = QHBoxLayout()
+        hbox.setSpacing(6)
+        lab = QLabel(f"end load: {load['type']} @ {load['end']}   f_Z")
+        lab.setToolTip(
+            "Shunt reactance terminating this end; f_Z is the frequency at "
+            "which |X_elem| = Ztx. It disperses the comb (docs sec. 7).")
+        hbox.addWidget(lab)
+
+        def set_fz(v, l=line):
+            g = self.graphulator
+            new_load = dict(l['load'])
+            new_load['f_Z'] = float(v)
+            try:
+                g.set_line_load(l, new_load)
+            except ValueError as exc:
+                g._status_message(str(exc), 6000)
+                return
+            self._schedule_scattering_update()
+            g._update_plot()
+            if hasattr(self, '_refresh_comb_notes'):
+                self._refresh_comb_notes()
+
+        hbox.addWidget(self._physics_spin(load['f_Z'], 1e-9, 1e12, 4, 0.1,
+                                          "f_Z [a.u.]", set_fz, width=84))
+        hbox.addStretch()
+        holder = QWidget()
+        holder.setLayout(hbox)
+        self.ports_param_layout.addWidget(holder, row, 0, 1, 4)
+        return row + 1
+
+    def _comb_note_text(self, line):
+        """N, the closure state and the truncation estimate for one line."""
+        g = self.graphulator
+        try:
+            res = g.line_resonator_for(line)
+        except ValueError as exc:
+            return f"invalid: {exc}"
+        n_modes = len(res.comb_mode_ids())
+        text = f"N = {res.N} pole pairs ({n_modes} comb modes"
+        text += ", DC shorted by the load)" if res.loaded else ")"
+        f_hi = 0.0
+        if hasattr(self, 'freq_center_spin') and hasattr(self, 'freq_span_spin'):
+            f_hi = abs(self.freq_center_spin.value()) + 0.5 * abs(
+                self.freq_span_spin.value())
+        if getattr(g, 'line_tail_closure', True):
+            text += ("; comb tail closed analytically \u2014 the port loading "
+                     "is exact at this N")
+        else:
+            # the measured law (misc/comb_truncation_checks.py):
+            # |dS| ~ 2.5 (gamma/FSR)(f/FSR)/N, all of it in the phase
+            gam = res.gamma if not res.loaded else res.mode_gamma(1)
+            gam = float(np.max(gam)) if np.ndim(gam) else float(gam)
+            est = 2.5 * (gam / res.FSR) * (f_hi / res.FSR) / max(res.N, 1)
+            text += (f"; raw truncated comb: |\u0394S| \u2248 {est:.2g} at "
+                     f"f = {f_hi:g} (tail ~ 2\u03b3f/(FSR\u00b2N))")
+        if line.get('pump'):
+            gaps = g.pump_truncation_gaps(line)
+            if gaps:
+                text += ("  \u26a0 f_max too small for this pump: "
+                         + " and ".join(sorted(gaps))
+                         + " partners fall outside the modelled comb")
+        return text
+
+    def _add_line_comb_note(self, line, row):
+        note = QLabel(self._comb_note_text(line))
+        note.setStyleSheet("color: dimgray; font-style: italic;")
+        note.setWordWrap(True)
+        note.setToolTip(
+            "The analytic closure carries the tail's PORT loading exactly; "
+            "the tail modes' pump and tap couplings are what f_max still "
+            "truncates -- use 'Check truncation' to measure that.")
+        self.ports_param_layout.addWidget(note, row, 0, 1, 4)
+        self._comb_notes = getattr(self, '_comb_notes', [])
+        self._comb_notes.append((line, note))
+        return row + 1
+
+    def _refresh_comb_notes(self):
+        for line, note in list(getattr(self, '_comb_notes', [])):
+            try:
+                note.setText(self._comb_note_text(line))
+            except RuntimeError:
+                pass           # widget already deleted by a table rebuild
+        self._refresh_mode_index_ranges()
+
+    def _refresh_mode_index_ranges(self):
+        """Re-range every mode-index spinbox against its line's CURRENT N.
+
+        Editing f_max or the end load changes how many modes exist, but the
+        rows are not rebuilt on each keystroke (that would steal focus), so
+        the ranges have to be corrected in place or they stay stuck at the
+        value N had when the row was built.
+        """
+        g = self.graphulator
+        for spin, line in list(getattr(self, '_mode_index_spins', [])):
+            try:
+                n_max = max(1, g.line_resonator_for(line).N)
+                if spin.maximum() != n_max:
+                    spin.setRange(1, n_max)
+            except (ValueError, KeyError, RuntimeError):
+                pass
+
+    def _add_pump_row(self, line, row):
+        """Three narrow rows rather than one very wide one.
+
+        A single horizontal strip of header + four spinboxes + the pair
+        description forced the Ports & Lines pane past 1400 px, so the
+        panel grew a horizontal scrollbar and the plot could not be kept at
+        half the window. Split: a header carrying the device parameter
+        alpha, an indented control strip, and a word-WRAPPED description.
+        Nothing here sets a wide minimum, so the pane follows the splitter.
+        """
+        from .para_features.explicit_ports import (PUMP_NREF_TOOLTIP,
+                                                   PUMP_ALPHA_TOOLTIP)
+        g = self.graphulator
+        pump = line['pump']
+        resonator = g.line_resonator_for(line)
+        twin = g.line_twin(line)
+
+        def pump_changed(key, value):
+            pump[key] = value
+            self._schedule_scattering_update()
+            g._update_plot()
+            self._refresh_partner_label()
+            if hasattr(self, '_refresh_comb_notes'):
+                self._refresh_comb_notes()
+
+        # --- header: what the bus is, and how hard it is driven ---
+        head_box = QHBoxLayout()
+        head_box.setContentsMargins(0, 0, 0, 0)
+        head_box.setSpacing(10)
+        head = QLabel(f"pump@{pump['end']} \N{RIGHTWARDS ARROW} "
+                      f"{twin['label'] if twin else 'twin'}")
+        head.setStyleSheet("font-weight: bold;")
+        head.setToolTip("Pumped termination: one rank-one block between the "
+                        "comb and its conjugate twin (select the "
+                        "triple-line bus on the canvas for appearance).")
+        head_box.addWidget(head)
+        self._pump_modulation_label = QLabel()
+        self._pump_modulation_label.setToolTip(PUMP_ALPHA_TOOLTIP)
+        head_box.addWidget(self._pump_modulation_label)
+        head_box.addStretch()
+        head_holder = QWidget()
+        head_holder.setLayout(head_box)
+        self.ports_param_layout.addWidget(head_holder, row, 0, 1, 4)
+        row += 1
+
+        # --- controls, indented under the header ---
+        ctl = QHBoxLayout()
+        ctl.setContentsMargins(14, 0, 0, 0)
+        ctl.setSpacing(5)
+        ctl.addWidget(QLabel("f_p"))
+        ctl.addWidget(self._physics_spin(
+            pump['f_p'], 1e-9, 1e9, 4, 0.1,
+            "Pump frequency [a.u.]: amplifies every pair with "
+            "f_n + f_m = f_p and converts every pair with |f_n - f_m| = f_p.",
+            lambda v: pump_changed('f_p', float(v)), width=76))
+        ctl.addWidget(QLabel("au"))
+        ctl.addWidget(QLabel("rate"))
+        self._pump_rate_spin = self._physics_spin(
+            pump['rate'] * 1000.0, 0.0, 1e6, 3, 1.0,
+            "Parametric coupling between mode n of the line and its idler "
+            "partner m in the twin [milli-arb. units]; other pairs follow "
+            "the verified profile.",
+            lambda v: pump_changed('rate', float(v) / 1000.0), width=72)
+        ctl.addWidget(self._pump_rate_spin)
+        ctl.addWidget(QLabel("mau"))
+        ctl.addWidget(QLabel("\N{GREEK SMALL LETTER PHI}"))
+        ctl.addWidget(self._physics_spin(
+            pump.get('phase', 0.0), -360.0, 360.0, 1, 15.0,
+            "Pump phase [degrees]",
+            lambda v: pump_changed('phase', float(v)), width=58))
+        ctl.addWidget(QLabel("\N{DEGREE SIGN}"))
+        ctl.addWidget(QLabel("n"))
+        nref = FineControlSpinBox()
+        nref.setDecimals(0)
+        nref.setRange(1, max(1, resonator.N))
+        nref.setSingleStep(1)
+        # wide enough for the comb it actually indexes: N runs to hundreds
+        nref.setMaximumWidth(70)
+        nref.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        nref.setValue(int(pump.get('n_ref', 1)))
+        nref.setToolTip(PUMP_NREF_TOOLTIP)
+        nref.valueChanged.connect(lambda v: pump_changed('n_ref', int(v)))
+        ctl.addWidget(nref)
+        # f_max and the end load both move N, and neither rebuilds this row
+        # (that would steal focus mid-edit) -- so the range is refreshed in
+        # place instead. Without it the box kept whatever N it was BORN
+        # with: raise f_max from 3 to 20 and n still refused to pass 6.
+        self._mode_index_spins.append((nref, line))
+        self._pump_partner_short = QLabel()
+        self._pump_partner_short.setToolTip(PUMP_NREF_TOOLTIP)
+        self._pump_partner_short.setStyleSheet("color: dimgray;")
+        ctl.addWidget(self._pump_partner_short)
+        ctl.addStretch()
+        ctl_holder = QWidget()
+        ctl_holder.setLayout(ctl)
+        self.ports_param_layout.addWidget(ctl_holder, row, 0, 1, 4)
+        row += 1
+
+        # --- the pair, spelled out; wrapped so it never widens the pane ---
+        self._pump_partner_label = QLabel()
+        self._pump_partner_label.setWordWrap(True)
+        self._pump_partner_label.setToolTip(PUMP_NREF_TOOLTIP)
+        self._pump_partner_label.setStyleSheet(
+            "color: dimgray; font-style: italic; margin-left: 14px;")
+        self._pump_partner_line = line
+        self.ports_param_layout.addWidget(self._pump_partner_label,
+                                          row, 0, 1, 4)
+        self._refresh_partner_label()
+        return row + 1
+
+    #: Rate box styling while alpha is past its physical limit.
+    PUMP_OVER_LIMIT_SPIN_CSS = "background-color: rgba(200, 0, 0, 0.25);"
+
+    def _refresh_partner_label(self):
+        line = getattr(self, '_pump_partner_line', None)
+        label = getattr(self, '_pump_partner_label', None)
+        if line is None or label is None or not line.get('pump'):
+            return
+        g = self.graphulator
+        try:
+            label.setText(g.pump_pair_description(line))
+            short = getattr(self, '_pump_partner_short', None)
+            if short is not None:
+                n_ref, m_ref = g._pump_reference_pair(line)
+                short.setText(f"\N{RIGHTWARDS ARROW} m = {m_ref}")
+            mod = getattr(self, '_pump_modulation_label', None)
+            spin = getattr(self, '_pump_rate_spin', None)
+            if mod is not None:
+                alpha, over = g.pump_alpha(line)
+                eps, symbol = g.pump_modulation_fraction(line)
+                beta, beta_sym = g.pump_load_modulation(line)
+                # beta is the DEVICE: what stays put when the rate is
+                # re-anchored. Only available with the end load set.
+                tail = (f"   {beta_sym} = {beta * 100:.3g}%"
+                        if beta is not None else "")
+                if over:
+                    # alpha >= 1: the drive has outrun the element, and
+                    # where that happens is not obvious on a loaded comb
+                    mod.setText(f"\u26a0 \N{GREEK SMALL LETTER ALPHA} = "
+                                f"{alpha:.3g} \u2265 1  (unphysical){tail}")
+                    mod.setStyleSheet("color: #8b0000; font-weight: bold;")
+                else:
+                    mod.setText(f"\N{GREEK SMALL LETTER ALPHA} = {alpha:.3g}"
+                                f"   ({symbol} = {eps * 100:.3g}%){tail}")
+                    mod.setStyleSheet("color: dimgray;")
+                if spin is not None:
+                    spin.setStyleSheet(
+                        self.PUMP_OVER_LIMIT_SPIN_CSS if over else "")
+        except (ValueError, RuntimeError):
+            pass
+
+    def _add_line_end_rows(self, line, row):
+        """The terminating-port lines of a (twin) line, read-only."""
+        g = self.graphulator
+        for end in ('x0', 'xL'):
+            for conn in g._end_conns(line, end):
+                if conn.get('kind') == 'port':
+                    conn_port = next((p for p in g.ports
+                                      if p['port_id'] == conn['port_id']), None)
+                    lab = QLabel(f"{end} \N{RIGHTWARDS ARROW} port "
+                                 f"'{conn_port['label'] if conn_port else '?'}'")
+                    lab.setStyleSheet("color: dimgray;")
+                    self.ports_param_layout.addWidget(lab, row, 0, 1, 4)
+                    row += 1
+        return row
+
+    def _on_tail_closure_toggled(self, checked):
+        g = self.graphulator
+        g.line_tail_closure = bool(checked)
+        self._refresh_comb_notes()
+        self._truncation_result = None
+        if hasattr(self, 'truncation_check_button'):
+            self.truncation_check_button.setText("Check truncation (2\u00d7 f_max)")
+        self._schedule_scattering_update()
+
+    def _check_truncation(self):
+        """Re-solve with every line's f_max doubled and report max |dS|.
+
+        Synchronous (one extra sweep) and honest: it measures what THIS
+        graph's S-parameters do when the comb is extended -- including the
+        pump and tap couplings onto the modes the analytic closure does not
+        carry -- over the current window, per displayed trace.
+        """
+        g = self.graphulator
+        if not g.line_resonators or not g.scattering_mode:
+            g._status_message("Nothing to check: no transmission lines", 4000)
+            return
+        f_center = self.freq_center_spin.value()
+        f_span = self.freq_span_spin.value()
+        n_pts = int(self.freq_points_spin.value())
+        f_start, f_stop = f_center - f_span / 2, f_center + f_span / 2
+        f = np.linspace(f_start, f_stop, n_pts)
+        comps = (g.scattering_components if len(g.scattering_components) > 1
+                 else [None])
+
+        def solve():
+            out = []
+            for comp in comps:
+                job = g._build_sparams_job(comp, f, f_start, f_stop, n_pts,
+                                           multi_component=len(comps) > 1)
+                if job is None:
+                    continue
+                res = _compute_sparams_job(job)      # module-level worker fn
+                if res is not None:
+                    out.append(res)
+            return out
+
+        base = solve()
+        saved = [(l, l['f_max']) for l in g.line_resonators]
+        try:
+            for l in g.line_resonators:
+                l['f_max'] = 2.0 * l['f_max']
+            g._sync_all_twins()
+            doubled = solve()
+        finally:
+            for l, fm in saved:
+                l['f_max'] = fm
+            g._sync_all_twins()
+
+        if not base or len(base) != len(doubled):
+            g._status_message("Truncation check: could not solve", 5000)
+            return
+        worst, lines = 0.0, []
+        for b, d in zip(base, doubled):
+            labels = [b['port_dict'][p]['label'] for p in b['port_ids']]
+            if b['S'].shape != d['S'].shape:
+                lines.append(f"{b['component_label'] or 'graph'}: channel "
+                             "set changed, cannot compare")
+                continue
+            dS = np.abs(d['S'] - b['S'])
+            for j, lj in enumerate(labels):
+                for k, lk in enumerate(labels):
+                    m = float(np.max(dS[:, j, k]))
+                    worst = max(worst, m)
+                    ref = float(np.max(np.abs(b['S'][:, j, k])))
+                    db = (20 * np.log10(1 + m / ref) if ref > 0 else 0.0)
+                    lines.append(f"  {lj} \u2190 {lk}: max|\u0394S| = {m:.3g}"
+                                 f"  (\u2264 {db:.2f} dB of |S|)")
+        verdict = ("N is adequate" if worst < 1e-3 else
+                   "consider raising f_max" if worst < 5e-2 else
+                   "raise f_max: the comb is too short for this graph")
+        report = (f"Doubling f_max on every line changes the displayed S by at "
+                  f"most {worst:.3g} over the window \u2014 {verdict}.\n"
+                  + "\n".join(lines))
+        print("Truncation check:\n" + report)
+        g._status_message(f"Truncation check: max |\u0394S| = {worst:.3g} "
+                          f"\u2014 {verdict}", 12000)
+        self._truncation_result = worst
+        if hasattr(self, 'truncation_check_button'):
+            self.truncation_check_button.setText(
+                f"Check truncation (2\u00d7 f_max): |\u0394S| \u2264 {worst:.2g}")
+            self.truncation_check_button.setToolTip(report)
+
+    def _on_tap_param_changed(self, conn, key, value):
+        conn[key] = value
+        self._schedule_scattering_update()
+        self.graphulator._update_plot()   # n_ref chip on the canvas
+
+    def _on_tap_sign_toggled(self, conn, button):
+        conn['sign'] = -conn.get('sign', 1)
+        button.setText("+" if conn['sign'] >= 0 else "\N{MINUS SIGN}")
+        self._schedule_scattering_update()
+
+    def _on_port_attachment_changed(self, att, key, value_mau):
+        # A rate change keeps the channel structure, so no invalidation —
+        # just recompute (jobs re-read the live port data every sweep)
+        att[key] = value_mau / 1000.0
+        self._schedule_scattering_update()
+
+    def _on_port_attachment_sign_toggled(self, att, button):
+        att['sign'] = -att.get('sign', 1)
+        button.setText("+" if att['sign'] >= 0 else "\N{MINUS SIGN}")
+        self.graphulator._invalidate_scattering_data()
+        self._schedule_scattering_update()
+        self.graphulator._update_plot()
 
     def _on_node_param_changed(self, node_id, param_name, value, widget):
         """Handle when a node parameter is changed"""
@@ -4896,8 +7125,12 @@ class PropertiesPanel(QWidget):
         else:
             duplicate_labels_comment = "# "
 
-        # Get port node labels (nodes with B_ext > 0), including conjugation indicator
+        # Get port channel labels in K-column order: explicit monitored hubs
+        # first (hub label), then legacy B_ext nodes (node label + conj mark)
         port_node_labels = []
+        for hub in self.graphulator._gui_hubs_payload():
+            if hub['monitored']:
+                port_node_labels.append(hub['label'])
         for node in self.graphulator.nodes:
             node_id = _node_key(node)
             params = self.graphulator.scattering_assignments.get(node_id, {})
@@ -4908,6 +7141,10 @@ class PropertiesPanel(QWidget):
                     label += '*'
                 port_node_labels.append(label)
         port_labels_str = ', '.join(port_node_labels)
+
+        # Lines payload (used below to decide whether the exported script may
+        # reuse the GUI's precomputed spanning tree)
+        gui_lines = self.graphulator._gui_lines_payload()
 
         # Build constraint group variable mappings
         # Maps (obj_type, obj_label, param_name) -> variable_name
@@ -4955,83 +7192,155 @@ class PropertiesPanel(QWidget):
                 for member_label in members:
                     constraint_var_map[(obj_type, member_label, param_name)] = var_name
 
-        # Build node and edge data structures
-        nodes_code = []
-        node_assignments_code = []
-
-        # Create node_id to label mapping for faster lookups
+        # ---- literal-emission helpers, shared by the single- and
+        # multi-component templates (a multi-component export emits each
+        # component's data literally, mirroring _build_sparams_job) ----
         node_id_to_label_map = {node['node_id']: node['label'] for node in self.graphulator.nodes}
 
-        for idx, node in enumerate(self.graphulator.nodes):
-            node_id = _node_key(node)
-            params = self.graphulator.scattering_assignments.get(node_id, {})
+        def _join_list(entries):
+            return "[\n" + ",\n".join(entries) + "\n]" if entries else "[]"
 
-            freq = params.get('freq', None)
-            B_int = params.get('B_int', None)
-            B_ext = params.get('B_ext', None)
-            conj = node.get('conj', False)
+        def _join_dict(entries):
+            return "{\n" + "\n".join(entries) + "\n}" if entries else "{}"
 
-            # Round numeric values to 9 decimal places
-            pos_str = f"[{round(node['pos'][0], 9)}, {round(node['pos'][1], 9)}]"
+        def _emit_nodes(node_list, var='nodes'):
+            n_code, a_code = [], []
+            for idx, node in enumerate(node_list):
+                node_id = _node_key(node)
+                params = self.graphulator.scattering_assignments.get(node_id, {})
 
-            nodes_code.append(f"    {{'node_id': {node['node_id']}, 'label': '{node['label']}', " +
-                            f"'pos': {pos_str}, 'conj': {conj}}}")
+                freq = params.get('freq', None)
+                B_int = params.get('B_int', None)
+                B_ext = params.get('B_ext', None)
+                conj = node.get('conj', False)
 
-            # Build scattering assignment for this node
-            # Check if parameters are in constraint groups
-            freq_var = constraint_var_map.get(('node', node['label'], 'freq'))
-            B_int_var = constraint_var_map.get(('node', node['label'], 'B_int'))
-            B_ext_var = constraint_var_map.get(('node', node['label'], 'B_ext'))
+                # Round numeric values to 9 decimal places
+                pos_str = f"[{round(node['pos'][0], 9)}, {round(node['pos'][1], 9)}]"
 
-            freq_str = freq_var if freq_var else (f"{round(freq, 9)}" if freq is not None else "None")
-            B_int_str = B_int_var if B_int_var else (f"{round(B_int, 9)}" if B_int is not None else "None")
-            B_ext_str = B_ext_var if B_ext_var else (f"{round(B_ext, 9)}" if B_ext is not None else "None")
+                n_code.append(f"    {{'node_id': {node['node_id']}, 'label': '{node['label']}', " +
+                              f"'pos': {pos_str}, 'conj': {conj}}}")
 
-            node_assignments_code.append(
-                f"    id(nodes[{idx}]): {{'freq': {freq_str}, 'B_int': {B_int_str}, 'B_ext': {B_ext_str}}},  # node {node['label']}"
-            )
+                # Build scattering assignment for this node
+                # Check if parameters are in constraint groups
+                freq_var = constraint_var_map.get(('node', node['label'], 'freq'))
+                B_int_var = constraint_var_map.get(('node', node['label'], 'B_int'))
+                B_ext_var = constraint_var_map.get(('node', node['label'], 'B_ext'))
 
-        edges_code = []
-        edge_assignments_code = []
+                freq_str = freq_var if freq_var else (f"{round(freq, 9)}" if freq is not None else "None")
+                B_int_str = B_int_var if B_int_var else (f"{round(B_int, 9)}" if B_int is not None else "None")
+                B_ext_str = B_ext_var if B_ext_var else (f"{round(B_ext, 9)}" if B_ext is not None else "None")
 
-        for idx, edge in enumerate(self.graphulator.edges):
-            edge_id = _edge_key(edge)
-            params = self.graphulator.scattering_assignments.get(edge_id, {})
+                a_code.append(
+                    f"    id({var}[{idx}]): {{'freq': {freq_str}, 'B_int': {B_int_str}, 'B_ext': {B_ext_str}}},  # node {node['label']}"
+                )
+            return n_code, a_code
 
-            f_p = params.get('f_p', None)
-            rate = params.get('rate', None)
-            phase = params.get('phase', 0.0)
-            is_self_loop = edge.get('is_self_loop', False)
+        def _emit_edges(edge_list, var='edges'):
+            e_code, a_code = [], []
+            for idx, edge in enumerate(edge_list):
+                edge_id = _edge_key(edge)
+                params = self.graphulator.scattering_assignments.get(edge_id, {})
 
-            edges_code.append(f"    {{'from_node_id': {edge['from_node_id']}, 'to_node_id': {edge['to_node_id']}, " +
-                            f"'is_self_loop': {is_self_loop}}}")
+                f_p = params.get('f_p', None)
+                rate = params.get('rate', None)
+                phase = params.get('phase', 0.0)
+                is_self_loop = edge.get('is_self_loop', False)
 
-            # Get node labels for comment and constraint lookup
-            from_label = node_id_to_label_map[edge['from_node_id']]
-            to_label = node_id_to_label_map[edge['to_node_id']]
+                e_code.append(f"    {{'from_node_id': {edge['from_node_id']}, 'to_node_id': {edge['to_node_id']}, " +
+                              f"'is_self_loop': {is_self_loop}}}")
 
-            # Add asterisks for conjugated nodes (must match how spinbox obj_label is set)
-            from_node = next((n for n in self.graphulator.nodes if n['node_id'] == edge['from_node_id']), None)
-            to_node = next((n for n in self.graphulator.nodes if n['node_id'] == edge['to_node_id']), None)
-            if from_node and from_node.get('conj', False):
-                from_label += '*'
-            if to_node and to_node.get('conj', False):
-                to_label += '*'
-            edge_label = f"{from_label}→{to_label}"
+                # Get node labels for comment and constraint lookup
+                from_label = node_id_to_label_map[edge['from_node_id']]
+                to_label = node_id_to_label_map[edge['to_node_id']]
 
-            # Build scattering assignment for this edge
-            # Check if parameters are in constraint groups
-            f_p_var = constraint_var_map.get(('edge', edge_label, 'f_p'))
-            rate_var = constraint_var_map.get(('edge', edge_label, 'rate'))
-            phase_var = constraint_var_map.get(('edge', edge_label, 'phase'))
+                # Add asterisks for conjugated nodes (must match how spinbox obj_label is set)
+                from_node = next((n for n in self.graphulator.nodes if n['node_id'] == edge['from_node_id']), None)
+                to_node = next((n for n in self.graphulator.nodes if n['node_id'] == edge['to_node_id']), None)
+                if from_node and from_node.get('conj', False):
+                    from_label += '*'
+                if to_node and to_node.get('conj', False):
+                    to_label += '*'
+                edge_label = f"{from_label}\u2192{to_label}"
 
-            f_p_str = f_p_var if f_p_var else (f"{round(f_p, 9)}" if f_p is not None else "None")
-            rate_str = rate_var if rate_var else (f"{round(rate, 9)}" if rate is not None else "None")
-            phase_str = phase_var if phase_var else f"{round(phase, 9)}"
+                # Build scattering assignment for this edge
+                # Check if parameters are in constraint groups
+                f_p_var = constraint_var_map.get(('edge', edge_label, 'f_p'))
+                rate_var = constraint_var_map.get(('edge', edge_label, 'rate'))
+                phase_var = constraint_var_map.get(('edge', edge_label, 'phase'))
 
-            edge_assignments_code.append(
-                f"    id(edges[{idx}]): {{'f_p': {f_p_str}, 'rate': {rate_str}, 'phase': {phase_str}}},  # {from_label}→{to_label}"
-            )
+                f_p_str = f_p_var if f_p_var else (f"{round(f_p, 9)}" if f_p is not None else "None")
+                rate_str = rate_var if rate_var else (f"{round(rate, 9)}" if rate is not None else "None")
+                phase_str = phase_var if phase_var else f"{round(phase, 9)}"
+
+                a_code.append(
+                    f"    id({var}[{idx}]): {{'f_p': {f_p_str}, 'rate': {rate_str}, 'phase': {phase_str}}},  # {from_label}\u2192{to_label}"
+                )
+            return e_code, a_code
+
+        def _emit_taps(edge_var, n_existing, line_ids=None, node_ids=None):
+            # One drawn node-tap fans out into per-comb-mode conservative
+            # couplings; emit them as ordinary static edges so the exported
+            # script reproduces the live model
+            e_code, a_code = [], []
+            for k, (tap_edge, tap_params) in enumerate(
+                    self.graphulator._gui_synth_edges(line_ids=line_ids,
+                                                    node_ids=node_ids)):
+                idx = n_existing + k
+                e_code.append(
+                    f"    {{'from_node_id': {tap_edge['from_node_id']!r}, "
+                    f"'to_node_id': {tap_edge['to_node_id']!r}, "
+                    f"'is_self_loop': False}}")
+                extra = (f", 'frame_rule': {tap_params['frame_rule']!r}"
+                         if tap_params.get('frame_rule') else "")
+                a_code.append(
+                    f"    id({edge_var}[{idx}]): {{'f_p': {tap_params['f_p']!r}, "
+                    f"'rate': {tap_params['rate']!r}, "
+                    f"'phase': {tap_params['phase']!r}{extra}}},"
+                    "  # line tap / pump bus")
+            return e_code, a_code
+
+        def _emit_hubs(node_ids=None, line_ids=None):
+            entries = []
+            for hub in self.graphulator._gui_hubs_payload(node_ids=node_ids,
+                                                          line_ids=line_ids):
+                atts = ', '.join(
+                    f"({node_id!r}, {mag!r}, {phase!r})"
+                    for node_id, mag, phase in hub['attachments'])
+                # a terminated line end also closes its comb tail into the
+                # channel (autograph "comb tail closure"); emit it so the
+                # exported script reproduces the GUI's S exactly
+                tails = hub.get('tails') or []
+                tails_code = (
+                    ", 'tails': [" + ', '.join(
+                        f"{{'line': {t['line']!r}, 'end': {t['end']!r}}}"
+                        for t in tails) + "]") if tails else ""
+                entries.append(
+                    f"    {{'hub_id': {hub['hub_id']!r}, 'label': {hub['label']!r}, "
+                    f"'monitored': {hub['monitored']}, 'attachments': [{atts}]"
+                    f"{tails_code}}}")
+            return _join_list(entries)
+
+        def _emit_lines(line_ids=None):
+            entries = []
+            for line in self.graphulator._gui_lines_payload(line_ids=line_ids):
+                entries.append(
+                    f"    LineResonator(line_id={line['line_id']!r}, "
+                    f"label={line['label']!r}, FSR={line['FSR']!r}, "
+                    f"Ztx={line['Ztx']!r}, f_max={line['f_max']!r}, "
+                    f"port_end={line['port_end']!r}, Z0_port={line['Z0_port']!r}, "
+                    f"alpha_uniform={line['alpha_uniform']!r}, "
+                    f"conj={line.get('conj', False)!r}, "
+                    f"load={line.get('load')!r}, "
+                    f"sections={line.get('sections')!r})")
+            return _join_list(entries)
+
+        # Full-graph literals for the single-component template
+        nodes_code, node_assignments_code = _emit_nodes(self.graphulator.nodes)
+        edges_code, edge_assignments_code = _emit_edges(self.graphulator.edges)
+        tap_edges_code, tap_assignments_code = _emit_taps(
+            'edges', len(self.graphulator.edges))
+        hubs_code = _emit_hubs()
+        lines_code = _emit_lines()
 
         # Add source file information if available
         if self.graphulator.current_filepath:
@@ -5137,27 +7446,100 @@ class PropertiesPanel(QWidget):
         else:
             constraint_vars_section = ""
 
-        # Build per-component node/edge info for multi-component graphs
-        if num_components > 1 and hasattr(self.graphulator, 'scattering_components'):
-            # Generate per-component data
-            component_node_ids = {}  # comp_idx -> list of node_ids
+        # Per-component literal blocks for multi-component graphs. Each
+        # block mirrors _build_sparams_job for that component: its own
+        # nodes/edges/assignments, pre-expanded tap edges, hub payloads
+        # (whose attachments may reference comb-mode ids like 'line:0:n2'),
+        # its line macros, and a GUI-node root — so the exported script
+        # computes exactly what the live sweep computes.
+        component_blocks_code = ""
+        if num_components > 1 and getattr(self.graphulator, 'scattering_components', None):
+            nl = chr(10)
+            blocks = []
             for comp in self.graphulator.scattering_components:
-                comp_idx = comp['index']
-                component_node_ids[comp_idx] = list(comp['node_ids'])
+                ci = comp['index']
+                var_n = f"comp{ci}_nodes"
+                var_e = f"comp{ci}_edges"
+                comp_line_ids = comp.get('line_ids', [])
+                n_code, na_code = _emit_nodes(comp['nodes'], var=var_n)
+                e_code, ea_code = _emit_edges(comp['edges'], var=var_e)
+                t_code, ta_code = _emit_taps(var_e, len(comp['edges']),
+                                             line_ids=comp_line_ids,
+                                             node_ids=comp['node_ids'])
+                hubs_c = _emit_hubs(node_ids=comp['node_ids'],
+                                    line_ids=comp_line_ids)
+                lines_c = _emit_lines(line_ids=comp_line_ids)
 
-            # Generate component membership code
-            component_membership_code = "# Component membership (node_id -> component_index)\n"
-            component_membership_code += "component_node_ids = {\n"
-            for comp_idx in sorted(component_node_ids.keys()):
-                node_ids = component_node_ids[comp_idx]
-                component_membership_code += f"    {comp_idx}: {node_ids},\n"
-            component_membership_code += "}\n"
+                # Root mirrors the live job: first monitored-hub attachment
+                # that is a GUI node, then a legacy port node, then the
+                # first node. A line-only component has no GUI node — the
+                # extractor roots itself inside the comb.
+                gui_node_ids = {n['node_id'] for n in comp['nodes']}
+                root_id = next(
+                    (a[0] for h in self.graphulator._gui_hubs_payload(
+                        node_ids=comp['node_ids'], line_ids=comp_line_ids)
+                     if h['monitored']
+                     for a in h['attachments'] if a[0] in gui_node_ids),
+                    None)
+                if root_id is None and comp['port_node_ids']:
+                    root_id = next(iter(comp['port_node_ids']))
+                if root_id is None and comp['nodes']:
+                    root_id = comp['nodes'][0]['node_id']
+
+                labels = [n['label'] for n in comp['nodes']]
+                labels += [l['label']
+                           for l in self.graphulator.line_resonators
+                           if l['line_id'] in comp_line_ids]
+
+                block = f"""# ----------------------------------------------------------------------
+# Component {ci}: {', '.join(labels)}
+# ----------------------------------------------------------------------
+{var_n} = {_join_list(n_code)}
+
+{var_e} = {_join_list(e_code + t_code)}
+
+comp{ci}_assignments = {_join_dict(na_code + ea_code + ta_code)}
+
+comp{ci}_hubs = {hubs_c}
+
+comp{ci}_line_resonators = {lines_c}
+
+extractor = GraphExtractor()
+extractor.extract_graph_data(
+    nodes={var_n},
+    edges={var_e},
+    scattering_assignments=comp{ci}_assignments,
+    frequency_settings=frequency_settings,
+    root_node_id={root_id!r},
+    hubs=comp{ci}_hubs,
+    line_resonators=comp{ci}_line_resonators
+)
+gsm_components[{ci}] = GraphScatteringMatrix(extractor, frequencies)
+print(f"Component {ci}: {{gsm_components[{ci}].num_ports}} port(s)")
+"""
+                blocks.append(block)
+            component_blocks_code = nl.join(blocks)
+
+        # With line macros in the graph the comb-mode ids (and any tap
+        # edges onto them) exist only after the extractor's expansion
+        # pre-pass, so the exported script lets the extractor compute the
+        # spanning tree itself; the root may still be a GUI node.
+        if self.graphulator.nodes and not gui_lines:
+            root_id_repr = injection_node_id
+            tree_repr = tree_edges_list
+            chord_repr = chord_edges_list
+        elif self.graphulator.nodes:
+            root_id_repr = injection_node_id
+            tree_repr = None
+            chord_repr = None
         else:
-            component_membership_code = ""
+            root_id_repr = None
+            tree_repr = None
+            chord_repr = None
 
         # Generate code - different templates for single vs multi-component
         if num_components == 1:
-            # Single component code (original template)
+            # Single component code (original template + hubs/line macros)
             code = f'''"""
 Scattering calculation code exported from Graphulator{source_comment}
 """
@@ -5165,7 +7547,7 @@ Scattering calculation code exported from Graphulator{source_comment}
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from graphulator.autograph import GraphExtractor, GraphScatteringMatrix
+from graphulator.autograph import GraphExtractor, GraphScatteringMatrix, LineResonator
 
 # Set plot style (uncomment/modify to customize appearance)
 # sns.set_theme(style='whitegrid', context='talk', font_scale=1.0)
@@ -5176,13 +7558,20 @@ nodes = [
 ]
 
 edges = [
-{(',' + chr(10)).join(edges_code)}
+{(',' + chr(10)).join(edges_code + tap_edges_code)}
 ]
 
 # Scattering assignments keyed by object id
 scattering_assignments = {{
-{(',' + chr(10)).join(node_assignments_code + edge_assignments_code)}
+{(',' + chr(10)).join(node_assignments_code + edge_assignments_code + tap_assignments_code)}
 }}
+
+# Explicit dissipation hubs (ports / loss hubs): attachments are
+# (node_id, weight_mag, weight_phase_deg) with weight in sqrt(rate) units
+hubs = {hubs_code}
+
+# Transmission-line macros (expand to standing-wave combs at extraction)
+line_resonators = {lines_code}
 
 # Frequency settings
 frequency_settings = {{
@@ -5192,11 +7581,11 @@ frequency_settings = {{
 }}
 
 # Root node for spanning tree
-root_node_id = {injection_node_id}
+root_node_id = {root_id_repr}
 
 # Pre-computed spanning tree decomposition
-tree_edges = {tree_edges_list}
-chord_edges = {chord_edges_list}
+tree_edges = {tree_repr}
+chord_edges = {chord_repr}
 
 # Extract graph data
 extractor = GraphExtractor()
@@ -5207,7 +7596,9 @@ graph_data = extractor.extract_graph_data(
     frequency_settings=frequency_settings,
     root_node_id=root_node_id,
     precomputed_tree_edges=tree_edges,
-    precomputed_chord_edges=chord_edges
+    precomputed_chord_edges=chord_edges,
+    hubs=hubs,
+    line_resonators=line_resonators
 )
 
 # Generate frequency array
@@ -5231,7 +7622,8 @@ fig, ax = gsm.plot_SdB()
 plt.show()
 '''
         else:
-            # Multi-component code
+            # Multi-component code: per-component literal blocks (mirrors
+            # the live per-component jobs, including line macros and taps)
             code = f'''"""
 Scattering calculation code exported from Graphulator{source_comment}{multi_component_warning}
 """
@@ -5239,82 +7631,27 @@ Scattering calculation code exported from Graphulator{source_comment}{multi_comp
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from graphulator.autograph import GraphExtractor, GraphScatteringMatrix
+from graphulator.autograph import GraphExtractor, GraphScatteringMatrix, LineResonator
 
 # Set plot style (uncomment/modify to customize appearance)
 # sns.set_theme(style='whitegrid', context='talk', font_scale=1.0)
 {constraint_vars_section}
-# Full graph structure
-nodes = [
-{(',' + chr(10)).join(nodes_code)}
-]
-
-edges = [
-{(',' + chr(10)).join(edges_code)}
-]
-
-# Scattering assignments keyed by object id
-scattering_assignments = {{
-{(',' + chr(10)).join(node_assignments_code + edge_assignments_code)}
-}}
-
-{component_membership_code}
 # Frequency settings
 f_center = {round(center, 9)}
 f_span = {round(span, 9)}
 frequencies = np.linspace(f_center - f_span/2, f_center + f_span/2, {int(points)})
+frequency_settings = {{
+    'start': {round(center - span/2, 9)},
+    'stop': {round(center + span/2, 9)},
+    'points': {int(points)}
+}}
 
 # ============================================================================
-# Create GSM for each connected component
+# One GSM per connected component
 # ============================================================================
 gsm_components = {{}}
 
-for comp_idx, comp_node_ids in component_node_ids.items():
-    comp_node_ids_set = set(comp_node_ids)
-
-    # Filter nodes for this component
-    comp_nodes = [n for n in nodes if n['node_id'] in comp_node_ids_set]
-
-    # Filter edges for this component (both endpoints in component, or self-loop on component node)
-    comp_edges = []
-    for e in edges:
-        if e.get('is_self_loop', False):
-            if e['from_node_id'] in comp_node_ids_set:
-                comp_edges.append(e)
-        else:
-            if e['from_node_id'] in comp_node_ids_set and e['to_node_id'] in comp_node_ids_set:
-                comp_edges.append(e)
-
-    # Filter scattering assignments
-    comp_assignments = {{}}
-    for i, n in enumerate(comp_nodes):
-        orig_idx = next(j for j, orig_n in enumerate(nodes) if orig_n['node_id'] == n['node_id'])
-        comp_assignments[id(comp_nodes[i])] = scattering_assignments[id(nodes[orig_idx])]
-    for i, e in enumerate(comp_edges):
-        orig_idx = next(j for j, orig_e in enumerate(edges)
-                       if orig_e['from_node_id'] == e['from_node_id'] and orig_e['to_node_id'] == e['to_node_id'])
-        comp_assignments[id(comp_edges[i])] = scattering_assignments[id(edges[orig_idx])]
-
-    # Find a root node (first port node, or first node if no ports)
-    port_nodes = [n for n in comp_nodes if any(
-        e['from_node_id'] == n['node_id'] and e.get('is_self_loop', False) for e in comp_edges
-    )]
-    root_id = port_nodes[0]['node_id'] if port_nodes else comp_nodes[0]['node_id']
-
-    # Create extractor and GSM for this component
-    extractor = GraphExtractor()
-    extractor.extract_graph_data(
-        nodes=comp_nodes,
-        edges=comp_edges,
-        scattering_assignments=comp_assignments,
-        frequency_settings={{'start': f_center - f_span/2, 'stop': f_center + f_span/2, 'points': {int(points)}}},
-        root_node_id=root_id
-    )
-
-    gsm = GraphScatteringMatrix(extractor, frequencies)
-    gsm_components[comp_idx] = gsm
-    print(f"Component {{comp_idx+1}}: {{len(gsm.port_dict)}} ports")
-
+{component_blocks_code}
 # ============================================================================
 # Add traces to each component's GSM
 # ============================================================================
@@ -5368,18 +7705,21 @@ class LabelPatternAnalyzer:
                    and number is the numeric value for sequencing.
         """
 
-        # Pattern: Letter(s) + underscore + number (e.g., 'A_1', 'Mode_12')
-        match = re.match(r'^([A-Za-z]+)_(\d+)$', label)
+        # Pattern: Letter(s) + underscore + number, braced or not, and
+        # possibly negative (e.g., 'A_1', 'Mode_{12}', 'A_-2')
+        match = re.match(r'^([A-Za-z]+)_(?:\{(-?\d+)\}|(-?\d+))$', label)
         if match:
-            return (cls.PATTERN_UNDERSCORE, match.group(1), int(match.group(2)))
+            digits = (match.group(2) if match.group(2) is not None
+                      else match.group(3))
+            return (cls.PATTERN_UNDERSCORE, match.group(1), int(digits))
 
         # Pattern: Letter(s) followed directly by number (e.g., 'A0', 'B1', 'Mode2')
-        match = re.match(r'^([A-Za-z]+)(\d+)$', label)
+        match = re.match(r'^([A-Za-z]+)(-?\d+)$', label)
         if match:
             return (cls.PATTERN_LETTER_NUMBER, match.group(1), int(match.group(2)))
 
-        # Pattern: Pure number (e.g., '0', '1', '42')
-        match = re.match(r'^(\d+)$', label)
+        # Pattern: Pure number (e.g., '0', '1', '42', '-3')
+        match = re.match(r'^(-?\d+)$', label)
         if match:
             return (cls.PATTERN_PURE_NUMBER, '', int(match.group(1)))
 
@@ -5398,20 +7738,12 @@ class LabelPatternAnalyzer:
     @classmethod
     def _letters_to_number(cls, letters):
         """Convert letters to number: A=1, B=2, ..., Z=26, AA=27."""
-        num = 0
-        for char in letters:
-            num = num * 26 + (ord(char) - ord('A') + 1)
-        return num
+        return letters_to_number(letters)
 
     @classmethod
     def _number_to_letters(cls, num, lowercase=False):
         """Convert number to letters: 1=A, 2=B, ..., 26=Z, 27=AA."""
-        result = ''
-        while num > 0:
-            num -= 1
-            result = chr(ord('A') + (num % 26)) + result
-            num //= 26
-        return result.lower() if lowercase else result
+        return number_to_letters(num, lowercase=lowercase)
 
     @classmethod
     def analyze_graph_labels(cls, labels):
@@ -5423,14 +7755,19 @@ class LabelPatternAnalyzer:
         Returns:
             dict: Mapping of (pattern_type, prefix) -> {'max': int, 'labels': list}
         """
-        series = defaultdict(lambda: {'max': -1, 'labels': []})
+        # 'max' starts as None, not -1: a series that lives entirely below
+        # zero ('A_-5', 'A_-4') would otherwise report a max of -1 and the
+        # next paste would jump to 0, landing on top of nothing it counted.
+        series = defaultdict(lambda: {'max': None, 'labels': []})
 
         for label in labels:
             pattern_type, prefix, number = cls.classify_label(label)
             if pattern_type != cls.PATTERN_UNKNOWN and number is not None:
                 key = (pattern_type, prefix or '')
                 series[key]['labels'].append(label)
-                series[key]['max'] = max(series[key]['max'], number)
+                current = series[key]['max']
+                series[key]['max'] = (number if current is None
+                                      else max(current, number))
 
         return dict(series)
 
@@ -5466,7 +7803,7 @@ class LabelPatternAnalyzer:
 
             # Initialize series_next from existing graph max
             if key not in series_next:
-                if key in analysis:
+                if key in analysis and analysis[key]['max'] is not None:
                     series_next[key] = analysis[key]['max'] + 1
                 else:
                     # New series - start from 0 for numbers, 1 for letters
@@ -5492,8 +7829,9 @@ class LabelPatternAnalyzer:
         if pattern_type == cls.PATTERN_LETTER_NUMBER:
             return f"{prefix}{number}"
         elif pattern_type == cls.PATTERN_UNDERSCORE:
-            # Use braces for multi-digit numbers in underscore format
-            return f"{prefix}_{{{number}}}" if number >= 10 else f"{prefix}_{number}"
+            # Braces for anything wider than one character -- multi-digit
+            # AND negative, which would otherwise subscript only the minus
+            return format_subscript_label(prefix, number)
         elif pattern_type == cls.PATTERN_PURE_NUMBER:
             return str(number)
         elif pattern_type == cls.PATTERN_PURE_LETTER:
@@ -5517,28 +7855,53 @@ def _compute_sparams_job(job):
     edges = job['edges']
     root_node_id = job['root_node_id']
     f_root_s = job['f_root_s']
+    hubs = job.get('hubs') or []
+    line_resonators = job.get('line_resonators') or []
 
-    # Compute spanning tree for this component
     extractor = GraphExtractor()
-    gui_nodes = [{'node_id': node['node_id']} for node in nodes]
-    gui_edges = [
-        {
-            'from_node_id': edge['from_node_id'],
-            'to_node_id': edge['to_node_id'],
-            'is_self_loop': edge['is_self_loop']
-        }
-        for edge in edges
-    ]
 
-    tree_edges_nested, chord_edges_list, is_connected = extractor.compute_spanning_tree(
-        gui_nodes, gui_edges, root_node_id
-    )
+    if nodes and not line_resonators:
+        # Compute spanning tree for this component. (With line macros in
+        # the job the comb-mode ids exist only after the extractor's
+        # expansion pre-pass — tap edges reference them — so the extractor
+        # computes the tree itself over the expanded graph.)
+        gui_nodes = [{'node_id': node['node_id']} for node in nodes]
+        gui_edges = [
+            {
+                'from_node_id': edge['from_node_id'],
+                'to_node_id': edge['to_node_id'],
+                'is_self_loop': edge['is_self_loop']
+            }
+            for edge in edges
+        ]
 
-    # Convert to list format for extractor
-    tree_edges_list = []
-    for branch in tree_edges_nested:
-        for from_id, to_id in branch:
-            tree_edges_list.append([from_id, to_id])
+        # Zero-offset bridge links across shared hubs (see
+        # autograph.compute_hub_bridge_links): the tree must reach
+        # hub-bridged subgraphs so their pump-frame accumulation survives
+        link_pairs = compute_hub_bridge_links(
+            [n['node_id'] for n in nodes],
+            [(e['from_node_id'], e['to_node_id'])
+             for e in gui_edges if not e['is_self_loop']],
+            [[a[0] for a in h['attachments']] for h in hubs])
+        gui_edges = gui_edges + [
+            {'from_node_id': a, 'to_node_id': b, 'is_self_loop': False}
+            for a, b in link_pairs]
+
+        tree_edges_nested, chord_edges_list, is_connected = extractor.compute_spanning_tree(
+            gui_nodes, gui_edges, root_node_id
+        )
+
+        # Convert to list format for extractor
+        tree_edges_list = []
+        for branch in tree_edges_nested:
+            for from_id, to_id in branch:
+                tree_edges_list.append([from_id, to_id])
+    else:
+        # Line-macro-only job: no GUI nodes; the extractor's expansion
+        # pre-pass supplies the comb nodes and its root rule picks the root
+        tree_edges_list = None
+        chord_edges_list = None
+        root_node_id = None
 
     extractor.extract_graph_data(
         nodes=nodes,
@@ -5548,12 +7911,16 @@ def _compute_sparams_job(job):
                             'points': job['freq_points']},
         root_node_id=root_node_id,
         precomputed_tree_edges=tree_edges_list,
-        precomputed_chord_edges=chord_edges_list
+        precomputed_chord_edges=chord_edges_list,
+        hubs=hubs,
+        line_resonators=line_resonators
     )
 
     # Validate all required parameters are assigned before computing
     missing = extractor.validate_scattering_assignments()
-    missing_items = missing.get('missing_nodes', []) + missing.get('missing_edges', [])
+    missing_items = (missing.get('missing_nodes', [])
+                     + missing.get('missing_edges', [])
+                     + missing.get('missing_hubs', []))
     if missing_items:
         detail = "\n".join(f"  - {item}" for item in missing_items)
         logger.info(f"  {comp_name}: Missing scattering parameters:\n{detail}")
@@ -5566,20 +7933,29 @@ def _compute_sparams_job(job):
         f_calc = -f_root_s
         logger.info(f"  {comp_name}: Injection node is conjugated - using negative frequencies")
 
-    # Compute S-matrix
-    scattering_calc = GraphScatteringMatrix(extractor, f_calc)
+    # Compute S-matrix (the comb tail closure is on unless the job says
+    # otherwise -- see autograph.GraphScatteringMatrix._build_tail_closure)
+    scattering_calc = GraphScatteringMatrix(
+        extractor, f_calc, tail_closure=job.get('tail_closure', True))
 
-    logger.info(f"  {comp_name}: {len(scattering_calc.port_dict)} ports computed")
+    logger.info(f"  {comp_name}: {scattering_calc.num_ports} ports computed")
 
-    # Build enriched port_dict with labels for checkbox/plot code
-    # Original port_dict: {node_id: B_ext}
-    # Enriched: {node_id: {'B_ext': B_ext, 'label': label, 'conj': bool}}
+    # Build enriched port_dict with labels for checkbox/plot code, keyed by
+    # the channel refs in port_ids (hub_id for explicit hubs, node_id for
+    # legacy auto-wrapped ports). Port label = hub label (legacy: node label).
+    conj_by_node = {n['node_id']: n.get('conj', False) for n in nodes}
     enriched_port_dict = {}
-    for port_id, B_ext in scattering_calc.port_dict.items():
-        port_node = next((n for n in nodes if n['node_id'] == port_id), None)
-        label = port_node['label'] if port_node else str(port_id)
-        conj = port_node.get('conj', False) if port_node else False
-        enriched_port_dict[port_id] = {'B_ext': B_ext, 'label': label, 'conj': conj}
+    for hub, ref in zip(scattering_calc.port_hubs, scattering_calc.port_ids):
+        if 'legacy_node_id' in hub:
+            B_ext = hub['legacy_B_ext']
+            conj = conj_by_node.get(hub['legacy_node_id'], False)
+        else:
+            B_ext = sum(mag ** 2 for _, mag, _ in hub['attachments'])
+            # all attachments share one sector (Phase-1 gate)
+            first = hub['attachments'][0][0] if hub['attachments'] else None
+            conj = conj_by_node.get(first, False)
+        enriched_port_dict[ref] = {'B_ext': B_ext, 'label': hub['label'],
+                                   'conj': conj}
 
     return {
         'S': scattering_calc.S,
@@ -5634,7 +8010,7 @@ class SParamsWorker(QThread):
             self.failed.emit(self.generation, str(e))
 
 
-class Graphulator(GraphWindowCommonMixin, QMainWindow):
+class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
     """Main application window"""
 
     # Shared-behavior parametrization (see GraphWindowCommonMixin)
@@ -5732,6 +8108,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         self.edge_mode_first_node = None  # First node selected in edge mode
         self.edge_mode_highlight_patch = None  # Visual highlight for first selected node
 
+        # Explicit ports & transmission-line macros (hub-based dissipation)
+        self._init_explicit_ports_state()
+
         # GraphCircuit for managing graph structure (allow duplicate labels)
         self.graph = gp.GraphCircuit(allow_duplicate_labels=True)
 
@@ -5765,6 +8144,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         self.dragging_group = False  # True if dragging multiple selected nodes
         self.drag_pending_node = None  # Node clicked but not yet dragging (waiting for motion)
         self.drag_pending_group = False  # Group clicked but not yet dragging
+        self._drag_duplicate = False  # Option/Alt-drag: copy, don't move
         self.drag_start_pos = None  # Starting position for group drag
         self.drag_threshold = 0.1  # Minimum distance to move before starting drag (data units)
         self.drag_preview_patches = []  # List of preview patches for group drag
@@ -6063,7 +8443,12 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         sparams_selection_widget = QWidget()
         sparams_selection_layout = QVBoxLayout()
         sparams_selection_widget.setLayout(sparams_selection_layout)
-        sparams_selection_widget.setMaximumWidth(120)
+        # width is sized to the widest trace name after the checkboxes are
+        # built (_fit_sparams_selection_width); a hard cap used to clip long
+        # port labels, and horizontal scrolling is off by design
+        self.sparams_selection_widget = sparams_selection_widget
+        sparams_selection_widget.setMinimumWidth(self.SPARAMS_SELECTION_MIN_W)
+        sparams_selection_widget.setMaximumWidth(self.SPARAMS_SELECTION_MIN_W)
 
         sparams_selection_label = QLabel("S-parameters:")
         sparams_selection_label.setStyleSheet("font-weight: bold;")
@@ -6234,12 +8619,26 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         self.sparams_phase_min_spin.valueChanged.connect(self._on_sparams_axis_limit_changed)
         axis_controls_layout.addWidget(self.sparams_phase_min_spin, 4, 5)
 
-        # Row 5: Conjugate frequencies toggle (spans all columns)
+        # Row 5: conjugate frequencies | mark line modes
         self.sparams_conjugate_freqs = QPushButton("Conjugate Freqs")
         self.sparams_conjugate_freqs.setCheckable(True)
         self.sparams_conjugate_freqs.setChecked(False)
         self.sparams_conjugate_freqs.clicked.connect(self._on_sparams_conjugate_toggled)
-        axis_controls_layout.addWidget(self.sparams_conjugate_freqs, 5, 0, 1, 6)
+        axis_controls_layout.addWidget(self.sparams_conjugate_freqs, 5, 0, 1, 3)
+
+        self.sparams_mark_modes = QPushButton("Mark Line Modes")
+        self.sparams_mark_modes.setCheckable(True)
+        self.sparams_mark_modes.setChecked(False)
+        self.sparams_mark_modes.setToolTip(
+            "Mark each transmission line's normal-mode frequencies on the "
+            "plot \u2014 the LOADED ones when an end load is set \u2014 and "
+            "label them by mode index. Hover a marker for the line, the "
+            "index and the frequency. Markers run to the comb cutoff (mode "
+            "N); the last one is drawn heavier, because beyond it the model "
+            "keeps no explicit modes (the tail is closed analytically). Use "
+            "it to read off which n to name in the pump's reference pair.")
+        self.sparams_mark_modes.clicked.connect(self._on_sparams_mark_modes_toggled)
+        axis_controls_layout.addWidget(self.sparams_mark_modes, 5, 3, 1, 3)
 
         # Initialize visibility of phase controls based on default mode
         self._update_sparams_axis_controls_visibility()
@@ -6372,6 +8771,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         sm.bind_shortcut("edge.place_single", self._toggle_edge_mode, self)
         sm.bind_shortcut("edge.place_continuous", self._toggle_edge_continuous_mode, self)
 
+        # ===== PORTS & LINES (Explicit Ports mode) =====
+        sm.bind_shortcut("port.place_single", self._toggle_port_mode, self)
+        sm.bind_shortcut("port.place_continuous", self._toggle_port_continuous_mode, self)
+        sm.bind_shortcut("line.place", self._toggle_line_mode, self)
+
         # ===== SHORTCUT HINT OVERLAY =====
         sm.bind_shortcut("overlay.toggle", self._toggle_shortcut_overlay, self)
         # Keep the overlay's displayed keys correct if the user remaps them
@@ -6382,8 +8786,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         sm.bind_shortcut("grid.toggle_type", self._toggle_grid_type, self)
 
         # ===== GRAPH ROTATION =====
-        sm.bind_shortcut("rotate.ccw", lambda: self._rotate_selected_nodes(15), self)
-        sm.bind_shortcut("rotate.cw", lambda: self._rotate_selected_nodes(-15), self)
+        sm.bind_shortcut("rotate.ccw", lambda: self._rotate_selected_nodes(
+            getattr(config, 'GLYPH_ROTATION_INCREMENT', 15)), self)
+        sm.bind_shortcut("rotate.cw", lambda: self._rotate_selected_nodes(
+            -getattr(config, 'GLYPH_ROTATION_INCREMENT', 15)), self)
         sm.bind_shortcut("graph.flip_horizontal", self._flip_selected_nodes_horizontal, self, wrap_for_input=True)
         sm.bind_shortcut("graph.flip_vertical", self._flip_selected_nodes_vertical, self)
 
@@ -6504,9 +8910,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         print("  Shift+Up/Down   : Nudge node label / Adjust edge label offset")
         print("  Shift+Left/Right: Nudge node label horizontally")
         print("  Ctrl+A          : Select all nodes and edges")
-        print("  Ctrl+C          : Copy selected nodes and edges")
-        print("  Ctrl+X          : Cut selected nodes and edges")
-        print("  Ctrl+V          : Paste nodes and edges at view center")
+        print("  Ctrl+C          : Copy the selection (nodes, edges, ports, lines)")
+        print("  Ctrl+X          : Cut the selection")
+        print("  Ctrl+V          : Paste at view center")
         print("  Ctrl+Z          : Undo last action")
         print("  Ctrl+U          : Rotate selected nodes 15° CCW")
         print("  Ctrl+I          : Rotate selected nodes 15° CW")
@@ -6553,6 +8959,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         self.examples_menu = file_menu.addMenu("&Examples")
         self._populate_examples_menu()
 
+        # Test submenu: canonical explicit-ports scenes (aesthetics +
+        # physics checks); shipped with the repo under examples/test_scenes
+        self.test_menu = file_menu.addMenu("&Test")
+        self._populate_test_menu()
+
         # Reload Last Graph
         reload_action = QAction("Reload Last Graph", self)
         reload_action.triggered.connect(self._reload_last_graph)
@@ -6590,8 +9001,18 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         export_code_action = QAction("Python Code...", self)
         sm.bind_action("file.export_code", export_code_action)
-        export_code_action.triggered.connect(self._export_code)
+        export_code_action.triggered.connect(lambda: self._export_code())
         export_menu.addAction(export_code_action)
+
+        export_grouped_action = QAction("Python Code (grouped by style)...", self)
+        export_grouped_action.setStatusTip(
+            "Same drawing, with look-alike nodes/edges factored into named "
+            "style dicts and lists of geometry -- shorter to read and easier "
+            "to edit or generate from."
+        )
+        export_grouped_action.triggered.connect(
+            lambda: self._export_code(compact=True))
+        export_menu.addAction(export_grouped_action)
 
         export_png_action = QAction("PNG Image...", self)
         export_png_action.triggered.connect(self._export_png)
@@ -6680,6 +9101,39 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         clear_kron_action = QAction("Clear Kron Reduct&ion", self)
         clear_kron_action.triggered.connect(self._clear_kron_reduction)
         action_menu.addAction(clear_kron_action)
+
+        # Insert menu (Explicit Ports mode: ports, loss hubs, lines)
+        self._ports_menu = menubar.addMenu("&Insert")
+
+        # (keyboard shortcuts P/Shift+P/L are registered via bind_shortcut in
+        # _create_shortcuts; the menu entries show the keys informationally)
+        place_port_action = QAction(
+            f"Place &Port\t{sm.get_key_sequence_display('port.place_single')}",
+            self)
+        place_port_action.triggered.connect(self._toggle_port_mode)
+        self._ports_menu.addAction(place_port_action)
+
+        place_loss_hub_action = QAction("Place &Loss Hub", self)
+        place_loss_hub_action.triggered.connect(self._start_loss_hub_placement)
+        self._ports_menu.addAction(place_loss_hub_action)
+
+        place_line_action = QAction(
+            f"Place &Transmission Line\t{sm.get_key_sequence_display('line.place')}",
+            self)
+        place_line_action.triggered.connect(self._toggle_line_mode)
+        self._ports_menu.addAction(place_line_action)
+
+        self._ports_menu.addSeparator()
+
+        explode_line_action = QAction("&Explode Selected Line to Nodes", self)
+        explode_line_action.setToolTip(
+            "One-way: materialize the selected line's comb modes as real "
+            "nodes plus a port glyph")
+        explode_line_action.triggered.connect(self._explode_selected_line)
+        self._ports_menu.addAction(explode_line_action)
+
+        # Hidden until Explicit Ports mode is enabled
+        self._ports_menu.menuAction().setVisible(self.explicit_ports_enabled)
 
         # Help menu
         help_menu = menubar.addMenu("&Help")
@@ -6785,6 +9239,54 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             pass
 
         return None
+
+    @staticmethod
+    def _get_test_scenes_dir():
+        """Find examples/test_scenes (package resources or dev layout)."""
+        try:
+            from importlib import resources
+            scenes_path = resources.files('graphulator').joinpath(
+                'examples/test_scenes')
+            if hasattr(scenes_path, '__fspath__'):
+                scenes_str = str(scenes_path)
+                if Path(scenes_str).is_dir():
+                    return scenes_str
+        except Exception:
+            pass
+        try:
+            this_file = Path(__file__).resolve()
+            project_root = this_file.parent.parent.parent
+            dev_scenes = project_root / 'examples' / 'test_scenes'
+            if dev_scenes.is_dir():
+                return str(dev_scenes)
+        except Exception:
+            pass
+        return None
+
+    def _populate_test_menu(self):
+        """Populate File -> Test with the bundled test scenes."""
+        self.test_menu.clear()
+        scene_files = []
+        scenes_dir = self._get_test_scenes_dir()
+        if scenes_dir:
+            try:
+                scene_files = sorted(
+                    f for f in Path(scenes_dir).iterdir()
+                    if f.name.endswith('.pgraph'))
+            except (FileNotFoundError, OSError) as exc:
+                logger.warning("Could not list test scenes from %s: %s",
+                               scenes_dir, exc)
+        if not scene_files:
+            empty = QAction("(No test scenes available)", self)
+            empty.setEnabled(False)
+            self.test_menu.addAction(empty)
+            return
+        for scene_file in scene_files:
+            action = QAction(scene_file.stem, self)
+            action.setToolTip(f"Load test scene: {scene_file.name}")
+            action.triggered.connect(
+                lambda checked, f=scene_file: self._load_example(f))
+            self.test_menu.addAction(action)
 
     def _populate_examples_menu(self):
         """Populate the Examples submenu with example graphs from package resources"""
@@ -6999,8 +9501,14 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             if hasattr(self, 'kron_reduced_matrix_latex') and self.kron_reduced_matrix_latex is not None:
                 data["kron_reduction"]["kron_reduced_matrix_latex"] = self.kron_reduced_matrix_latex
 
-        # Save scattering data if scattering mode has been used
-        if hasattr(self, 'scattering_tree_edges') and self.scattering_tree_edges:
+        # Save scattering data if scattering mode has been used. A non-empty
+        # spanning tree was the historical proxy for that, but a glyph-only
+        # graph (a terminated or pumped line, no GUI edges) has an EMPTY
+        # tree while very much in scattering mode -- its sweep window and
+        # injection choice were silently dropped on save. Being in the mode
+        # is sufficient; the loader recomputes an empty tree on demand.
+        if getattr(self, 'scattering_tree_edges', None) \
+                or getattr(self, 'scattering_mode', False):
             # Convert edge key sets to lists of tuples for JSON serialization
             tree_edges_list = [list(edge_key) for edge_key in self.scattering_tree_edges]
             chord_edges_list = [list(edge_key) for edge_key in self.scattering_chord_edges]
@@ -7033,6 +9541,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     "x_autoscale": self.sparams_x_autoscale.isChecked(),
                     "y_autoscale": self.sparams_y_autoscale.isChecked(),
                     "conjugate_freqs": self.sparams_conjugate_freqs.isChecked(),
+                    "mark_modes": self.sparams_mark_modes.isChecked(),
                     # New phase-related settings
                     "plot_mode": plot_mode,
                     "phase_autoscale": self.sparams_phase_autoscale.isChecked(),
@@ -7059,6 +9568,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             if hasattr(self, 'scattering_constraint_groups') and self.scattering_constraint_groups:
                 data["scattering"]["constraint_groups"] = self.scattering_constraint_groups
                 data["scattering"]["next_constraint_group_id"] = self._next_constraint_group_id
+
+        # Explicit ports & transmission lines (bumps version to 3.0 when
+        # present; legacy-only graphs keep writing 2.0)
+        self._serialize_ports_and_lines(data)
 
         # Save notes content. Image data lives in a side-table so the markdown
         # source stays readable and the on-disk format matches the editor's
@@ -7236,6 +9749,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             self.global_imports = []
             self.global_code = {}
             print(f"Loaded legacy .graph file (version {version})")
+
+        # Restore explicit ports & transmission lines (v3.0 sections; absent
+        # in older files). Auto-enables Explicit Ports mode when present.
+        self._deserialize_ports_and_lines(data, source_name="This file")
 
         # Restore Kron reduction data if present
         kron_data = data.get("kron_reduction", None)
@@ -7490,6 +10007,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # Auto-fit view to loaded graph (center and zoom to fit all objects)
         self._auto_fit_view()
 
+    def _clear_nodes(self):
+        """Clear all nodes (and port/line glyphs, which reference them)."""
+        self._init_explicit_ports_state()
+        super()._clear_nodes()
+
     def _new_graph(self):
         """Create a new graph"""
         if not self._check_unsaved_changes():
@@ -7504,6 +10026,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         self.current_filepath = None
         self.node_counter = 0
         self.node_id_counter = 0
+
+        # Reset explicit ports & transmission lines
+        self._init_explicit_ports_state()
 
         # Reset global code properties
         self.global_imports = []
@@ -7622,8 +10147,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 self.edges = self.kron_graph['edges']
 
         try:
-            if not self.nodes:
-                print("No nodes to export")
+            if not self._has_drawable_content():
+                print("Nothing to export")
                 return
 
             filepath, _ = QFileDialog.getSaveFileName(
@@ -7666,6 +10191,47 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 self.edges = saved_edges
 
 
+    # S-parameter selection panel: sized to content between these bounds
+    # (long port labels like 'TL1*' used to be clipped by a hard 120 px cap)
+    SPARAMS_SELECTION_MIN_W = 120
+    SPARAMS_SELECTION_MAX_W = 340
+
+    def _fit_sparams_selection_width(self):
+        """Size the S-parameter selection column to its widest entry."""
+        widget = getattr(self, 'sparams_selection_widget', None)
+        boxes = getattr(self, 'sparams_checkboxes', None)
+        if widget is None:
+            return
+        texts = [cb.text() for cb in (boxes or {}).values()]
+        layout = getattr(self, 'sparams_checkbox_layout', None)
+        if layout is not None:                      # component header rows
+            for i in range(layout.count()):
+                w = layout.itemAt(i).widget()
+                if isinstance(w, QLabel):
+                    texts.append(w.text())
+        if not texts:
+            widget.setMaximumWidth(self.SPARAMS_SELECTION_MIN_W)
+            return
+        metrics = widget.fontMetrics()
+        text_w = max(metrics.horizontalAdvance(t) for t in texts)
+        # checkbox indicator + spacing + scrollbar + margins
+        needed = text_w + 60
+        widget.setMaximumWidth(int(min(max(needed,
+                                           self.SPARAMS_SELECTION_MIN_W),
+                                       self.SPARAMS_SELECTION_MAX_W)))
+
+    def _has_drawable_content(self):
+        """True when the canvas has something worth exporting.
+
+        Image exports capture the FIGURE, so a graph made only of port or
+        transmission-line glyphs (a terminated line, say) is perfectly
+        exportable even though it has no nodes at all. The old `not
+        self.nodes` guard silently refused those.
+        """
+        return bool(self.nodes
+                    or getattr(self, 'ports', None)
+                    or getattr(self, 'line_resonators', None))
+
     def _copy_graph_to_clipboard(self, include_png=True):
         """Copy the whole graph to the clipboard as vector PDF/SVG (+ PNG).
 
@@ -7696,8 +10262,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 self.edges = self.kron_graph['edges']
 
         try:
-            if not self.nodes:
-                print("No nodes to copy")
+            if not self._has_drawable_content():
+                print("Nothing to copy")
                 self.statusBar().showMessage("No graph to copy", 3000)
                 return
 
@@ -7751,8 +10317,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 self.edges = self.kron_graph['edges']
 
         try:
-            if not self.nodes:
-                print("No nodes to export")
+            if not self._has_drawable_content():
+                print("Nothing to export")
                 return
 
             filepath, _ = QFileDialog.getSaveFileName(
@@ -7814,7 +10380,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         str
             The SVG content as a string, or empty string if generation fails.
         """
-        if not self.nodes:
+        if not self._has_drawable_content():
             return ""
 
         # Determine which canvas to use
@@ -7881,8 +10447,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 self.edges = self.kron_graph['edges']
 
         try:
-            if not self.nodes:
-                print("No nodes to export")
+            if not self._has_drawable_content():
+                print("Nothing to export")
                 return
 
             filepath, _ = QFileDialog.getSaveFileName(
@@ -7995,77 +10561,12 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
 
     def _auto_increment_label(self, label):
-        """Auto-increment a label based on its pattern
+        """Auto-increment a label based on its pattern.
 
-        Examples:
-        - 'A' -> 'B', 'Z' -> 'AA'
-        - 'A_1' -> 'A_2', 'A_9' -> 'A_{10}'
-        - 'A0' -> 'A1', 'B9' -> 'B10'
-        - '1' -> '2', '99' -> '100'
+        One shared table in common_window (negative subscripts included);
+        see :func:`~graphulator.common_window.auto_increment_label`.
         """
-
-        # Pattern 1: Letter with underscore and number (e.g., 'A_1', 'B_12')
-        match = re.match(r'^([A-Za-z]+)_(\d+)$', label)
-        if match:
-            prefix = match.group(1)
-            num = int(match.group(2))
-            next_num = num + 1
-            # Use braces for multi-digit numbers
-            if next_num >= 10:
-                return f"{prefix}_{{{next_num}}}"
-            else:
-                return f"{prefix}_{next_num}"
-
-        # Pattern 2: Letter(s) followed directly by number (e.g., 'A0', 'B1', 'Mode2')
-        match = re.match(r'^([A-Za-z]+)(\d+)$', label)
-        if match:
-            prefix = match.group(1)
-            num = int(match.group(2))
-            return f"{prefix}{num + 1}"
-
-        # Pattern 3: Pure number (e.g., '1', '42')
-        match = re.match(r'^(\d+)$', label)
-        if match:
-            num = int(match.group(1))
-            return str(num + 1)
-
-        # Pattern 4: Pure uppercase letter(s) (e.g., 'A', 'Z', 'AA')
-        match = re.match(r'^([A-Z]+)$', label)
-        if match:
-            letters = match.group(1)
-            # Convert to number, increment, convert back
-            # A=1, B=2, ..., Z=26, AA=27, etc.
-            num = 0
-            for char in letters:
-                num = num * 26 + (ord(char) - ord('A') + 1)
-            num += 1
-
-            # Convert back to letters
-            result = ''
-            while num > 0:
-                num -= 1
-                result = chr(ord('A') + (num % 26)) + result
-                num //= 26
-            return result
-
-        # Pattern 5: Pure lowercase letters
-        match = re.match(r'^([a-z]+)$', label)
-        if match:
-            letters = match.group(1)
-            num = 0
-            for char in letters:
-                num = num * 26 + (ord(char) - ord('a') + 1)
-            num += 1
-
-            result = ''
-            while num > 0:
-                num -= 1
-                result = chr(ord('a') + (num % 26)) + result
-                num //= 26
-            return result
-
-        # If no pattern matches, just return the original label
-        return label
+        return auto_increment_label(label)
 
     def _reset_last_node_props_to_defaults(self, preserve_label=True):
         """Reset last_node_props to current config defaults.
@@ -8758,11 +11259,18 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             # Clear edge mode state if exiting edge mode
             if self.edge_mode_first_node is not None:
                 self.edge_mode_first_node = None
+            self._attach_pending_port = None
+            self._place_loss_hub_next = False
             self._update_plot()
-        elif self.selected_nodes or self.selected_edges:
+        elif (self.selected_nodes or self.selected_edges
+              or self.selected_ports or self.selected_lines
+              or self.selected_attachments):
             print(f"Cleared selection of {len(self.selected_nodes)} node(s) and {len(self.selected_edges)} edge(s)")
             self.selected_nodes.clear()
             self.selected_edges.clear()
+            self.selected_ports.clear()
+            self.selected_lines.clear()
+            self.selected_attachments.clear()
             self._update_plot()
 
     def _get_selected_injection_node_id(self):
@@ -8782,11 +11290,18 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         return combo.currentData()
 
     def _get_default_root_node_id(self):
-        """Get the default root node ID - first port node (with B_ext > 0), or first node
+        """Get the default root node ID - first attachment of the first
+        explicit port, else first legacy port node (B_ext > 0), else first
+        node
 
         Returns:
             int: The node_id to use as default root
         """
+        # Explicit ports take precedence (mirrors the extractor root rule)
+        for port in self.ports:
+            if port.get('monitored', True) and port['attachments']:
+                return port['attachments'][0]['node_id']
+
         # Try to find first port node (node with self-loop and B_ext > 0)
         for node in self.nodes:
             node_id = node['node_id']
@@ -8834,11 +11349,15 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         else:
             # Show all nodes
             nodes_to_show = self.nodes
-            # Find all port node IDs
+            # Find all port node IDs (legacy self-loops + explicit ports)
             port_node_ids = set()
             for edge in self.edges:
                 if edge.get('is_self_loop', False):
                     port_node_ids.add(edge['from_node_id'])
+            for port in self.ports:
+                if port.get('monitored', True):
+                    port_node_ids.update(a['node_id']
+                                         for a in port['attachments'])
 
         # Clear and repopulate with port nodes only (nodes that have self-loops)
         combo.clear()
@@ -8906,6 +11425,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             # Multiple components (disconnected graph)
             for comp in self.scattering_components:
                 # Create label showing component info
+                if comp.get('line_ids'):
+                    label = (f"Component {comp['index'] + 1}: line "
+                             f"'{comp.get('line_label', '?')}'")
+                    combo.addItem(label, comp['index'])
+                    continue
                 node_labels = sorted([n['label'] for n in comp['nodes']])
                 port_labels = sorted([n['label'] for n in comp['nodes'] if n['node_id'] in comp['port_node_ids']])
                 label = f"Component {comp['index'] + 1}: {', '.join(node_labels[:3])}"
@@ -8988,7 +11512,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 - 'port_node_ids': set of node_ids that have self-loops (ports)
                 - 'index': component index (0-based)
         """
-        if not self.nodes:
+        if not self.nodes and not self.line_resonators:
             return []
 
         # Build adjacency list (excluding self-loops)
@@ -9004,6 +11528,13 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             if from_id in adjacency and to_id in adjacency:
                 adjacency[from_id].add(to_id)
                 adjacency[to_id].add(from_id)
+
+        # A shared port cross-damps every node it attaches to, so its
+        # attachments belong to one component
+        for a_id, b_id in self._port_adjacency_pairs():
+            if a_id in adjacency and b_id in adjacency:
+                adjacency[a_id].add(b_id)
+                adjacency[b_id].add(a_id)
 
         # Find connected components using BFS
         visited = set()
@@ -9047,11 +11578,18 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     if edge['from_node_id'] in node_ids and edge['to_node_id'] in node_ids:
                         comp_edges.append(edge)
 
-            # Find port nodes (nodes with self-loops)
+            # Find port nodes (nodes with self-loops, plus nodes attached to
+            # an explicit monitored port)
             port_node_ids = set()
             for edge in comp_edges:
                 if edge.get('is_self_loop', False):
                     port_node_ids.add(edge['from_node_id'])
+            for port in self.ports:
+                if not port.get('monitored', True):
+                    continue
+                for att in port['attachments']:
+                    if att['node_id'] in node_ids:
+                        port_node_ids.add(att['node_id'])
 
             result.append({
                 'node_ids': node_ids,
@@ -9063,6 +11601,59 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         # Sort by number of nodes (largest first) for consistent ordering
         result.sort(key=lambda c: len(c['node_ids']), reverse=True)
+
+        # A transmission line computes together with whatever its
+        # terminating port also serves: if that port attaches to nodes, the
+        # line's comb and those nodes share one hub column, so they are one
+        # component. A line whose port serves nothing else stands alone.
+        for line in self.line_resonators:
+            if line.get('twin_of') is not None:
+                continue            # handled with its primary below
+            # a pumped line and its conjugate twin are one physical object
+            # joined by the pump bus: they always compute together
+            unit = [line]
+            twin = self.line_twin(line)
+            if twin is not None:
+                unit.append(twin)
+            partner_node_ids = set()
+            for member in unit:
+                partner_node_ids |= set(self._line_tap_node_ids(member))
+                for end in ('x0', 'xL'):
+                    for port in self._line_end_ports(member, end):
+                        partner_node_ids.update(a['node_id']
+                                                for a in port['attachments'])
+
+            host = None
+            if partner_node_ids:
+                hosts = [c for c in result
+                         if c['node_ids'] & partner_node_ids]
+                if hosts:
+                    # every partner computes WITH the line (all coupled
+                    # through the same comb), so components that only
+                    # touch through this line merge into one
+                    host = hosts[0]
+                    for other in hosts[1:]:
+                        host['node_ids'] |= other['node_ids']
+                        host['nodes'].extend(other['nodes'])
+                        host['edges'].extend(other['edges'])
+                        host['port_node_ids'] |= other['port_node_ids']
+                        host.setdefault('line_ids', []).extend(
+                            other.get('line_ids', []))
+                        result.remove(other)
+            if host is not None:
+                host.setdefault('line_ids', []).extend(
+                    m['line_id'] for m in unit)
+            else:
+                result.append({
+                    'node_ids': set(),
+                    'nodes': [],
+                    'edges': [],
+                    'port_node_ids': set(),
+                    'index': len(result),
+                    'line_ids': [m['line_id'] for m in unit],
+                    'line_label': line['label'],
+                })
+
         # Re-index after sorting
         for idx, comp in enumerate(result):
             comp['index'] = idx
@@ -9138,6 +11729,20 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             for edge in edges_to_use
         ]
 
+        # Shared ports bridge otherwise-disconnected subgraphs with
+        # zero-offset links so the tree (and hence f_p classification)
+        # reaches them — mirrors the extractor's own rule
+        comp_node_ids = {n['node_id'] for n in nodes_to_use}
+        link_pairs = compute_hub_bridge_links(
+            comp_node_ids,
+            [(e['from_node_id'], e['to_node_id'])
+             for e in gui_edges if not e['is_self_loop']],
+            [[a['node_id'] for a in p['attachments']
+              if a['node_id'] in comp_node_ids] for p in self.ports])
+        gui_edges = gui_edges + [
+            {'from_node_id': a, 'to_node_id': b, 'is_self_loop': False}
+            for a, b in link_pairs]
+
         # Compute spanning tree with selected root
         tree_edges_nested, chord_edges_list, is_connected = extractor.compute_spanning_tree(
             gui_nodes, gui_edges, root_node_id
@@ -9173,7 +11778,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
     def _enter_scattering_mode(self):
         """Enter scattering mode - create scattering graph and tabs"""
-        if not self.nodes:
+        if not self.nodes and not self.line_resonators:
             print("Cannot enter scattering mode: No nodes in graph")
             return
 
@@ -9570,9 +12175,15 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 if edge_id_key in self.scattering_assignments:
                     scattering_assignments[id(edge_data)] = self.scattering_assignments[edge_id_key]
 
-            # Extract graph data
-            tree_edges_list = [[from_id, to_id] for from_id, to_id in self.scattering_tree_edges]
-            chord_edges_list = [[from_id, to_id] for from_id, to_id in self.scattering_chord_edges]
+            # Extract graph data (line-macro-only graphs have no GUI nodes:
+            # the expansion pre-pass supplies the modes and the root)
+            if nodes:
+                tree_edges_list = [[from_id, to_id] for from_id, to_id in self.scattering_tree_edges]
+                chord_edges_list = [[from_id, to_id] for from_id, to_id in self.scattering_chord_edges]
+            else:
+                tree_edges_list = None
+                chord_edges_list = None
+                root_node_id = None
 
             extractor.extract_graph_data(
                 nodes=nodes,
@@ -9581,12 +12192,18 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 frequency_settings={'start': 0.0, 'stop': 10.0, 'points': 100},
                 root_node_id=root_node_id,
                 precomputed_tree_edges=tree_edges_list,
-                precomputed_chord_edges=chord_edges_list
+                precomputed_chord_edges=chord_edges_list,
+                hubs=self._gui_hubs_payload(),
+                line_resonators=self._gui_lines_payload()
             )
+            for tap_edge, tap_params in self._gui_synth_edges():
+                edges.append(tap_edge)
+                scattering_assignments[id(tap_edge)] = tap_params
 
             # Validate
             validation = extractor.validate_scattering_assignments()
-            if validation['missing_nodes'] or validation['missing_edges']:
+            if validation['missing_nodes'] or validation['missing_edges'] \
+                    or validation.get('missing_hubs'):
                 error_msg = extractor.get_assignment_summary()
                 return False, error_msg
 
@@ -9777,18 +12394,44 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             edges_to_use = self.edges
             comp_name = "full graph"
 
-        if not nodes_to_use:
+        # Explicit hubs and line macros belonging to this job
+        if component is not None:
+            comp_node_ids = component['node_ids']
+            comp_line_ids = component.get('line_ids', [])
+        else:
+            comp_node_ids = comp_line_ids = None
+        hubs = self._gui_hubs_payload(node_ids=comp_node_ids,
+                                      line_ids=comp_line_ids)
+        lines = self._gui_lines_payload(line_ids=comp_line_ids)
+
+        if not nodes_to_use and not lines:
             logger.info(f"  No nodes in {comp_name}")
             return None
 
-        # For this component, we need to compute its own spanning tree
-        # Get injection node for this component
-        if component is not None and component['port_node_ids']:
-            root_node_id = next(iter(component['port_node_ids']))
-        else:
+        # For this component, we need to compute its own spanning tree.
+        # Root precedence: the user's injection-combo choice (full-graph
+        # sweeps), then the first attachment of the first explicit port,
+        # then a legacy port node, then the first node — matching the
+        # exported-code and tree-overlay root rules.
+        root_node_id = None
+        gui_node_ids = {n['node_id'] for n in nodes_to_use}
+        if component is None:
             root_node_id = self._get_selected_injection_node_id()
-            if root_node_id is None:
-                root_node_id = self._get_default_root_node_id()
+        if root_node_id is None and hubs:
+            # only a GUI node can root the GUI-side spanning tree; a hub
+            # that terminates a line lists comb-mode ids, which exist only
+            # after the extractor's expansion pre-pass
+            root_node_id = next(
+                (a[0] for h in hubs if h['monitored']
+                 for a in h['attachments'] if a[0] in gui_node_ids),
+                None)
+        if root_node_id is None and component is not None \
+                and component['port_node_ids']:
+            root_node_id = next(iter(component['port_node_ids']))
+        if root_node_id is None and component is None:
+            root_node_id = self._get_default_root_node_id()
+        if root_node_id is None and nodes_to_use:
+            root_node_id = nodes_to_use[0]['node_id']
 
         # Build nodes data
         nodes = []
@@ -9844,6 +12487,13 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             if edge_id_key in self.scattering_assignments:
                 scattering_assignments[id(edge_data)] = dict(self.scattering_assignments[edge_id_key])
 
+        # One drawn node-tap fans out here into its conservative couplings to
+        # each comb mode; the extractor sees ordinary static (f_p = 0) edges
+        for tap_edge, tap_params in self._gui_synth_edges(
+                line_ids=comp_line_ids, node_ids=comp_node_ids):
+            edges.append(tap_edge)
+            scattering_assignments[id(tap_edge)] = tap_params
+
         return {
             'comp_name': comp_name,
             'component_index': component['index'] if component else 0,
@@ -9852,10 +12502,15 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             'nodes': nodes,
             'edges': edges,
             'scattering_assignments': scattering_assignments,
+            'hubs': hubs,
+            'line_resonators': lines,
             'f_root_s': f_root_s,
             'freq_start': freq_start,
             'freq_stop': freq_stop,
             'freq_points': freq_points,
+            # comb tail closure (autograph "COMB TAIL CLOSURE"): on unless the
+            # user switched it off in the Ports & Lines panel
+            'tail_closure': bool(getattr(self, 'line_tail_closure', True)),
         }
 
     def _start_sparams_worker(self, jobs, f_root_s):
@@ -9935,6 +12590,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                         item.widget().deleteLater()
             if hasattr(self, 'sparams_checkboxes'):
                 self.sparams_checkboxes = {}
+            self._fit_sparams_selection_width()
             return
 
         # Get components list (or create single-element list for backward compatibility)
@@ -9968,15 +12624,14 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # Port configuration changed - save this for future comparisons
         self._last_all_ports_sig = all_ports_sig
 
-        # Save current checkbox states by full S-parameter name (including component label)
+        # Save current checkbox states by (component, out label, in label) —
+        # a stable key, unlike the rendered text
         saved_states = {}
         if hasattr(self, 'sparams_checkboxes') and self.sparams_checkboxes:
             for key, checkbox in self.sparams_checkboxes.items():
-                try:
-                    sparam_name = checkbox.text()
-                    saved_states[sparam_name] = checkbox.isChecked()
-                except (IndexError, StopIteration):
-                    continue
+                state_key = checkbox.property('state_key')
+                if state_key is not None:
+                    saved_states[tuple(state_key)] = checkbox.isChecked()
 
         # Clear existing checkboxes
         while self.sparams_checkbox_layout.count():
@@ -10018,17 +12673,27 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     if k_info.get('conj', False):
                         k_label += '*'
 
-                    # Create checkbox with optional component prefix
+                    # "S_" is redundant under the "S-parameters:" header, and
+                    # bare concatenation is ambiguous once labels are longer
+                    # than one character ("TL1TL1*"), so name the trace by its
+                    # out <- in pair: S_jk is the response at j to a drive at k
+                    pair = f"{j_label} \N{LEFTWARDS ARROW} {k_label}"
                     if num_components > 1 and comp_label:
-                        sparam_name = f"{comp_label}: S_{j_label}{k_label}"
+                        sparam_name = f"{comp_label}: {pair}"
                     else:
-                        sparam_name = f"S_{j_label}{k_label}"
+                        sparam_name = pair
 
                     checkbox = QCheckBox(sparam_name)
 
-                    # Restore saved state if available, otherwise default to checked
-                    if sparam_name in saved_states:
-                        checkbox.setChecked(saved_states[sparam_name])
+                    # Restore saved state if available, otherwise default to
+                    # checked. The key is the LABEL tuple rather than the
+                    # rendered text, so selections survive a change to how the
+                    # trace name is formatted (and index shifts when a
+                    # component is added). Renaming a port does change the
+                    # key — the labels ARE the identity here.
+                    state_key = (comp_label, j_label, k_label)
+                    if state_key in saved_states:
+                        checkbox.setChecked(saved_states[state_key])
                     else:
                         checkbox.setChecked(True)  # All checked initially
 
@@ -10036,10 +12701,14 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     # Store component index and port indices as properties
                     checkbox.setProperty('component_index', comp_data.get('component_index', comp_idx))
                     checkbox.setProperty('port_indices', (j_idx, k_idx))
+                    checkbox.setProperty('state_key', state_key)
 
                     self.sparams_checkbox_layout.addWidget(checkbox)
                     # Use compound key: (component_index, j_idx, k_idx)
                     self.sparams_checkboxes[(comp_data.get('component_index', comp_idx), j_idx, k_idx)] = checkbox
+
+        # Size the column to the widest trace name now that they all exist
+        self._fit_sparams_selection_width()
 
         # Apply pending S-parameter settings from loaded file
         if hasattr(self, '_pending_sparams_settings') and self._pending_sparams_settings:
@@ -10063,6 +12732,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     checkbox.blockSignals(False)
 
             # Apply autoscale settings
+            if "mark_modes" in settings and hasattr(self, 'sparams_mark_modes'):
+                self.sparams_mark_modes.setChecked(bool(settings["mark_modes"]))
             if "x_autoscale" in settings:
                 self.sparams_x_autoscale.setChecked(settings["x_autoscale"])
             if "y_autoscale" in settings:
@@ -10366,6 +13037,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             ax_phase = self.sparams_ax_phase if plot_mode == 'both' else self.sparams_canvas.ax
             ax_phase.set_ylim(self.sparams_phase_min_spin.value(), self.sparams_phase_max_spin.value())
 
+        # Line mode-frequency overlay (after the x limits are settled, so
+        # the density test that thins the index labels sees the real view)
+        self._draw_mode_markers(axes_list, frequencies, conjugate_mode)
+
         # Determine bottom axis for x-axis labels (phase axis in 'both' mode)
         if plot_mode == 'both':
             bottom_ax = self.sparams_ax_phase
@@ -10417,12 +13092,25 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 # Map from tuple(drive_signals) -> list of (port_id, port_label)
                 freq_groups = defaultdict(list)
 
+                port_dict = self.sparams_data.get('port_dict') or {}
                 for port_idx in displayed_ports:
                     port_id = port_ids_all[port_idx]
+                    # A channel is a legacy port NODE (port_id = node_id) or
+                    # an explicit hub (port_id = hub_id, no node behind it);
+                    # the enriched port_dict labels both, and autograph gives
+                    # both a drive frame. Looking the channel up in
+                    # self.nodes alone skipped every hub port, which hid the
+                    # tick labels and drew nothing in their place.
                     port_node = next((n for n in self.nodes if n['node_id'] == port_id), None)
-
-                    if port_node and port_id in drive_signals:
+                    entry = port_dict.get(port_id)
+                    if isinstance(entry, dict) and entry.get('label'):
+                        port_label = entry['label']
+                    elif port_node:
                         port_label = port_node['label']
+                    else:
+                        port_label = str(port_id)
+
+                    if port_id in drive_signals:
                         driven_freqs = drive_signals[port_id]
                         # Apply conjugate transformation if active
                         if conjugate_mode:
@@ -10711,6 +13399,263 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         if hasattr(self, 'sparams_data') and self.sparams_data is not None:
             self._plot_sparams()
 
+    # ---- line mode-frequency overlay -------------------------------------
+    #
+    # Where a line's mode n lands on the DISPLAYED axis is not simply f_n:
+    # each channel is read in its own drive frame (a pumped line's twin is
+    # read at f_p - f), so the marker position is obtained by inverting that
+    # frame. The frame is affine in the root frequency, d = s*f_root + c, so
+    # it is recovered from the drive_signals array the sweep already carries
+    # rather than re-derived per topology -- which keeps this correct for
+    # pumped, conjugated and plain lines alike.
+
+    #: Marker appearance comes from Settings -> S-Parameter Plot (which
+    #: already carries Reset to Defaults / Save as Defaults), so it is read
+    #: at draw time rather than fixed here. One style for every line: the
+    #: hover names which line a marker belongs to, and per-line colours
+    #: competed with the trace palette for no benefit.
+    #: Don't print an index label if its neighbour is closer than this (px).
+    MODE_LABEL_MIN_PX = 16.0
+
+    def _line_mode_markers(self, frequencies, conjugate_mode):
+        """[{x, line_label, n, f_mode, is_cutoff, conj, color}] for every
+        explicit comb mode, in the plotted x coordinate."""
+        data = getattr(self, 'sparams_data', None) or {}
+        f_raw = data.get('frequencies')
+        drive = data.get('drive_signals') or {}
+        out = []
+        for idx, line in enumerate(getattr(self, 'line_resonators', [])):
+            try:
+                res = self.line_resonator_for(line)
+            except (ValueError, KeyError):
+                continue            # invalid parameters: nothing to mark
+            # This line's channel, and hence its drive frame
+            hub_id = None
+            for end in ('x0', 'xL'):
+                for conn in self._end_conns(line, end):
+                    if conn.get('kind') == 'port':
+                        hub_id = f"port:{conn['port_id']}"
+                        break
+                if hub_id:
+                    break
+            slope, offset = 1.0, 0.0
+            d = drive.get(hub_id) if hub_id is not None else None
+            if (d is not None and f_raw is not None
+                    and len(d) >= 2 and len(f_raw) >= 2
+                    and f_raw[-1] != f_raw[0]):
+                slope = float((d[-1] - d[0]) / (f_raw[-1] - f_raw[0]))
+                if abs(slope) < 1e-12:
+                    slope = 1.0    # a frame that does not move with the drive
+                offset = float(d[0] - slope * f_raw[0])
+            # a conjugated comb resonates where its drive frame reaches -f_n
+            sense = -1.0 if line.get('conj') else 1.0
+            color = getattr(config, 'SPARAMS_MODE_MARKER_COLOR', 'black')
+            for n in range(1, res.N + 1):
+                f_mode = res.mode_freq(n)
+                x = (sense * f_mode - offset) / slope
+                if conjugate_mode:
+                    x = -x
+                out.append({'x': float(x), 'line_label': line['label'],
+                            'n': n, 'f_mode': float(f_mode),
+                            'is_cutoff': n == res.N,
+                            'conj': bool(line.get('conj')), 'color': color,
+                            'line': line, 'pumped': bool(line.get('pump'))})
+        return out
+
+    def _draw_mode_markers(self, axes_list, frequencies, conjugate_mode):
+        """Draw the overlay and remember it for the hover readout."""
+        self._mode_markers = []
+        self._mode_marker_annotation = None
+        if not getattr(self, 'sparams_mark_modes', None) \
+                or not self.sparams_mark_modes.isChecked():
+            return
+        markers = self._line_mode_markers(frequencies, conjugate_mode)
+        if not markers:
+            return
+        ax0 = self.sparams_canvas.ax
+        lo, hi = sorted(ax0.get_xlim())
+        visible = [m for m in markers if lo <= m['x'] <= hi]
+        if not visible:
+            return
+        self._mode_markers = visible
+
+        span_px = max(ax0.get_window_extent().width, 1.0)
+        px_per_unit = span_px / max(hi - lo, 1e-12)
+
+        # Group COINCIDENT markers first: a signal mode and a twin's idler
+        # image routinely land on the same frequency (mode n at f_n, image
+        # of m at f_p - f_m), and an all-or-nothing density test then sees a
+        # zero gap and suppresses every label on the plot -- which is
+        # exactly the overlay looking like it does nothing.
+        groups = []
+        for m in sorted(visible, key=lambda mm: mm['x']):
+            if groups and abs(m['x'] - groups[-1][0]['x']) * px_per_unit < 2.0:
+                groups[-1].append(m)
+            else:
+                groups.append([m])
+        self._mode_marker_groups = groups
+
+        base_lw = (config.SPARAMS_PLOT_LINEWIDTH
+                   * getattr(config, 'SPARAMS_MODE_MARKER_LINEWIDTH_SCALE', 0.5))
+        style = getattr(config, 'SPARAMS_MODE_MARKER_STYLE', 'dashed')
+        alpha = getattr(config, 'SPARAMS_MODE_MARKER_ALPHA', 0.8)
+        cutoff_scale = getattr(config, 'SPARAMS_MODE_MARKER_CUTOFF_SCALE', 1.6)
+        for ax in axes_list:
+            for m in visible:
+                ln = ax.axvline(
+                    m['x'], color=m['color'],
+                    # the cutoff goes SOLID: beyond it there are no modes,
+                    # so it is a different kind of statement from a mode
+                    linestyle='solid' if m['is_cutoff'] else style,
+                    linewidth=base_lw * (cutoff_scale if m['is_cutoff'] else 1.0),
+                    alpha=alpha, zorder=0)
+                # round caps so a dashed marker reads as annotation
+                ln.set_dash_capstyle('round')
+                ln.set_solid_capstyle('round')
+        # Label greedily, left to right: a group too close to the last
+        # LABELLED one skips its own number, so crowding costs you that
+        # label and not the whole set. Coincident markers share one label,
+        # conjugate (idler-image) indices marked with a star.
+        last_px = None
+        for grp in groups:
+            x = grp[0]['x']
+            px = (x - lo) * px_per_unit
+            if last_px is not None and px - last_px < self.MODE_LABEL_MIN_PX:
+                continue
+            last_px = px
+            text = "/".join(f"{m['n']}*" if m['conj'] else str(m['n'])
+                            for m in grp)
+            # inside the axes on a small opaque chip: above them the text
+            # competes with the title/toolbar and tight_layout can clip it
+            ax0.text(x, 0.985, text,
+                     transform=ax0.get_xaxis_transform(),
+                     ha='center', va='top',
+                     fontsize=getattr(config,
+                                      'SPARAMS_MODE_MARKER_LABEL_SIZE', 7.5),
+                     fontfamily='sans-serif', color=grp[0]['color'],
+                     fontweight='bold' if any(m['is_cutoff'] for m in grp)
+                                else 'normal',
+                     zorder=5,
+                     bbox=dict(boxstyle='square,pad=0.15',
+                               facecolor='white', alpha=0.75,
+                               edgecolor='none'))
+        self._ensure_mode_marker_hover()
+
+    def _ensure_mode_marker_hover(self):
+        if getattr(self, '_mode_hover_connected', False):
+            return
+        self.sparams_canvas.mpl_connect('motion_notify_event',
+                                        self._on_mode_marker_hover)
+        self.sparams_canvas.mpl_connect('button_press_event',
+                                        self._on_mode_marker_click)
+        self._mode_hover_connected = True
+
+    def _markers_at(self, event):
+        """(markers at the clicked/hovered frequency, ok) within 6 px."""
+        markers = getattr(self, '_mode_markers', None)
+        if not markers or event.inaxes is None or event.xdata is None:
+            return [], False
+        ax = event.inaxes
+        lo, hi = sorted(ax.get_xlim())
+        ppu = max(ax.get_window_extent().width, 1.0) / max(hi - lo, 1e-12)
+        nearest = min(markers, key=lambda m: abs(m['x'] - event.xdata))
+        if abs(nearest['x'] - event.xdata) * ppu > 6.0:
+            return [], False
+        return [m for m in markers
+                if abs(m['x'] - nearest['x']) * ppu < 2.0], True
+
+    def _on_mode_marker_click(self, event):
+        """Click a signal-comb marker to anchor the pump's rate there.
+
+        Closes the loop the overlay exists for: read the index off the
+        plot, then use it. Deliberately inert while the navigation toolbar
+        is in pan/zoom -- a drag is not a choice of reference mode.
+        """
+        if getattr(getattr(self, 'sparams_toolbar', None), 'mode', ''):
+            return
+        here, ok = self._markers_at(event)
+        if not ok:
+            return
+        target = next((m for m in here if not m['conj'] and m['pumped']), None)
+        if target is None:
+            if any(m['conj'] for m in here):
+                self._status_message(
+                    "The idler partner m is DERIVED from f_p and n \u2014 "
+                    "click the signal comb's marker to set n instead.", 7000)
+            elif here:
+                self._status_message(
+                    f"'{here[0]['line_label']}' has no pumped termination "
+                    f"(right-click the line to add one).", 6000)
+            return
+        line = target['line']
+        if int(line['pump'].get('n_ref', 1)) == target['n']:
+            return
+        line['pump']['n_ref'] = int(target['n'])
+        n_ref, m_ref = self._pump_reference_pair(line)
+        self._status_message(
+            f"{line['label']}: pump rate now referred to mode "
+            f"{n_ref} (idler partner m = {m_ref})", 7000)
+        self._invalidate_scattering_data()
+        if hasattr(self, 'properties_panel'):
+            self.properties_panel._update_scattering_ports_table()
+            self.properties_panel._schedule_scattering_update()
+        self._update_plot()
+
+    def _on_mode_marker_hover(self, event):
+        markers = getattr(self, '_mode_markers', None)
+        if not markers or event.inaxes is None or event.xdata is None:
+            self._hide_mode_marker_annotation()
+            return
+        ax = event.inaxes
+        lo, hi = sorted(ax.get_xlim())
+        px_per_unit = max(ax.get_window_extent().width, 1.0) / max(hi - lo, 1e-12)
+        here, ok = self._markers_at(event)
+        if not ok:
+            self._hide_mode_marker_annotation()
+            return
+        nearest = here[0]
+        # report EVERY marker at this frequency: where a signal mode and an
+        # idler image coincide, naming only one of them is the misleading
+        # half of the answer
+        lines = []
+        for m in here:
+            tag = " (idler image)" if m['conj'] else ""
+            cutoff = "  \u2014 comb cutoff" if m['is_cutoff'] else ""
+            lines.append(f"{m['line_label']}  mode {m['n']}{tag}"
+                         f"   f = {m['f_mode']:g}{cutoff}")
+        if any(m['pumped'] and not m['conj'] for m in here):
+            lines.append("click: refer the pump rate to this mode")
+        text = "\n".join(lines)
+        ann = getattr(self, '_mode_marker_annotation', None)
+        if ann is None or ann.axes is not ax:
+            if ann is not None:
+                try:
+                    ann.remove()
+                except (ValueError, NotImplementedError):
+                    pass
+            ann = ax.annotate(
+                text, xy=(nearest['x'], event.ydata),
+                xytext=(8, 8), textcoords='offset points', fontsize=8,
+                fontfamily='sans-serif', zorder=10,
+                bbox=dict(boxstyle='round,pad=0.35', facecolor='#ffffe0',
+                          edgecolor='#999999', alpha=0.95))
+            self._mode_marker_annotation = ann
+        else:
+            ann.set_text(text)
+            ann.xy = (nearest['x'], event.ydata)
+        ann.set_visible(True)
+        self.sparams_canvas.draw_idle()
+
+    def _hide_mode_marker_annotation(self):
+        ann = getattr(self, '_mode_marker_annotation', None)
+        if ann is not None and ann.get_visible():
+            ann.set_visible(False)
+            self.sparams_canvas.draw_idle()
+
+    def _on_sparams_mark_modes_toggled(self):
+        if getattr(self, 'sparams_data', None) is not None:
+            self._plot_sparams()
+
     def _on_sparams_conjugate_toggled(self):
         """Handle conjugate frequencies toggle button"""
         # Update button text based on state
@@ -10796,15 +13741,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # Create context menu
         menu = QMenu(self)
 
-        # Add edge width options
-        width_options = [
-            ('Thin', 0.7),
-            ('Medium', 1.0),
-            ('Large', 1.5),
-            ('X-Large', 2.0)
-        ]
-
-        for width_name, width_mult in width_options:
+        # Add edge width options (the same levels the panel and dialog offer)
+        for width_name, width_mult in config.EDGE_LINEWIDTH_OPTIONS.items():
             action = menu.addAction(width_name)
             action.triggered.connect(lambda _, w=width_mult, e=edge: self._change_edge_width(e, w))
 
@@ -11132,6 +14070,18 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         if self.selected_edges:
             self._adjust_edge_properties(direction)
             return
+
+        # Wires take the arrow keys the way edges do: Up/Down width,
+        # Left/Right label size
+        if self._adjust_wire_properties(direction):
+            return
+
+        # Selected port/line glyphs stretch with the arrow keys (node-key
+        # parity: Up/Down height, Left/Right length)
+        if getattr(self, 'selected_ports', None) or \
+                getattr(self, 'selected_lines', None):
+            if self._adjust_glyph_size(direction):
+                return
 
         # Otherwise, pan the view
         # Determine which canvas is currently visible
@@ -11978,7 +14928,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             return min(mapping.keys(), key=lambda k: abs(k - value))
 
         linewidth_mult = edge.get('linewidth_mult', 1.0)
-        lw_map = {1.0: 'Thin', 1.5: 'Medium', 2.0: 'Thick', 2.5: 'X-Thick'}
+        lw_map = {v: k for k, v in config.EDGE_LINEWIDTH_OPTIONS.items()}
         lw_name = lw_map[find_closest_key(linewidth_mult, lw_map)]
 
         dialog.lw_combo.setCurrentText(lw_name)
@@ -12086,10 +15036,14 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         if node.get('conj', False):
             node_label += '*'
 
-        # Check if node has self-loop
+        # Check if node has self-loop, in the ORIGINAL edges and on the
+        # stable node_id -- the scattering-graph node is a copy, so a dict
+        # comparison against edge['from_node'] would not match even once the
+        # name resolved. Mirrors the check in _check_node_assignments.
         has_selfloop = any(
-            edge.get('is_self_loop', False) and edge['from_node'] == original_node
-            for edge in (self._original_edges_for_lookup if hasattr(self, '_original_edges_for_lookup') else self.edges)
+            edge.get('is_self_loop', False)
+            and edge['from_node_id'] == node['node_id']
+            for edge in getattr(self, '_original_edges_for_lookup', self.edges)
         )
 
         # Get current assignments
@@ -12163,7 +15117,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
             # Scroll to and highlight the row if scattering tab is visible
             if hasattr(self.properties_panel, '_scroll_to_node_row'):
-                self.properties_panel._scroll_to_node_row(original_node)
+                self.properties_panel._scroll_to_node_row(node)
 
         # Clear selection to remove red indicator (whether OK or Cancel was clicked)
         self.selected_nodes.clear()
@@ -12268,7 +15222,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
             # Scroll to and highlight the row if scattering tab is visible
             if hasattr(self.properties_panel, '_scroll_to_edge_row'):
-                self.properties_panel._scroll_to_edge_row(original_edge)
+                self.properties_panel._scroll_to_edge_row(edge)
 
         # Clear selection to remove red indicator (whether OK or Cancel was clicked)
         self.selected_nodes.clear()
@@ -12534,6 +15488,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # Base values calibrated for reference view (figsize=12, span~20 units)
         # This gives points_per_data_unit ≈ 43 for that reference
         reference_points_per_data_unit = 43.0
+        # the halo under a selected edge widens with the zoom, like the
+        # edge it sits under
+        zoom_lw_scale = points_per_data_unit / reference_points_per_data_unit
 
         for edge in self.edges:
             from_node = edge['from_node']
@@ -12574,6 +15531,20 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     edge_color = edge.get('color', 'black')  # Keep original color
 
                 # Draw the self-loop arc
+                if edge in self.selected_edges:
+                    # The halo goes down FIRST, so the loop draws over it
+                    gp.selfloop(
+                        ax=self.canvas.ax,
+                        nodecent=from_pos,
+                        R=from_radius * 1.2,
+                        baseangle=selfloopangle,
+                        dtheta=-34,
+                        loopR=loopR,
+                        arrowlength=arrowlength,
+                        lw=self._selection_halo_lw(scaled_lw, zoom_lw_scale),
+                        color=self.SELECTION_HALO_COLOR,
+                        flip=edge.get('flip', False),
+                    )
                 gp.selfloop(
                     ax=self.canvas.ax,
                     nodecent=from_pos,
@@ -12656,23 +15627,6 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                          3*(1-t)*t**2 * bz_end[1] +
                          t**3 * v_end[1])
 
-                # Draw selection indicator for selected self-loops
-                if edge in self.selected_edges:
-                    # Place indicator at 75% along the bezier curve from node center
-                    apex_dist_from_center = np.sqrt((apex_x - from_pos[0])**2 + (apex_y - from_pos[1])**2)
-                    indicator_distance = apex_dist_from_center * 0.75
-                    apex_angle = np.arctan2(apex_y - from_pos[1], apex_x - from_pos[0])
-                    indicator_x = from_pos[0] + indicator_distance * np.cos(apex_angle)
-                    indicator_y = from_pos[1] + indicator_distance * np.sin(apex_angle)
-
-                    selection_circle = patches.Circle(
-                        (indicator_x, indicator_y), from_radius * 0.3,
-                        facecolor='lightcoral',
-                        edgecolor='red',
-                        linewidth=2,
-                        zorder=25
-                    )
-                    self.canvas.ax.add_patch(selection_circle)
             else:
                 # Draw edge using graph_primitives edge function
                 from_pos = from_node['pos']
@@ -12760,6 +15714,24 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                             edge_alpha = 0.5
                         edge_color = 'steelblue'
 
+                if edge in self.selected_edges:
+                    # The halo goes down FIRST, so the edge draws over it.
+                    # No labels on it: they would double-draw and fringe.
+                    gp.edge(
+                        ax=self.canvas.ax,
+                        nodexy=[from_pos, to_pos],
+                        nodeR=[from_radius, to_radius],
+                        label=[None, None],
+                        labeltheta=labeltheta,
+                        style=style,
+                        whichedges=edge['direction'],
+                        theta=edge.get('looptheta', 30),
+                        loopkwargs={
+                            'lw': self._selection_halo_lw(final_lw,
+                                                          zoom_lw_scale),
+                            'arrowlength': 0.4,
+                            'color': self.SELECTION_HALO_COLOR},
+                    )
                 gp.edge(
                     ax=self.canvas.ax,
                     nodexy=[from_pos, to_pos],
@@ -12777,19 +15749,6 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     usetex=self.use_latex,
                 )
 
-                # Draw selection indicator for selected edges
-                if edge in self.selected_edges:
-                    mid_x = (from_pos[0] + to_pos[0]) / 2
-                    mid_y = (from_pos[1] + to_pos[1]) / 2
-                    # Draw a small circle at the edge midpoint
-                    selection_circle = patches.Circle(
-                        (mid_x, mid_y), 0.3,
-                        facecolor='lightcoral',
-                        edgecolor='red',
-                        linewidth=2,
-                        zorder=20
-                    )
-                    self.canvas.ax.add_patch(selection_circle)
 
     def _on_motion(self, event):
         """Handle mouse motion - dispatches to appropriate handler."""
@@ -12798,6 +15757,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             valid_axes.append(self.scattering_canvas.ax)
 
         if event.inaxes not in valid_axes:
+            return
+
+        # Port/line glyph drag (Explicit Ports mode): armed by a click on a
+        # glyph in normal mode, activates past the drag threshold
+        if self._maybe_handle_glyph_motion(event):
             return
 
         # Check for pending drag - activate only while the left button is actually
@@ -12880,74 +15844,16 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 self.canvas.draw_idle()
             return
 
-        # Handle group dragging
+        # Handle group dragging (nodes and glyphs together)
         if self.dragging_group and self.drag_start_pos is not None:
-            # Calculate offset from drag start
-            dx = event.xdata - self.drag_start_pos[0]
-            dy = event.ydata - self.drag_start_pos[1]
-
-            # Remove old previews
-            for patch in self.drag_preview_patches:
-                try:
-                    patch.remove()
-                except:
-                    pass
-            for text in self.drag_preview_texts:
-                try:
-                    text.remove()
-                except:
-                    pass
-            for outline in self.drag_preview_outlines:
-                try:
-                    outline.remove()
-                except:
-                    pass
-            self.drag_preview_patches.clear()
-            self.drag_preview_texts.clear()
-            self.drag_preview_outlines.clear()
-
-            # Determine which canvas/nodes to use
-            if event.inaxes == self.kron_canvas.ax and hasattr(self, 'kron_graph') and self.kron_graph:
-                target_canvas = self.kron_canvas
-                target_nodes = self.kron_graph['nodes']
-            else:
-                target_canvas = self.canvas
-                target_nodes = self.nodes
-
-            # Draw preview for each selected node
-            any_occupied = False
-            for node in self.selected_nodes:
-                new_x = node['pos'][0] + dx
-                new_y = node['pos'][1] + dy
-                snap_x, snap_y = self._snap_to_grid(new_x, new_y)
-
-                # Check if occupied by non-selected node
-                occupied = any(
-                    other_node not in self.selected_nodes and
-                    np.isclose(other_node['pos'][0], snap_x, atol=0.01) and
-                    np.isclose(other_node['pos'][1], snap_y, atol=0.01)
-                    for other_node in target_nodes
-                )
-                any_occupied = any_occupied or occupied
-
-                # Ghost appearance: use semi-transparent fill
-                color = 'red' if occupied else 'lightblue'
-                node_size_mult = node.get('node_size_mult', 1.0)
-
-                preview_patch = patches.Circle(
-                    (snap_x, snap_y), self.node_radius * node_size_mult,
-                    fill=True, facecolor=color, edgecolor='gray',
-                    linestyle=':', linewidth=1.5, alpha=0.5, zorder=15
-                )
-                target_canvas.ax.add_patch(preview_patch)
-                self.drag_preview_patches.append(preview_patch)
-
-                preview_text = target_canvas.ax.text(
-                    snap_x, snap_y, node['label'],
-                    ha='center', va='center', fontsize=14, color='gray', alpha=0.7, zorder=16
-                )
-                self.drag_preview_texts.append(preview_text)
-
+            target_canvas, target_nodes = self._get_target_canvas_and_nodes(
+                event)
+            if target_canvas is None:
+                target_canvas, target_nodes = self.canvas, self.nodes
+            self._draw_group_drag_previews(
+                event.xdata - self.drag_start_pos[0],
+                event.ydata - self.drag_start_pos[1],
+                nodes=target_nodes, ax=target_canvas.ax)
             target_canvas.draw_idle()
             return
 
@@ -13279,10 +16185,14 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             self._on_left_click(event)
 
     def _on_right_click(self, event):
-        """Handle right-click: context menu on node/edge, or start zoom window."""
+        """Handle right-click: context menu on node/edge/glyph, or start zoom window."""
         clicked_node = self._find_node_at_position(event.xdata, event.ydata)
         if clicked_node:
             self._show_color_context_menu(event, clicked_node)
+            return
+
+        # Port/line glyphs and attachment links get their own context menu
+        if self._maybe_show_glyph_context_menu(event):
             return
 
         clicked_edge = self._find_edge_at_position(event.xdata, event.ydata)
@@ -13299,6 +16209,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # Use Qt's keyboard modifiers for reliable Shift/Ctrl detection
         modifiers = QApplication.keyboardModifiers()
         shift_pressed = modifiers & Qt.ShiftModifier
+        # Option on macOS is Qt's AltModifier: hold it while dragging to
+        # leave the selection where it is and drop a copy at the offset
+        alt_pressed = bool(modifiers & Qt.AltModifier)
 
         # Basis ordering mode - select nodes in order
         if self.basis_ordering_mode:
@@ -13320,9 +16233,19 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             self._on_click_edge_mode(event)
             return
 
+        # Port / loss-hub placement mode
+        if self.placement_mode in ['port', 'port_continuous']:
+            self._on_click_port_placement(event)
+            return
+
+        # Transmission-line placement mode
+        if self.placement_mode == 'line':
+            self._on_click_line_placement(event)
+            return
+
         # Normal mode (no placement) - select, drag, double-click
         if self.placement_mode is None:
-            self._on_click_normal_mode(event, shift_pressed)
+            self._on_click_normal_mode(event, shift_pressed, alt_pressed)
             return
 
         # Node placement mode
@@ -13372,7 +16295,12 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
 
     def _on_click_edge_mode(self, event):
-        """Handle click in edge mode - connect two nodes."""
+        """Handle click in edge mode - connect two nodes (or attach a port)."""
+        # Port attachments ride the edge tool: port then node (either order
+        # port-first) creates a dashed attachment link instead of an edge.
+        if self._maybe_handle_attachment_click(event):
+            return
+
         clicked_node = self._find_node_at_position(event.xdata, event.ydata)
         if clicked_node:
             if self.edge_mode_first_node is None:
@@ -13583,12 +16511,32 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 self._update_plot()
         return
 
-    def _on_click_normal_mode(self, event, shift_pressed):
+    def _on_click_normal_mode(self, event, shift_pressed,
+                              alt_pressed=False):
         """Handle click in normal mode - select, drag, or double-click."""
         current_time = time.time()
 
         # Disable node manipulation on Kron canvas - it's read-only (computed data)
         if event.inaxes == self.kron_canvas.ax:
+            return
+
+        # Port/line glyphs and attachment links get first crack at the click
+        # (select on single click, edit dialog on double click)
+        is_double_pl = False
+        if self.last_click_pos and event.xdata is not None:
+            time_diff = current_time - self.last_click_time
+            pos_diff = np.sqrt((event.xdata - self.last_click_pos[0]) ** 2 +
+                               (event.ydata - self.last_click_pos[1]) ** 2)
+            is_double_pl = (time_diff < self.double_click_threshold and
+                            pos_diff < 0.5)
+        if self._maybe_handle_ports_normal_click(event, shift_pressed,
+                                                 is_double_pl, alt_pressed):
+            if is_double_pl:
+                self.last_click_time = 0
+                self.last_click_pos = None
+            else:
+                self.last_click_time = current_time
+                self.last_click_pos = (event.xdata, event.ydata)
             return
 
         clicked_node = self._find_node_at_position(event.xdata, event.ydata)
@@ -13645,11 +16593,13 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         # Single click on node - select and prepare for potential dragging
         if clicked_node:
-            # If clicking on an already selected node, prepare to drag the whole group
-            if clicked_node in self.selected_nodes and len(self.selected_nodes) > 1:
-                self.drag_pending_group = True
-                self.drag_start_pos = (event.xdata, event.ydata)
+            # Clicking an already-selected node drags the whole selection --
+            # glyphs included, which is what makes a port + edge + node
+            # group movable as one
+            if self._arm_group_drag_from(clicked_node, event.xdata,
+                                         event.ydata, alt_pressed):
                 # Don't print yet - wait until actual drag starts
+                pass
             else:
                 # Select only this node and prepare to drag it
                 if clicked_node not in self.selected_nodes:
@@ -13659,6 +16609,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     self._update_plot()
                 self.drag_pending_node = clicked_node
                 self.drag_start_pos = (event.xdata, event.ydata)
+                self._drag_duplicate = alt_pressed
                 # Don't print yet - wait until actual drag starts
             return
 
@@ -13896,6 +16847,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         # Left button
         if event.button == 1:
+            # Port/line glyph drag commit (or pending-drag cleanup)
+            if self._maybe_handle_glyph_release(event):
+                return
             if self.selection_window and self.selection_window_start is not None:
                 self._on_release_selection_window(event)
                 return
@@ -13909,6 +16863,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             if self.drag_pending_node or self.drag_pending_group:
                 self.drag_pending_node = None
                 self.drag_pending_group = False
+                self._drag_duplicate = False
                 self.drag_start_pos = None
 
     def _on_release_selection_window(self, event):
@@ -13937,11 +16892,40 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     if edge not in self.selected_edges:
                         self.selected_edges.append(edge)
 
+            # Port/line glyphs participate in rubber-band selection like nodes
+            for port in self.ports:
+                px, py = port['pos']
+                if x0 <= px <= x1 and y0 <= py <= y1:
+                    if port not in self.selected_ports:
+                        self.selected_ports.append(port)
+            for line in self.line_resonators:
+                lx, ly = line['pos']
+                if x0 <= lx <= x1 and y0 <= ly <= y1:
+                    if line not in self.selected_lines:
+                        self.selected_lines.append(line)
+
+            # Attachments and taps come too, so a window over a sub-circuit
+            # can retune its whole wiring at once. Compared by identity:
+            # two links with the same rate are equal dicts but are not the
+            # same link.
+            band_atts, band_taps = self._links_in_rect(x0, y0, x1, y1)
+            have = {id(a) for _p, a in self.selected_attachments}
+            self.selected_attachments += [(p, a) for p, a in band_atts
+                                          if id(a) not in have]
+            have = {id(c) for _l, _e, c in self.selected_taps}
+            self.selected_taps += [(ln, e, c) for ln, e, c in band_taps
+                                   if id(c) not in have]
+
             msg = []
             if self.selected_nodes:
                 msg.append(f"{len(self.selected_nodes)} node(s)")
             if self.selected_edges:
                 msg.append(f"{len(self.selected_edges)} edge(s)")
+            if self.selected_ports or self.selected_lines:
+                msg.append(f"{len(self.selected_ports) + len(self.selected_lines)} port/line glyph(s)")
+            n_links = len(self.selected_attachments) + len(self.selected_taps)
+            if n_links:
+                msg.append(f"{n_links} wire(s)")
             if msg:
                 print(f"Selected {' and '.join(msg)}")
 
@@ -14028,46 +17012,23 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             self._update_plot()
 
     def _on_release_group_drag(self, event):
-        """Complete group node dragging."""
+        """Complete group dragging (nodes and glyphs together)."""
         target_canvas, target_nodes = self._get_target_canvas_and_nodes(event)
 
         if target_nodes is not None:
-            dx = event.xdata - self.drag_start_pos[0]
-            dy = event.ydata - self.drag_start_pos[1]
-
-            new_positions = []
-            all_valid = True
-            for node in self.selected_nodes:
-                new_x = node['pos'][0] + dx
-                new_y = node['pos'][1] + dy
-                snap_x, snap_y = self._snap_to_grid(new_x, new_y)
-
-                occupied = any(
-                    other_node not in self.selected_nodes and
-                    np.isclose(other_node['pos'][0], snap_x, atol=0.01) and
-                    np.isclose(other_node['pos'][1], snap_y, atol=0.01)
-                    for other_node in target_nodes
-                )
-
-                if occupied:
-                    all_valid = False
-                    break
-                new_positions.append((node, snap_x, snap_y))
-
-            if all_valid:
-                self._save_state()
-                for node, snap_x, snap_y in new_positions:
-                    node['pos'] = (snap_x, snap_y)
-                print(f"✓ Moved {len(self.selected_nodes)} node(s)")
-                self._recompute_unpinned_selfloop_angles(
-                    {node['node_id'] for node in self.selected_nodes})
-            else:
-                print(f"✗ Cannot move group - some positions occupied")
+            message = self._commit_group_drag(
+                event.xdata - self.drag_start_pos[0],
+                event.ydata - self.drag_start_pos[1],
+                nodes=target_nodes)
+            if message:
+                print(message)
+                self._status_message(message)
 
         # Clean up
         self.dragging_group = False
         self.drag_pending_group = False
         self.drag_start_pos = None
+        self._drag_duplicate = False
         self._clear_drag_previews()
         self._update_target_canvas(target_canvas)
 
@@ -14085,7 +17046,19 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 for node in target_nodes
             )
 
-            if not occupied:
+            if occupied:
+                print(f"✗ Cannot move node '{self.dragging_node['label']}' - position occupied")
+            elif getattr(self, '_drag_duplicate', False):
+                # Option-drag: the original stays and a copy lands where
+                # the drag ended
+                old_pos = self.dragging_node['pos']
+                landed = self._duplicate_selection_offset(
+                    snap_x - old_pos[0], snap_y - old_pos[1])
+                message = (f"Copied {landed}" if landed
+                           else "Nothing to copy in this selection")
+                print(message)
+                self._status_message(message)
+            else:
                 self._save_state()
                 old_pos = self.dragging_node['pos']
                 self.dragging_node['pos'] = (snap_x, snap_y)
@@ -14100,13 +17073,12 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
                 print(f"✓ Moved node '{self.dragging_node['label']}' from ({old_pos[0]:.3f}, {old_pos[1]:.3f}) to ({snap_x:.3f}, {snap_y:.3f})")
                 self._recompute_unpinned_selfloop_angles({self.dragging_node['node_id']})
-            else:
-                print(f"✗ Cannot move node '{self.dragging_node['label']}' - position occupied")
 
         # Clean up
         self.dragging_node = None
         self.drag_pending_node = None
         self.drag_start_pos = None
+        self._drag_duplicate = False
         self._clear_drag_previews()
 
         if target_canvas == self.kron_canvas and hasattr(self, 'kron_graph') and self.kron_graph:
@@ -14434,6 +17406,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             'scattering_assignments': self.scattering_assignments,
             'scattering_constraint_groups': self.scattering_constraint_groups,
             'next_constraint_group_id': self._next_constraint_group_id,
+            'ports': self.ports,
+            'line_resonators': self.line_resonators,
         })
 
     def _restore_state(self, state):
@@ -14443,10 +17417,16 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         self.scattering_assignments = state['scattering_assignments']
         self.scattering_constraint_groups = state['scattering_constraint_groups']
         self._next_constraint_group_id = state['next_constraint_group_id']
+        # .get: snapshots predating the explicit-ports feature lack these keys
+        self.ports = state.get('ports', [])
+        self.line_resonators = state.get('line_resonators', [])
 
         # Clear selections (they reference the replaced dicts)
         self.selected_nodes.clear()
         self.selected_edges.clear()
+        self.selected_ports.clear()
+        self.selected_lines.clear()
+        self.selected_attachments.clear()
 
         # Invalidate Kron reduction and scattering data since graph was restored
         self._invalidate_kron_reduction()
@@ -14512,10 +17492,62 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             edge_copy['scattering_params'] = None
         return edge_copy
 
+    def _clipboard_has_content(self):
+        """True when there is anything at all to paste.
+
+        Ports and lines count on their own: a copy of a bare port glyph is
+        a legitimate clipboard, and testing only nodes/edges made it look
+        empty.
+        """
+        return bool(self.clipboard) and any(
+            self.clipboard.get(key)
+            for key in ('nodes', 'edges', 'ports', 'lines'))
+
+    def _glyph_selection_for_clipboard(self):
+        """The port/line glyphs a copy or cut would pick up."""
+        return (list(getattr(self, 'selected_ports', ()))
+                + list(getattr(self, 'selected_lines', ())))
+
+    def _clipboard_glyph_labels(self):
+        """(port_labels, line_labels): clipboard label -> pasted label.
+
+        Ports and lines auto-increment against their OWN namespaces, so
+        pasting P1 next to P1 gives P2 rather than colliding or inheriting a
+        node's numbering.
+        """
+        port_labels = LabelPatternAnalyzer.compute_next_labels(
+            [p['label'] for p in self.clipboard.get('ports', [])],
+            {p['label'] for p in getattr(self, 'ports', ())})
+        line_labels = LabelPatternAnalyzer.compute_next_labels(
+            [ln['label'] for ln in self.clipboard.get('lines', [])],
+            {ln['label'] for ln in getattr(self, 'line_resonators', ())})
+        return port_labels, line_labels
+
+    def _paste_summary(self, n_ports, n_lines, n_constraints):
+        """Tally of what a paste actually landed."""
+        return self._clipboard_counts(
+            {'nodes': self.selected_nodes, 'edges': self.selected_edges,
+             'ports': range(n_ports), 'lines': range(n_lines)},
+            n_constraints)
+
+    @staticmethod
+    def _clipboard_counts(clipboard, n_constraints=0):
+        """Human-readable tally of what a clipboard or paste contained."""
+        msg = []
+        for key, name in (('nodes', 'node'), ('edges', 'edge'),
+                          ('ports', 'port'), ('lines', 'line')):
+            count = len(clipboard.get(key, ()))
+            if count:
+                msg.append(f"{count} {name}(s)")
+        if n_constraints:
+            msg.append(f"{n_constraints} constraint group(s)")
+        return ' and '.join(msg) if msg else "nothing"
+
     def _copy_nodes(self):
-        """Copy selected nodes and edges to clipboard"""
-        if not self.selected_nodes and not self.selected_edges:
-            logger.info("No nodes or edges selected to copy")
+        """Copy selected nodes, edges and port/line glyphs to clipboard"""
+        if (not self.selected_nodes and not self.selected_edges
+                and not self._glyph_selection_for_clipboard()):
+            logger.info("Nothing selected to copy")
             self._status_message("Nothing selected to copy")
             return
 
@@ -14570,19 +17602,19 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     'is_conjugate_pair': group_data.get('is_conjugate_pair', False)
                 })
 
-        msg = []
-        if len(self.clipboard['nodes']) > 0:
-            msg.append(f"{len(self.clipboard['nodes'])} node(s)")
-        if len(self.clipboard['edges']) > 0:
-            msg.append(f"{len(self.clipboard['edges'])} edge(s)")
-        if len(self.clipboard['constraint_groups']) > 0:
-            msg.append(f"{len(self.clipboard['constraint_groups'])} constraint group(s)")
-        print(f"Copied {' and '.join(msg)}")
+        # Ports, lines and their links travel with the sub-circuit, so a
+        # copied group pastes back as a working group instead of bare modes
+        self._copy_ports_lines_to_clipboard(self.clipboard)
+
+        summary = self._clipboard_counts(
+            self.clipboard, len(self.clipboard['constraint_groups']))
+        print(f"Copied {summary}")
 
     def _cut_nodes(self):
-        """Cut selected nodes and edges to clipboard"""
-        if not self.selected_nodes and not self.selected_edges:
-            logger.info("No nodes or edges selected to cut")
+        """Cut selected nodes, edges and port/line glyphs to clipboard"""
+        if (not self.selected_nodes and not self.selected_edges
+                and not self._glyph_selection_for_clipboard()):
+            logger.info("Nothing selected to cut")
             self._status_message("Nothing selected to cut")
             return
 
@@ -14597,10 +17629,19 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         nodes_to_remove = list(self.selected_nodes)
         edges_to_remove = []
 
+        # Glyphs FIRST, while the scene is still intact: the copy decides
+        # which links travel by looking at the live nodes, and the loop
+        # below both removes those nodes and clears the links to them
+        self._copy_ports_lines_to_clipboard(self.clipboard)
+
         # Copy and remove nodes
         for node in nodes_to_remove:
             self.clipboard['nodes'].append(self._create_node_copy_dict(node))
             self.nodes.remove(node)
+            # Cutting a node drops the port attachments and line taps that
+            # pointed at it, exactly as deleting one does -- a link left
+            # pointing at a cut node still reaches the extractor
+            self._drop_attachments_for_node(node['node_id'])
 
             # Find all edges connected to this node
             for edge in self.edges:
@@ -14657,22 +17698,43 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             if edge in self.edges:
                 self.edges.remove(edge)
 
-        msg = []
-        if len(self.clipboard['nodes']) > 0:
-            msg.append(f"{len(self.clipboard['nodes'])} node(s)")
-        if len(self.clipboard['edges']) > 0:
-            msg.append(f"{len(self.clipboard['edges'])} edge(s)")
-        if len(self.clipboard['constraint_groups']) > 0:
-            msg.append(f"{len(self.clipboard['constraint_groups'])} constraint group(s)")
-        print(f"Cut {' and '.join(msg)}")
+        summary = self._clipboard_counts(
+            self.clipboard, len(self.clipboard['constraint_groups']))
+        self._delete_selected_ports_lines()
+        print(f"Cut {summary}")
 
         self.selected_nodes.clear()
         self.selected_edges.clear()
         self._update_plot()
 
-    def _paste_nodes(self):
-        """Smart paste with autoincrement labels and scattering params."""
-        if not self.clipboard or (not self.clipboard.get('nodes') and not self.clipboard.get('edges')):
+    def _duplicate_selection_offset(self, dx, dy):
+        """Copy the selection `(dx, dy)` away and select the copies.
+
+        This is what Option/Alt-drag commits: the originals stay put and
+        the copy lands where the drag ended. It borrows the clipboard
+        machinery (so links are relinked to the copy exactly as a paste
+        does) but puts the real clipboard back afterwards -- a duplicate
+        must not clobber what the user had copied.
+        """
+        saved = self.clipboard
+        try:
+            self.clipboard = {}
+            self._copy_nodes()
+            if not self._clipboard_has_content():
+                return None
+            summary = self._clipboard_counts(self.clipboard)
+            self._paste_nodes(offset=(dx, dy))
+        finally:
+            self.clipboard = saved
+        return summary
+
+    def _paste_nodes(self, *, offset=None):
+        """Smart paste with autoincrement labels and scattering params.
+
+        `offset` places the copy a given (dx, dy) from where it was copied
+        instead of at the view center -- the Option-drag duplicate path.
+        """
+        if not self._clipboard_has_content():
             print("Clipboard is empty")
             return
 
@@ -14689,10 +17751,17 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         view_center_x = (xlim[0] + xlim[1]) / 2
         view_center_y = (ylim[0] + ylim[1]) / 2
 
-        # Calculate centroid of clipboard nodes
-        if self.clipboard.get('nodes'):
-            clip_x = sum(n['pos'][0] for n in self.clipboard['nodes']) / len(self.clipboard['nodes'])
-            clip_y = sum(n['pos'][1] for n in self.clipboard['nodes']) / len(self.clipboard['nodes'])
+        # Centroid of EVERYTHING on the clipboard, glyphs included: a
+        # glyph-only copy has no node centroid at all, and the paste would
+        # land exactly on top of the original.
+        clip_positions = (
+            [tuple(n['pos']) for n in self.clipboard.get('nodes', [])]
+            + self._clipboard_ports_lines_positions(self.clipboard))
+        if offset is not None:
+            offset_x, offset_y = offset
+        elif clip_positions:
+            clip_x = sum(px for px, _ in clip_positions) / len(clip_positions)
+            clip_y = sum(py for _, py in clip_positions) / len(clip_positions)
 
             # Snap the centroid to grid to get the base offset
             snap_center_x, snap_center_y = self._snap_to_grid(view_center_x, view_center_y)
@@ -14874,19 +17943,23 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             if pasted_constraint_count > 0 and hasattr(self, 'properties_panel'):
                 self.properties_panel._apply_constraint_styling()
 
-        msg = []
-        if len(self.selected_nodes) > 0:
-            msg.append(f"{len(self.selected_nodes)} node(s)")
-        if len(self.selected_edges) > 0:
-            msg.append(f"{len(self.selected_edges)} edge(s)")
-        if pasted_constraint_count > 0:
-            msg.append(f"{pasted_constraint_count} constraint group(s)")
-        print(f"Pasted {' and '.join(msg)}")
+        # Port/line glyphs last: they need the node id mapping above so a
+        # copied link lands on the pasted mode, not the original
+        port_labels, line_labels = self._clipboard_glyph_labels()
+        n_ports, n_lines = self._paste_ports_lines(
+            self.clipboard, (offset_x, offset_y), old_id_to_new_node,
+            port_labels, line_labels)
+
+        print(f"Pasted {self._paste_summary(n_ports, n_lines, pasted_constraint_count)}")
         self._update_plot()
 
     def _paste_nodes_raw(self):
-        """Raw paste keeping original labels and scattering params (Ctrl+Shift+V)."""
-        if not self.clipboard or (not self.clipboard.get('nodes') and not self.clipboard.get('edges')):
+        """Raw paste keeping original labels and scattering params (Ctrl+Shift+V).
+
+        No `offset` twin: Option-drag duplicates through the smart path, so
+        a dragged copy gets its own labels rather than colliding.
+        """
+        if not self._clipboard_has_content():
             print("Clipboard is empty")
             return
 
@@ -14898,10 +17971,15 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         view_center_x = (xlim[0] + xlim[1]) / 2
         view_center_y = (ylim[0] + ylim[1]) / 2
 
-        # Calculate centroid of clipboard nodes
-        if self.clipboard.get('nodes'):
-            clip_x = sum(n['pos'][0] for n in self.clipboard['nodes']) / len(self.clipboard['nodes'])
-            clip_y = sum(n['pos'][1] for n in self.clipboard['nodes']) / len(self.clipboard['nodes'])
+        # Centroid of EVERYTHING on the clipboard, glyphs included: a
+        # glyph-only copy has no node centroid at all, and the paste would
+        # land exactly on top of the original.
+        clip_positions = (
+            [tuple(n['pos']) for n in self.clipboard.get('nodes', [])]
+            + self._clipboard_ports_lines_positions(self.clipboard))
+        if clip_positions:
+            clip_x = sum(px for px, _ in clip_positions) / len(clip_positions)
+            clip_y = sum(py for _, py in clip_positions) / len(clip_positions)
 
             # Snap the centroid to grid to get the base offset
             snap_center_x, snap_center_y = self._snap_to_grid(view_center_x, view_center_y)
@@ -15058,23 +18136,29 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             if pasted_constraint_count > 0 and hasattr(self, 'properties_panel'):
                 self.properties_panel._apply_constraint_styling()
 
-        msg = []
-        if len(self.selected_nodes) > 0:
-            msg.append(f"{len(self.selected_nodes)} node(s)")
-        if len(self.selected_edges) > 0:
-            msg.append(f"{len(self.selected_edges)} edge(s)")
-        if pasted_constraint_count > 0:
-            msg.append(f"{pasted_constraint_count} constraint group(s)")
-        print(f"Raw pasted {' and '.join(msg)}")
+        # Raw paste keeps the original glyph labels, as it does for nodes
+        n_ports, n_lines = self._paste_ports_lines(
+            self.clipboard, (offset_x, offset_y), old_id_to_new_node)
+
+        print(f"Raw pasted {self._paste_summary(n_ports, n_lines, pasted_constraint_count)}")
         self._update_plot()
 
     def _delete_selected_nodes(self):
-        """Delete selected nodes and edges"""
-        if not self.selected_nodes and not self.selected_edges:
-            print("No nodes or edges selected to delete")
+        """Delete selected nodes, edges, and port/line glyphs/links"""
+        # Taps and pump buses were missing from this guard, so deleting a
+        # selection of only those reported "nothing selected" and did
+        # nothing -- reachable now that a selection window takes links too
+        if not any((self.selected_nodes, self.selected_edges,
+                    self.selected_ports, self.selected_lines,
+                    self.selected_attachments, self.selected_taps,
+                    self.selected_pump_buses)):
+            print("Nothing selected to delete")
             return
 
         self._save_state()
+
+        # Delete selected port/line glyphs first
+        ports_lines_removed = self._delete_selected_ports_lines()
 
         # Delete selected nodes and any edges connected to them
         nodes_to_remove = list(self.selected_nodes)
@@ -15083,6 +18167,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         for node in nodes_to_remove:
             if node in self.nodes:
                 self.nodes.remove(node)
+                # Deleting a node drops any port attachments referencing it
+                self._drop_attachments_for_node(node['node_id'])
                 # Find all edges connected to this node
                 for edge in self.edges:
                     if edge['from_node'] == node or edge['to_node'] == node:
@@ -15105,7 +18191,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         edge_count = len(edges_to_remove)
 
         # Invalidate Kron reduction and scattering data if anything was deleted
-        if node_count > 0 or edge_count > 0:
+        if node_count > 0 or edge_count > 0 or ports_lines_removed > 0:
             self._invalidate_kron_reduction()
             self._invalidate_scattering_data()
 
@@ -15115,12 +18201,15 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             # Auto-update matrix display
             if hasattr(self, 'properties_panel'):
                 self.properties_panel._update_matrix_display()
+                self.properties_panel._update_scattering_ports_table()
 
         msg = []
         if node_count > 0:
             msg.append(f"{node_count} node(s)")
         if edge_count > 0:
             msg.append(f"{edge_count} edge(s)")
+        if ports_lines_removed > 0:
+            msg.append(f"{ports_lines_removed} port/line glyph(s)")
         print(f"Deleted {' and '.join(msg)}")
 
         self.selected_nodes.clear()
@@ -15144,429 +18233,124 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             print("No matrix generated yet")
 
 
-    def _export_code(self):
-        """Export graph as Python code using graph_primitives GraphCircuit"""
-        # Determine which graph to export based on currently displayed tab
-        export_kron = False
-        saved_nodes = None
-        saved_edges = None
+    def _export_code(self, compact=False):
+        """Export graph as Python code using graph_primitives GraphCircuit.
 
-        if hasattr(self, 'graph_subtabs') and hasattr(self, 'kron_graph') and self.kron_graph:
+        With ``compact``, look-alike objects are grouped under named style
+        dicts and the geometry becomes plain lists -- the shape to edit or
+        generate from, rather than one fully spelled-out call per object.
+        """
+        # Export whichever graph the displayed sub-tab is showing
+        export_kron = False
+        saved = None
+        if getattr(self, 'graph_subtabs', None) is not None and getattr(self, 'kron_graph', None):
             current_tab = self.graph_subtabs.currentIndex()
             tab_text = self.graph_subtabs.tabText(current_tab) if current_tab >= 0 else ""
-            if tab_text == "Kron":
-                export_kron = True
-                print("Exporting Kron-reduced graph...")
-            else:
-                print("Exporting Original graph...")
-
-        # Temporarily swap to the appropriate graph data
+            export_kron = (tab_text == "Kron")
+            print(f"Exporting {'Kron-reduced' if export_kron else 'Original'} graph...")
         if export_kron:
-            saved_nodes = self.nodes
-            saved_edges = self.edges
+            saved = (self.nodes, self.edges)
             self.nodes = self.kron_graph['nodes']
             self.edges = self.kron_graph['edges']
 
         try:
-            if not self.nodes:
-                print("No nodes to export")
+            code = code_export.build_code(self, compact=compact,
+                                          preserve_ylim=True)
+            if code is None:
+                # this export regenerates matplotlib code from nodes/edges;
+                # port and line glyphs have no representation in it
+                print("No nodes to export (port/line glyphs are not part of "
+                      "the drawing-code export)")
                 return
 
-            # Calculate full graph extents including all objects first
-            # This will be used for both scaling calculations and final plot limits
-            extent_x_min, extent_x_max, extent_y_min, extent_y_max = self._calculate_graph_extents()
-    
-            # Calculate graph center - we'll shift all coordinates to center at origin
-            x_center = (extent_x_min + extent_x_max) / 2
-            y_center = (extent_y_min + extent_y_max) / 2
-    
-            # Calculate the actual plot extent we'll use (with 10% padding)
-            full_extent_span = max(extent_x_max - extent_x_min, extent_y_max - extent_y_min) * 1.1
-    
-            # Calculate points_per_data_unit for node label nudge calculations
-            # This is still needed for vertical adjustment compensation
-            figsize = 12
-            fig_size_points = figsize * 72
-            export_points_per_data_unit = fig_size_points / (full_extent_span * 2)  # *2 because extent is from -x_extent to +x_extent
-    
-            # NO fontscale_compensation needed anymore!
-            # graph_primitives.py now auto-scales all labels (node, self-loop, edge) based on
-            # points_per_data_unit, so they maintain correct proportions regardless of extent
-            # All font size parameters (fontscale, selflooplabelscale, labelfontsize) now work
-            # consistently as multipliers on auto-calculated base sizes
-    
-            # Debug: print the extent
-            print(f"Graph extent span: {full_extent_span:.3f}")
-    
-            # Calculate linewidth scaling factor to keep linewidths proportional to node size
-            # Linewidths are in points (absolute), but need to scale with graph extent
-            # Use a reference extent (typical small graph is ~10-15 units after padding)
-            reference_extent = 15.0
-            lw_extent_scale = reference_extent / full_extent_span
-            print(f"Linewidth extent scale factor: {lw_extent_scale:.3f}")
-    
-            # Use the export_rescale dictionary (tunable via UI in Export Scaling tab)
-            # These parameters provide absolute control over scaling, independent of graph size
-            RESCALE = self.export_rescale
-    
-    
-            # Generate Python code
-            code_lines = []
-            code_lines.append("#!/usr/bin/env python")
-            code_lines.append('"""')
-            code_lines.append("Generated graph code using graph_primitives")
-            code_lines.append('"""')
-            code_lines.append("")
-            code_lines.append("import matplotlib.pyplot as plt")
-            code_lines.append("import graphulator.graph_primitives as gp")
-            code_lines.append("import graphulator.graphulator_config as config")
-            code_lines.append("")
-            code_lines.append("# Create graph circuit (allow duplicate labels)")
-            code_lines.append("# Set use_latex=True for LaTeX rendering, False for MathText (default)")
-            use_latex_str = "True" if self.use_latex else "False"
-            code_lines.append(f"graph = gp.GraphCircuit(allow_duplicate_labels=True, use_latex={use_latex_str})")
-            code_lines.append("")
-    
-            # Check for duplicate labels
-            label_counts = {}
-            has_duplicates = False
-            for node in self.nodes:
-                label = node['label']
-                label_counts[label] = label_counts.get(label, 0) + 1
-                if label_counts[label] > 1:
-                    has_duplicates = True
-    
-            # Find self-loops for each node
-            node_selfloops = {}  # Maps node_id to self-loop edge
-            for edge in self.edges:
-                if edge['is_self_loop']:
-                    node_selfloops[edge['from_node_id']] = edge
-    
-            code_lines.append("# Add nodes")
-    
-            for i, node in enumerate(self.nodes):
-                label = node['label']
-                # Handle empty labels - use space to avoid math parsing errors
-                if not label or not label.strip():
-                    label = ' '
-                node_id = node['node_id']
-                x, y = node['pos']
-                color_key = node['color_key']
-                node_size_mult = node.get('node_size_mult', 1.0)
-                label_size_mult = node.get('label_size_mult',1.0) * 0.75
-                conj = node.get('conj', False)
-    
-                # HACK to fix the label_size_mult
-                # label_size_mult *= 0.1
-    
-                # Use addnode for all nodes (consistent parameterization)
-                radius = self.node_radius * node_size_mult
-    
-                # Check if this node has a self-loop
-                has_selfloop = node_id in node_selfloops
-                selfloop_edge = None
-                selfloop_label = ''
-                if has_selfloop:
-                    selfloop_edge = node_selfloops[node_id]
-                    selfloop_label = selfloop_edge.get('label1', '')
-    
-                # Shift coordinates to center graph at origin
-                x_shifted = x - x_center
-                y_shifted = y - y_center
-    
-                code_lines.append(f"# Node {i+1}: {label if label.strip() else '(blank)'}")
-                if has_duplicates:
-                    # Include node_id to disambiguate
-                    code_lines.append(f"graph.addnode(label='{label}', xy=({x_shifted:.3f}, {y_shifted:.3f}), node_id={node_id},")
-                else:
-                    code_lines.append(f"graph.addnode(label='{label}', xy=({x_shifted:.3f}, {y_shifted:.3f}),")
-                code_lines.append(f"             nodecolor=config.MYCOLORS['{color_key}'],")
-                code_lines.append(f"             R={radius:.3f},")
-                # fontscale is now a simple multiplier - graph_primitives handles auto-scaling
-                code_lines.append(f"             fontscale={label_size_mult * RESCALE['NODELABELSCALE']:.3f},")
-                code_lines.append(f"             conj={conj},")
-
-                # Add outline properties if enabled
-                outline_enabled = node.get('outline_enabled', False)
-                if outline_enabled:
-                    outline_color_key = node.get('outline_color_key', 'BLACK')
-                    outline_width = node.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH)
-                    outline_alpha = node.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA)
-                    code_lines.append(f"             nodeoutlinecolor=config.MYCOLORS['{outline_color_key}'],")
-                    code_lines.append(f"             nodelw={outline_width:.1f},")
-                    code_lines.append(f"             nodeoutlinealpha={outline_alpha:.2f},")
-
-                # Add nodelabelnudge if non-zero
-                # Compensate for GUI's vertical adjustment (5% of font size downward)
-                # so exported position matches GUI appearance
-                nudge = node.get('nodelabelnudge', (0.0, 0.0))
-                if nudge != (0.0, 0.0) and (abs(nudge[0]) > 0.001 or abs(nudge[1]) > 0.001):
-                    # Calculate vertical adjustment used in GUI rendering
-                    # Use export parameters to calculate points_per_data_unit
-                    conj_scale = config.CONJ_LABEL_SCALE if conj else 1.0
-                    font_size_points = radius * 2 * export_points_per_data_unit * 0.35 * label_size_mult * conj_scale
-                    adjustment_fraction = 0.05
-                    vertical_adjustment_points = font_size_points * adjustment_fraction
-                    vertical_adjustment_data = vertical_adjustment_points / export_points_per_data_unit
-    
-                    # Subtract the adjustment from y-component of nudge for export
-                    # (GUI nudge is relative to adjusted position, export needs absolute position)
-                    export_nudge = (nudge[0], nudge[1] - vertical_adjustment_data)
-                    code_lines.append(f"             nodelabelnudge=({export_nudge[0]:.3f}, {export_nudge[1]:.3f}),")
-    
-                # Add self-loop parameters if this node has a self-loop
-                if has_selfloop and selfloop_edge is not None:
-                    code_lines.append(f"             drawselfloop=True,")
-                    if selfloop_label:
-                        # Auto-enclose label with $ signs for math mode if not already present
-                        if not selfloop_label.startswith('$'):
-                            export_label = f'${selfloop_label}$'
-                        else:
-                            export_label = selfloop_label
-                        code_lines.append(f"             selflooplabel=r'{export_label}',")
-    
-                        # Add selflooplabelscale if non-default
-                        label_size_mult = selfloop_edge.get('label_size_mult', 1.4)
-                        if abs(label_size_mult - 1.4) > 0.01:
-                            # selflooplabelscale works as multiplier relative to node label size
-                            # It multiplies scaled_nodelabelsize, so it automatically scales proportionally
-                            code_lines.append(f"             selflooplabelscale={label_size_mult * RESCALE['SELFLOOP_LABELSCALE']:.3f},")
-    
-                    code_lines.append(f"             selflooplw={2.5 * selfloop_edge['linewidth_mult'] * RESCALE['SLLW'] * lw_extent_scale:.1f},")
-    
-                    # Add selfloopangle
-                    selfloopangle = selfloop_edge.get('selfloopangle', 0)
-                    if selfloopangle != 0:
-                        code_lines.append(f"             selfloopangle={selfloopangle},")
-    
-                    # Add selfloopscale
-                    selfloopscale = selfloop_edge.get('selfloopscale', 1.0)
-                    if abs(selfloopscale - 1.0) > 0.01:
-                        code_lines.append(f"             selfloopscale={selfloopscale * RESCALE['SLSC']:.3f},")
-    
-                    # Add arrowlengthsc
-                    arrowlengthsc = selfloop_edge.get('arrowlengthsc', 1.0)
-                    if abs(arrowlengthsc - 1.0) > 0.01:
-                        code_lines.append(f"             arrowlengthsc={arrowlengthsc:.3f},")
-    
-                    # Add flipselfloop
-                    flip = selfloop_edge.get('flip', False)
-                    if flip:
-                        code_lines.append(f"             flipselfloop={flip},")
-    
-                    # Add selflooplabelnudge if non-zero
-                    # Apply SELFLOOP_LABELNUDGE_SCALE and EXPORT_SELFLOOP_LABEL_DISTANCE
-                    nudge = selfloop_edge.get('selflooplabelnudge', (0.0, 0.0))
-                    nudge_scale = RESCALE.get('SELFLOOP_LABELNUDGE_SCALE', 1.0)
-                    export_distance_scale = RESCALE.get('EXPORT_SELFLOOP_LABEL_DISTANCE', 1.0)
-    
-                    # Calculate scaled nudge accounting for both the fine-tuning nudge and distance scaling
-                    # The distance scale adjusts the overall radial position from the node center
-                    # We approximate this by scaling the nudge in the direction of the self-loop angle
-                    selfloopangle = selfloop_edge.get('selfloopangle', 0)
-                    angle_rad = selfloopangle * np.pi / 180
-    
-                    # Base nudge from user adjustments
-                    scaled_nudge_x = nudge[0] * nudge_scale
-                    scaled_nudge_y = nudge[1] * nudge_scale
-    
-                    # Add distance scaling component (moves label radially based on angle)
-                    if abs(export_distance_scale - 1.0) > 0.001:
-                        # Calculate radial offset to adjust distance from node center
-                        # This mimics changing the 3.2*R factor in the label positioning
-                        radial_adjustment = (export_distance_scale - 1.0) * 0.5  # Scale factor for nudge
-                        scaled_nudge_x += radial_adjustment * np.cos(angle_rad)
-                        scaled_nudge_y += radial_adjustment * np.sin(angle_rad)
-    
-                    if (abs(scaled_nudge_x) > 0.001 or abs(scaled_nudge_y) > 0.001):
-                        code_lines.append(f"             selflooplabelnudge=({scaled_nudge_x:.3f}, {scaled_nudge_y:.3f}),")
-    
-                    # Add selfloop label background color if set
-                    label_bgcolor = selfloop_edge.get('label_bgcolor', None)
-                    if label_bgcolor is not None:
-                        code_lines.append(f"             selflooplabelbgcolor='{label_bgcolor}',")
-    
-                    # Close the addnode call
-                    code_lines.append(f"             )")
-                else:
-                    code_lines.append(f"             drawselfloop=False)")
-                code_lines.append("")
-    
-            # Add edges if any exist (skip self-loops, they're handled in addnode)
-            non_selfloop_edges = [e for e in self.edges if not e['is_self_loop']]
-            if non_selfloop_edges:
-                code_lines.append("# Add edges")
-                for i, edge in enumerate(non_selfloop_edges):
-                    from_node = edge['from_node']
-                    to_node = edge['to_node']
-                    from_label = from_node['label']
-                    to_label = to_node['label']
-                    from_node_id = edge['from_node_id']
-                    to_node_id = edge['to_node_id']
-    
-                    edge_label1 = edge.get('label1', '')
-                    edge_label2 = edge.get('label2', '')
-                    style = edge['style']
-                    direction = edge['direction']
-                    linewidth_mult = edge['linewidth_mult']
-                    label_size_mult = edge['label_size_mult']
-                    label_offset_mult = edge.get('label_offset_mult', 1.0)
-    
-                    code_lines.append(f"# Edge {i+1}: {from_label} → {to_label}")
-    
-                    # Calculate labeltheta from node positions
-                    from_pos = from_node['pos']
-                    to_pos = to_node['pos']
-                    dx = to_pos[0] - from_pos[0]
-                    dy = to_pos[1] - from_pos[1]
-                    labeltheta = np.arctan2(dy, dx) * 180 / np.pi
-    
-                    # Flip labels by 180 degrees if requested
-                    if edge.get('flip_labels', False):
-                        labeltheta += 180
-    
-                    # Add fine-tuning rotation offset
-                    labeltheta += edge.get('label_rotation_offset', 0)
-    
-                    # Base values for figsize=12
-                    base_lw = 4
-                    base_labelfontsize = config.EXPORT_EDGE_LABEL_BASE_FONTSIZE
-                    base_labeloffset = 2.3
-    
-                    # Apply multipliers and extent scaling
-                    # Scale linewidths inversely with extent to keep them proportional to circles
-                    scaled_lw = base_lw * linewidth_mult * lw_extent_scale
-                    scaled_labelfontsize = base_labelfontsize * label_size_mult
-                    scaled_labeloffset = base_labeloffset * label_offset_mult
-    
-                    # Adjust linewidth for single/double styles (graph_primitives multiplies these)
-                    # Since we're passing 'lw' in loopkwargs, we need to pre-multiply
-                    single_double_lw_unit = 3.5
-                    if style == 'single':
-                        scaled_lw *= single_double_lw_unit * 0.4
-                    elif style == 'double':
-                        scaled_lw *= 0.9 * single_double_lw_unit
-                    elif style == 'loopy':
-                        scaled_lw *= 0.4
-    
-                    # Format labels - add $ if not already present
-                    def format_label(label_text):
-                        if label_text:
-                            if not label_text.startswith('$'):
-                                return f'${label_text}$'
-                            return label_text
-                        return None
-    
-                    formatted_label1 = format_label(edge_label1)
-                    formatted_label2 = format_label(edge_label2)
-    
-                    # Build label list string
-                    label1_str = f"r'{formatted_label1}'" if formatted_label1 else "None"
-                    label2_str = f"r'{formatted_label2}'" if formatted_label2 else "None"
-                    label_str = f"[{label1_str}, {label2_str}]"
-    
-                    # Use node_id if there are duplicates, otherwise use labels
-                    if has_duplicates:
-                        code_lines.append(f"graph.addedge(fromnode_id={from_node_id}, tonode_id={to_node_id},")
-                    else:
-                        code_lines.append(f"graph.addedge(fromnode='{from_label}', tonode='{to_label}',")
-                    code_lines.append(f"             label={label_str},")
-                    code_lines.append(f"             labeltheta={labeltheta:.1f},")
-                    code_lines.append(f"             labeloffset={scaled_labeloffset * RESCALE['EDGELABELOFFSET']:.1f},")
-                    code_lines.append(f"             labelfontsize={scaled_labelfontsize * RESCALE['EDGEFONTSCALE']:.0f},")
-    
-                    # Add label background colors if set
-                    label1_bgcolor = edge.get('label1_bgcolor', None)
-                    label2_bgcolor = edge.get('label2_bgcolor', None)
-                    if label1_bgcolor or label2_bgcolor:
-                        bgcolor1_str = f"'{label1_bgcolor}'" if label1_bgcolor else "None"
-                        bgcolor2_str = f"'{label2_bgcolor}'" if label2_bgcolor else "None"
-                        code_lines.append(f"             labelbgcolor=[{bgcolor1_str}, {bgcolor2_str}],")
-    
-                    code_lines.append(f"             style='{style}',")
-                    code_lines.append(f"             whichedges='{direction}',")
-                    code_lines.append(f"             theta={edge.get('looptheta', 30)},")
-                    code_lines.append(f"             loopkwargs={{'lw': {scaled_lw * RESCALE['EDGELWSCALE']:.1f}, 'arrowlength': 0.4}})")
-                    code_lines.append("")
-    
-            code_lines.append("")
-            code_lines.append("# Draw the graph")
-            code_lines.append("# overfrac adds padding around the graph to ensure all elements are visible")
-            code_lines.append("# Increase overfrac if labels or self-loops are cut off")
-            code_lines.append("graph.draw(figsize=12, overfrac=0.2)")
-            code_lines.append("")
-
-            # Add explicit y-axis limits if they differ from graph.draw() auto-calculated limits
-            # graph.draw() auto-centers based on graph extent, but user may have panned/zoomed
-            current_ylim = self.canvas.ax.get_ylim()
-
-            # Calculate what graph.draw would set (symmetric around graph center)
-            # We can compare against the current view to see if user has adjusted it
-            # For simplicity, if ylim is non-default, export it explicitly
-            y_tolerance = 0.1  # Tolerance for considering limits "different"
-
-            # Check if current limits differ significantly from a symmetric auto-scale
-            # (graph.draw auto-centers, so we check if user has manually adjusted)
-            ylim_modified = False
-
-            # Simple heuristic: if the y-range or center is notably different from defaults,
-            # assume user wants to preserve it
-            current_y_center = (current_ylim[0] + current_ylim[1]) / 2
-            current_y_range = current_ylim[1] - current_ylim[0]
-
-            # If center is not near 0 or range is not near graph extent, preserve limits
-            if abs(current_y_center) > y_tolerance or current_y_range < (extent_y_max - extent_y_min) * 0.8:
-                ylim_modified = True
-
-            if ylim_modified:
-                code_lines.append("# Set explicit y-axis limits (preserving GUI view)")
-                code_lines.append(f"plt.ylim({current_ylim[0]:.2f}, {current_ylim[1]:.2f})")
-                code_lines.append("")
-
-            code_lines.append("plt.axis('off')")
-            code_lines.append("plt.title('')  # Remove title")
-            code_lines.append("plt.show()")
-    
-            # Join and copy to clipboard or print
-            code = "\n".join(code_lines)
-    
-            # Try to copy to system clipboard
             try:
-                clipboard = QApplication.clipboard()
-                clipboard.setText(code)
+                QApplication.clipboard().setText(code)
                 edge_str = f", {len(self.edges)} edge(s)" if self.edges else ""
-                print(f"✓ Exported code for {len(self.nodes)} node(s){edge_str} to clipboard")
+                shape = "grouped-by-style " if compact else ""
+                print(f"✓ Exported {shape}code for {len(self.nodes)} node(s)"
+                      f"{edge_str} to clipboard")
             except Exception as clipboard_error:
                 logger.warning("Could not copy to clipboard: %s", clipboard_error)
-                print(f"✓ Generated code for {len(self.nodes)} node(s)")
-        except Exception as e:
-            print(f"Code export (clipboard failed: {e}, printing to console):")
-            print("=" * 70)
-            print(code)
-            print("=" * 70)
+                print("=" * 70)
+                print(code)
+                print("=" * 70)
         finally:
-            # Restore original nodes/edges if we swapped to Kron graph
-            if export_kron:
-                self.nodes = saved_nodes
-                self.edges = saved_edges
+            # Restore the original nodes/edges if we swapped in the Kron graph
+            if saved is not None:
+                self.nodes, self.edges = saved
 
     def _update_properties_panel(self):
         """Update the properties panel based on current selection"""
+        n_glyphs = len(getattr(self, 'selected_ports', [])) \
+            + len(getattr(self, 'selected_lines', []))
+        n_wires = len(getattr(self, 'selected_attachments', [])) \
+            + len(getattr(self, 'selected_taps', []))
+        n_buses = len(getattr(self, 'selected_pump_buses', []))
+        panel = self.properties_panel
+        n_objects = (n_glyphs + n_wires + n_buses + len(self.selected_nodes)
+                     + len(self.selected_edges))
+        # Several objects selected (nodes, edges, port/line glyphs, wires,
+        # or any mix): show the properties they share, editable for all at
+        # once. A pump bus has no shared surface of its own, so it only
+        # contributes to the count; a LONE wire or glyph takes its own
+        # branch below, where the panel is richer.
+        if n_objects > 1 and (len(self.selected_nodes) > 1
+                              or len(self.selected_edges) > 1
+                              or n_glyphs or n_wires):
+            signature = PropertiesPanel.selection_signature(
+                self.selected_nodes, self.selected_edges,
+                self.selected_ports, self.selected_lines,
+                self.selected_attachments, self.selected_taps)
+            if panel.displayed_multi != signature:
+                panel.show_multi_properties(
+                    self.selected_nodes, self.selected_edges,
+                    self.selected_ports, self.selected_lines,
+                    self.selected_attachments, self.selected_taps)
+            self._update_shortcut_overlay()
+            return
+        panel.displayed_multi = None
+
+        # Single pump bus selected
+        if n_buses == 1 and not n_wires and not n_glyphs \
+                and not self.selected_nodes and not self.selected_edges:
+            self.properties_panel.show_pump_properties(
+                self.selected_pump_buses[0])
+        # Single wire (port attachment or line tap) selected
+        elif n_wires == 1 and not n_glyphs and not self.selected_nodes \
+                and not self.selected_edges:
+            if self.selected_attachments:
+                port, att = self.selected_attachments[0]
+                self.properties_panel.show_attachment_properties(port, att)
+            else:
+                line, end, conn = self.selected_taps[0]
+                self.properties_panel.show_tap_properties(line, end, conn)
+        # Single port / transmission-line glyph selected
+        elif n_glyphs == 1 and not self.selected_nodes and not self.selected_edges:
+            glyph = (self.selected_ports or self.selected_lines)[0]
+            if self.selected_ports:
+                self.properties_panel.show_port_properties(glyph)
+            else:
+                self.properties_panel.show_line_properties(glyph)
         # Single node selected
-        if len(self.selected_nodes) == 1 and len(self.selected_edges) == 0:
+        elif len(self.selected_nodes) == 1 and len(self.selected_edges) == 0:
             self.properties_panel.show_node_properties(self.selected_nodes[0])
         # Single edge selected
         elif len(self.selected_edges) == 1 and len(self.selected_nodes) == 0:
             self.properties_panel.show_edge_properties(self.selected_edges[0])
-        # Multiple or mixed selection
-        elif len(self.selected_nodes) > 1 or len(self.selected_edges) > 1:
+        # Several wires / pump buses: nothing they share is editable, so
+        # just report what is selected
+        elif n_objects > 1:
             self.properties_panel.clear_properties()
-            self.properties_panel.title_label.setText(f"Multiple Selection")
+            self.properties_panel.title_label.setText("Multiple Selection")
             count_text = []
             if self.selected_nodes:
                 count_text.append(f"{len(self.selected_nodes)} node(s)")
             if self.selected_edges:
                 count_text.append(f"{len(self.selected_edges)} edge(s)")
+            if n_wires:
+                count_text.append(f"{n_wires} wire(s)")
+            if n_buses:
+                count_text.append(f"{n_buses} pump bus(es)")
             info = QLabel(f"Selected: {' and '.join(count_text)}\n\nSelect a single object to edit properties.")
             info.setWordWrap(True)
             self.properties_panel.properties_layout.addWidget(info)
@@ -15585,6 +18369,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         'none': [
             ('node.place_single', 'Add node'),
             ('edge.place_continuous', 'Edge mode'),
+            # shown only with Explicit Ports enabled (filtered in
+            # _shortcut_hint_rows)
+            ('port.place_single', 'Add port'),
+            ('line.place', 'Add transmission line'),
             ('node.toggle_conjugation', 'Conjugation mode'),
             ('view.zoom_in', 'Zoom in'),
             ('edit.undo', 'Undo'),
@@ -15611,10 +18399,19 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             (None, 'Right-click', 'Style menu'),
             ('edit.delete', 'Delete'),
         ],
+        'glyph': [
+            ('rotate.ccw', 'Rotate glyph'),
+            (None, '←/→', 'Stretch length'),
+            (None, '↑/↓', 'Stretch height'),
+            (None, 'Double-click', 'Edit / appearance'),
+            (None, 'Right-click', 'Rotate, auto-orient, delete'),
+            ('edit.delete', 'Delete'),
+        ],
     }
 
     # Shortcut categories that make up the full ('all') list per context.
     _SHORTCUT_ALL_CATEGORIES = {
+        'glyph': ['Ports & Lines', 'Graph Rotation', 'Selection & Clipboard'],
         'none': ['Node Placement', 'Edge Operations', 'View',
                  'Canvas Navigation', 'Grid Controls', 'Selection & Clipboard',
                  'Edit', 'Help'],
@@ -15638,12 +18435,15 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         if getattr(config, 'SHORTCUT_OVERLAY_SHOW_ALL', False):
             return self._shortcut_hint_rows_all(context)
         rows = []
+        ports_on = bool(getattr(self, 'explicit_ports_enabled', False))
         for entry in self._SHORTCUT_HINTS.get(context, []):
             if entry[0] is None:
                 # Verbatim (None, keys, label) — no managed shortcut
                 rows.append((entry[1], entry[2]))
                 continue
             action_id, label = entry
+            if not ports_on and action_id.split('.')[0] in ('port', 'line'):
+                continue          # the keys are inert without the mode
             keys = self._display_key(action_id)
             if keys:
                 rows.append((keys, label))
@@ -15667,13 +18467,22 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
     def _auto_fit_view(self):
         """Auto-fit view to original graph nodes - applies same extents to Original, Scattering, and Kron views"""
-        # Always use the original graph nodes for calculating extents
-        if not self.nodes:
+        # Always use the original graph nodes for calculating extents.
+        # Port/line glyphs count too (a line-only graph has no nodes at
+        # all): use each glyph's lead-tip extremes so nothing gets cut off.
+        points = [node['pos'] for node in self.nodes]
+        for port in getattr(self, 'ports', []):
+            points.append(port['pos'])
+            points.append(self._port_lead_tip(port))
+        for line in getattr(self, 'line_resonators', []):
+            points.append(line['pos'])
+            points.extend(self._line_end_points(line).values())
+        if not points:
             print("No nodes to fit view to")
             return
 
         # Calculate extents based on original graph
-        positions = np.array([node['pos'] for node in self.nodes])
+        positions = np.array(points, dtype=float)
         centroid = positions.mean(axis=0)
 
         distances = np.sqrt(((positions - centroid) ** 2).sum(axis=1))
@@ -15772,6 +18581,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # Draw nodes (now after aspect is set, so limits are correct)
         self._draw_nodes()
 
+        # Draw explicit port / loss-hub / line glyphs and attachment links
+        self._draw_ports_and_lines()
+
         # No edge mode highlight for export
 
         # No title for export
@@ -15847,6 +18659,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         # Draw nodes (now after aspect is set, so limits are correct)
         self._draw_nodes()
+
+        # Draw explicit port / loss-hub / line glyphs and attachment links
+        self._draw_ports_and_lines()
 
         # Draw Kron mode selection rings
         if self.kron_mode:

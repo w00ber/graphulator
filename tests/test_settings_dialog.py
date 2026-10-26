@@ -608,3 +608,53 @@ def test_qt_layout_defaults_flow_to_placed_edges(qt_window, settings_tmp):
         win.edges = []
         gq.sync_dialog_defaults_from_config(win)
         win._update_plot()
+
+
+# ---------------------------------------------------------------------------
+# Port & Wire Defaults tab
+# ---------------------------------------------------------------------------
+
+PORT_WIRE_PARAMS = ('DEFAULT_PORT_LINEWIDTH', 'DEFAULT_PORT_COLOR',
+                    'DEFAULT_PORT_FILL', 'DEFAULT_WIRE_COLOR',
+                    'DEFAULT_WIRE_LINEWIDTH_MULT')
+
+
+def test_qt_dialog_exposes_port_and_wire_defaults(qt_window, settings_tmp):
+    gq, win = qt_window
+    dialog = gq.GraphulatorSettingsDialog(win)
+    for param in PORT_WIRE_PARAMS + ('DEFAULT_WIRE_LINESTYLE',
+                                     'DEFAULT_TXLINE_FILL'):
+        assert param in dialog._widgets, param
+
+
+def test_para_dialog_exposes_port_and_wire_defaults(qt_window, settings_tmp):
+    from PySide6.QtWidgets import QApplication
+    _app = QApplication.instance() or QApplication([])
+    import graphulator.graphulator_para as gp
+    from graphulator.para_ui.settings_dialog import SettingsDialog
+
+    win = gp.Graphulator()
+    dialog = SettingsDialog(win)
+    for param in PORT_WIRE_PARAMS + ('DEFAULT_ATTACHMENT_RATE',
+                                     'DEFAULT_TAP_RATE',
+                                     'DEFAULT_PORT_MONITORED'):
+        assert param in dialog._widgets, param
+
+
+def test_applying_port_defaults_reaches_a_new_glyph(qt_window, settings_tmp):
+    """The whole point of the tab: Apply, then place a port and see it."""
+    gq, win = qt_window
+    config = gq.config
+    original = config.DEFAULT_PORT_FILL
+    try:
+        dialog = gq.GraphulatorSettingsDialog(win)
+        dialog._set_widget_value('DEFAULT_PORT_FILL', '#abcdef')
+        dialog._on_apply()
+        assert config.DEFAULT_PORT_FILL == '#abcdef'
+        assert win.add_port()['fill'] == '#abcdef'
+        # and the placement memory was dropped, so the next dialog starts
+        # from the new default rather than from the last glyph
+        assert win.last_port_props is None
+    finally:
+        config.DEFAULT_PORT_FILL = original
+        win.ports.clear()

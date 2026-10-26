@@ -39,7 +39,7 @@
 
 - In single node placement mode ({{shortcut:node.place_single}}), you get a pop up dialog that lets you set node color, size, label size, and label string. If you enter continuous mode after, it will increment the label (numbers or letters) and continue in the same style.
 
-- If you are calculating scattering, it's necessary to define "ports" for the possible source/receiver pairs. These are signaled to the computation by placing self-loops on a node. Self-loops are constructed in Edge Placement Mode (below) by double-clicking a node (defining the to/from node to be the same).
+- If you are calculating scattering, it's necessary to define "ports" for the possible source/receiver pairs. These are signaled to the computation by placing self-loops on a node. Self-loops are constructed in Edge Placement Mode (below) by double-clicking a node (defining the to/from node to be the same). With **Explicit Ports & Lines** enabled (Settings > Experimental) a port can instead be a real glyph shared by several modes — see *Ports, Loss Hubs & Transmission Lines* below.
 
 ## Edge Operations
 | Shortcut | Action |
@@ -50,6 +50,58 @@
 | {{shortcut:selfloop.scale_decrease}} | Decrease self-loop scale |
 | {{shortcut:selfloop.angle_decrease}} | Decrease self-loop angle / edge looptheta |
 | {{shortcut:selfloop.angle_increase}} | Increase self-loop angle / edge looptheta |
+
+## Ports, Loss Hubs & Transmission Lines  (Experimental — Settings > Experimental)
+| Shortcut | Action |
+|----------|--------|
+| {{shortcut:port.place_single}} | Place a port glyph (click the canvas) |
+| {{shortcut:port.place_continuous}} | Toggle continuous port placement |
+| {{shortcut:line.place}} | Place a transmission-line glyph (dialog: FSR, Ztx, f_max, Z0, α, end load) |
+| `Insert > Place Loss Hub` | Place an unmonitored dissipation hub (no scattering channel) |
+| {{shortcut:edge.place_single}} then click | **Connect**: port → node attaches a mode to that port; a line's **end lead** → port terminates that end; a line's end lead → node **taps** the mode onto the whole comb |
+| {{shortcut:rotate.ccw}} / {{shortcut:rotate.cw}} | Rotate the selected glyph in place; two or more selected objects rotate rigidly about their centroid |
+| `←/→`, `↑/↓` | Stretch a selected glyph's length / height |
+| `↑/↓`, `←/→` on a selected **wire** | Line width / label size, as for an edge |
+| `Double-click` | Edit a port, line, attachment, tap or pump bus |
+| `Right-click` a line | Add / edit / remove its **pumped termination** (creates the conjugate twin and the triple-line pump bus), rotate, auto-orient, delete |
+| `Ctrl+A` | Selects glyphs too, so a whole amplifier drawing moves and rotates as one |
+| `Click+drag` on empty canvas | Selection window: takes the nodes, edges, glyphs **and wires** it encloses (a wire joins by its midpoint, as an edge does) |
+| `Click+drag` a selected object | Moves the WHOLE selection rigidly — glyphs included |
+| `Option`/`Alt`+drag | Leaves the selection where it is and drops a copy, wired to itself, where the drag ends |
+| {{shortcut:clipboard.copy}} / {{shortcut:clipboard.cut}} / {{shortcut:clipboard.paste}} | Copy, cut and paste the selection — ports, lines, attachments and taps included. A link travels only when both of its ends do, and the pasted copy is relinked to itself, never to the original. A pumped line's conjugate twin is rebuilt from the pump rather than copied |
+
+**Editing several at once.** Shift-click (or drag a selection window) to
+collect any mix of nodes, edges, glyphs and wires; the **Properties** panel
+then shows what they share, with a gray or blank marker where the selection
+disagrees, and one edit writes to all of them in a single undo step. For
+wires that is rate, sign, line width, label size and color — attachments and
+taps together. A lone wire still gets its own fuller panel, which is where a
+tap's reference harmonic lives (it is indexed per line, so it has no shared
+range).
+
+**Defaults.** What a newly placed port, line or wire starts from lives under
+**Settings → Port & Wire Defaults**: the port/loss-hub choice, auto-orient,
+the rotation step, stroke widths and colors, fills, the nose depth and lead length (both
+FIXED — autosizing a port's body for a long label no longer drags its
+point and lead out with it), the three wire colors
+(sign +, sign −, tap), the wire width, rounded dash caps, and the coupling
+rate a new attachment or tap is created with. Each placement dialog is also pre-filled
+from the last glyph placed, so a run of them comes out consistent; applying
+Settings clears that memory so a changed default takes effect immediately.
+Wire colors are read when the canvas draws, so changing one restyles every
+wire that has no color of its own.
+
+**What the glyphs mean.** A **port** (pentagon) is one physical resistor; every mode attached to it shares that dissipation channel, which is what makes ports *shared* (cross-damping between the attached modes falls out of the same column). A **transmission line** (cylinder) is a standing-wave mode comb parameterized by FSR, Ztx and f_max; its comb never appears on the canvas — terminating an end on a port couples all of it through that port's single channel, and tapping a node onto an end couples the node to every comb mode with the verified capacitive or inductive profile. A **pumped termination** (right-click the line) models a modulated inductor at one end as one rank-one block to a **conjugate twin** of the line; the **triple-line bus** is always three strokes because one pump drives amplification *and* conversion pairs together on a harmonic comb.
+
+**End load.** A shunt inductance at one end disperses the comb (the modes leave n·FSR). Set it in the line dialog or Properties page as a type plus f_Z, the frequency at which |X| = Ztx, and use *Target resonance → Set FSR* to put the loaded fundamental where you want it. Capacitive loads are listed but disabled until their direct term is derived.
+
+**Truncation.** f_max sets how many comb modes are kept explicitly. The modes beyond it still load the port; with *close comb tail analytically* (Ports & Lines panel, default on) that loading is folded back in closed form and is exact at any N — what f_max still truncates is the pump/tap couplings onto those modes. Press *Check truncation (2× f_max)* to measure it for the graph you have.
+
+**Reading off mode indices.** The pump's reference pair is named by mode index, so the S-params tab has a **Mark Line Modes** toggle (bottom right of *Axis Controls*, beside *Conjugate Freqs*) that draws each line's normal-mode frequencies on the plot with their indices in small chips along the top, and names the line, index and frequency on hover. Where a signal mode and a twin's idler image coincide the chip shows both (`1/2*`, the starred one being the conjugate). With an end load set these are the *loaded* mode frequencies, which is the case where counting `n·FSR` by eye goes wrong. Markers stop at the comb cutoff (mode N, drawn heavier); a pumped line's twin is marked where its idler image actually lands, at `f_p − f_m`.
+
+**Pump strength.** Beside the pump's rate the panel reports **α** = ε/4 = g/√(ω_nω_m), the dimensionless drive strength, with δL/L_tot alongside. α must stay below 1; past it the rate box turns red and the label says so, since on a loaded comb the participations move with the dispersed roots and the limit is not where you would guess. Note the line's own **α_loss** is the uniform attenuation — a different quantity.
+
+**Where to tune.** In scattering mode the **Ports & Lines** panel (full width under Nodes | Edges) holds every line's FSR/Ztx/f_max/Z0/α, its load's f_Z, the pump's f_p/rate/phase/n, and each attachment's rate and sign — so a line-only graph is fully tunable without any graph node. Selecting a glyph or bus on the canvas shows the same on the Properties tab.
 
 ## Selection & Editing
 | Shortcut | Action |

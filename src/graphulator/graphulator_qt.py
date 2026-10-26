@@ -41,7 +41,11 @@ import matplotlib.patches as patches
 # Import modules (relative imports for package)
 from . import graph_primitives as gp
 from . import graphulator_config as config
-from .common_window import GraphWindowCommonMixin
+from . import code_export
+from .common_window import GraphWindowCommonMixin, auto_increment_label
+from .glyphs import (GlyphMixin, GLYPH_SIZE_MIN, GLYPH_SIZE_MAX,
+                     GLYPH_LABEL_SIZE_MIN, GLYPH_LABEL_SIZE_MAX,
+                     PORT_LW, TXLINE_LW, WIRE_COLOR, WIRE_LINESTYLES)
 from .para_core.graph_state import capture_graph_state
 from .para_core.settings_manager import get_settings_manager
 from .para_rendering.label_cache import LabelPathCache
@@ -253,7 +257,7 @@ class EdgeInputDialog(QDialog):
         lw_layout = QHBoxLayout()
         lw_layout.addWidget(QLabel("Line Width:"))
         self.lw_combo = QComboBox()
-        lw_options = ['Thin', 'Medium', 'Thick', 'X-Thick']
+        lw_options = list(config.EDGE_LINEWIDTH_OPTIONS)
         self.lw_combo.addItems(lw_options)
         self.lw_combo.setCurrentText(EdgeInputDialog.last_linewidth)
         lw_layout.addWidget(self.lw_combo)
@@ -430,7 +434,7 @@ class EdgeInputDialog(QDialog):
             EdgeInputDialog.last_direction = direction
 
         # Linewidth multipliers (for figsize=12, medium=5.5)
-        lw_map = {'Thin': 1.0, 'Medium': 1.5, 'Thick': 2.0, 'X-Thick': 2.5}
+        lw_map = dict(config.EDGE_LINEWIDTH_OPTIONS)
 
         # Label font size multipliers (for figsize=12, medium=50)
         label_size_map = {'Small': 1.0, 'Medium': 1.4, 'Large': 1.8, 'X-Large': 2.5, 'XX-Large': 3.0}
@@ -490,7 +494,7 @@ def sync_dialog_defaults_from_config(window=None):
     EdgeInputDialog.last_style = config.DEFAULT_EDGE_STYLE
     EdgeInputDialog.last_linewidth = closest_name(
         config.DEFAULT_EDGE_LINEWIDTH_MULT,
-        {1.0: 'Thin', 1.5: 'Medium', 2.0: 'Thick', 2.5: 'X-Thick'})
+        {v: k for k, v in config.EDGE_LINEWIDTH_OPTIONS.items()})
     EdgeInputDialog.last_label_size = closest_name(
         config.DEFAULT_EDGE_LABEL_SIZE_MULT,
         {1.0: 'Small', 1.4: 'Medium', 1.8: 'Large', 2.5: 'X-Large', 3.0: 'XX-Large'})
@@ -502,6 +506,11 @@ def sync_dialog_defaults_from_config(window=None):
         window.last_node_props = None
         window.last_edge_props = None
         window.last_selfloop_props = None
+        # Glyph placement works the same way: drop the remembered port /
+        # txline appearance so the next one placed starts from the changed
+        # Port & Wire defaults rather than from the last glyph.
+        window.last_port_props = None
+        window.last_txline_props = None
 
 
 class PropertiesPanel(QWidget):
@@ -560,8 +569,11 @@ class PropertiesPanel(QWidget):
 • g: Place single node<br>
 • Shift+G: Continuous node mode<br>
 • Ctrl+G: Auto-increment mode<br>
-• e: Place single edge<br>
+• e: Edge / wire tool<br>
 • Ctrl+E: Continuous edge mode<br>
+• p: Place port glyph<br>
+• Shift+P: Continuous ports<br>
+• l: Place transmission line<br>
 • c: Conjugation mode<br>
 • Esc: Exit mode / Clear selection<br>
 • r: Rotate grid (45° / 30°)<br>
@@ -588,6 +600,15 @@ class PropertiesPanel(QWidget):
 • d or Delete: Delete<br>
 • f: Flip edge labels<br>
 • Shift+F: Edge rotation mode<br>
+<br>
+<b>Glyphs (port / txline):</b><br>
+• ← →: Length<br>
+• ↑ ↓: Height<br>
+• Ctrl+← →: Rotate 15°<br>
+• Ctrl+↑ ↓: Label size<br>
+• Shift+arrows: Nudge label<br>
+• e then click: Wire it up<br>
+• Right-click: Auto-orient / delete<br>
 <br>
 <b>Other:</b><br>
 • Ctrl+Shift+E: Export code<br>
@@ -694,6 +715,13 @@ class PropertiesPanel(QWidget):
         export_btn = QPushButton("Export Code")
         export_btn.clicked.connect(lambda: self.graphulator._export_code())
         btn_layout.addWidget(export_btn)
+
+        export_grouped_btn = QPushButton("Export Code (grouped)")
+        export_grouped_btn.setToolTip(
+            "Export with look-alike objects grouped into style dicts")
+        export_grouped_btn.clicked.connect(
+            lambda: self.graphulator._export_code(compact=True))
+        btn_layout.addWidget(export_grouped_btn)
 
         scaling_layout.addLayout(btn_layout)
 
@@ -1020,8 +1048,8 @@ class PropertiesPanel(QWidget):
 
             # Linewidth
             self.linewidth_combo = QComboBox()
-            self.linewidth_combo.addItems(['Thin', 'Medium', 'Thick', 'X-Thick'])
-            lw_map = {1.0: 'Thin', 1.5: 'Medium', 2.0: 'Thick', 2.5: 'X-Thick'}
+            self.linewidth_combo.addItems(list(config.EDGE_LINEWIDTH_OPTIONS))
+            lw_map = {v: k for k, v in config.EDGE_LINEWIDTH_OPTIONS.items()}
             current_lw = edge.get('linewidth_mult', 1.5)
             closest_lw = min(lw_map.keys(), key=lambda k: abs(k - current_lw))
             self.linewidth_combo.setCurrentText(lw_map[closest_lw])
@@ -1056,9 +1084,9 @@ class PropertiesPanel(QWidget):
 
             # Linewidth
             self.linewidth_combo = QComboBox()
-            self.linewidth_combo.addItems(['Thin', 'Medium', 'Thick', 'X-Thick'])
+            self.linewidth_combo.addItems(list(config.EDGE_LINEWIDTH_OPTIONS))
             # Find closest match
-            lw_map = {1.0: 'Thin', 1.5: 'Medium', 2.0: 'Thick', 2.5: 'X-Thick'}
+            lw_map = {v: k for k, v in config.EDGE_LINEWIDTH_OPTIONS.items()}
             current_lw = edge.get('linewidth_mult', 1.5)
             closest_lw = min(lw_map.keys(), key=lambda k: abs(k - current_lw))
             self.linewidth_combo.setCurrentText(lw_map[closest_lw])
@@ -1125,6 +1153,229 @@ class PropertiesPanel(QWidget):
         self.properties_layout.addLayout(form)
         self.displayed_single = edge
 
+    # ---- Schematic glyphs (ports, txlines, wires) ------------------------
+
+    def _glyph_apply(self, glyph, key, value, save=True):
+        """Write one property to a glyph as a single undo step."""
+        g = self.graphulator
+        if save:
+            g._save_state()
+        glyph[key] = value
+        g._update_plot()
+
+    def _glyph_spin(self, glyph, key, default, lo, hi, step=0.1, decimals=2,
+                    suffix='', tooltip=''):
+        sb = QDoubleSpinBox()
+        sb.setRange(lo, hi)
+        sb.setDecimals(decimals)
+        sb.setSingleStep(step)
+        if suffix:
+            sb.setSuffix(suffix)
+        if tooltip:
+            sb.setToolTip(tooltip)
+        sb.setValue(float(glyph.get(key, default)))
+        sb.valueChanged.connect(
+            lambda val, k=key: self._glyph_apply(glyph, k, float(val)))
+        return sb
+
+    def _glyph_color_button(self, glyph, key, default, title):
+        btn = QPushButton()
+        btn.setFixedHeight(22)
+
+        def refresh():
+            name = glyph.get(key, default)
+            btn.setText(name)
+            btn.setStyleSheet(f"background-color: {name};")
+
+        def pick():
+            col = QColorDialog.getColor(QColor(glyph.get(key, default)),
+                                        self.graphulator, title)
+            if col.isValid():
+                self._glyph_apply(glyph, key, col.name())
+                refresh()
+
+        btn.clicked.connect(pick)
+        refresh()
+        return btn
+
+    def _glyph_nudge_rows(self, form, glyph):
+        """Label nudge X/Y, the panel twin of Shift+arrow fine-tuning."""
+        for idx, name in ((0, "Label nudge X:"), (1, "Label nudge Y:")):
+            sb = QDoubleSpinBox()
+            sb.setRange(-10.0, 10.0)
+            sb.setDecimals(3)
+            sb.setSingleStep(0.02)
+            sb.setValue(float(glyph.get('labelnudge', (0.0, 0.0))[idx]))
+
+            def commit(val, i=idx):
+                nudge = list(glyph.get('labelnudge', (0.0, 0.0)))
+                nudge[i] = float(val)
+                self._glyph_apply(glyph, 'labelnudge', tuple(nudge))
+            sb.valueChanged.connect(commit)
+            form.addRow(name, sb)
+
+    def _glyph_appearance_rows(self, form, glyph, default_lw, default_fill):
+        form.addRow("Length \u00d7:", self._glyph_spin(
+            glyph, 'w_mult', 1.0, GLYPH_SIZE_MIN, GLYPH_SIZE_MAX,
+            tooltip="Also \u2190 / \u2192 while the glyph is selected"))
+        form.addRow("Height \u00d7:", self._glyph_spin(
+            glyph, 'h_mult', 1.0, GLYPH_SIZE_MIN, GLYPH_SIZE_MAX,
+            tooltip="Also \u2191 / \u2193 while the glyph is selected"))
+        form.addRow("Label size \u00d7:", self._glyph_spin(
+            glyph, 'label_size_mult', 1.0, GLYPH_LABEL_SIZE_MIN,
+            GLYPH_LABEL_SIZE_MAX,
+            tooltip="Also Ctrl+\u2191 / Ctrl+\u2193 while selected"))
+        form.addRow("Stroke width:", self._glyph_spin(
+            glyph, 'linewidth', default_lw, 0.25, 8.0, step=0.25))
+        form.addRow("Stroke color:", self._glyph_color_button(
+            glyph, 'color', 'black', "Glyph stroke color"))
+        form.addRow("Fill color:", self._glyph_color_button(
+            glyph, 'fill', default_fill, "Glyph fill color"))
+        form.addRow("Label color:", self._glyph_color_button(
+            glyph, 'label_color', 'black', "Glyph label color"))
+        self._glyph_nudge_rows(form, glyph)
+
+    def show_port_properties(self, port):
+        """Show properties for a port glyph."""
+        self.clear_properties()
+        self.current_object = port
+        self.current_type = 'port'
+        self.displayed_single = port
+        self.displayed_multi = None
+        self.title_label.setText(f"Port: {port['label']}")
+
+        form = QFormLayout()
+        label_edit = QLineEdit(port['label'])
+        label_edit.textChanged.connect(
+            lambda text: self._glyph_apply(port, 'label', text,
+                                           save=False))
+        form.addRow("Label:", label_edit)
+
+        auto = QCheckBox("Auto-orient toward wired group")
+        auto.setChecked(not port.get('angle_pinned', False))
+        auto.setToolTip(
+            "Checked: the lead points at the center of whatever this "
+            "port is wired to.\nUnchecked: the angle below is used, and "
+            "Ctrl+\u2190 / Ctrl+\u2192 sets it.")
+        angle_spin = QDoubleSpinBox()
+        angle_spin.setRange(-360.0, 360.0)
+        angle_spin.setDecimals(1)
+        angle_spin.setSingleStep(5.0)
+        angle_spin.setSuffix("\u00b0")
+        angle_spin.setValue(
+            float(self.graphulator._port_effective_angle(port)))
+        angle_spin.setEnabled(bool(port.get('angle_pinned', False)))
+
+        def toggle_auto(checked):
+            g = self.graphulator
+            g._save_state()
+            g._apply_port_style(port, {'auto_orient': bool(checked)})
+            angle_spin.setEnabled(not checked)
+            angle_spin.blockSignals(True)
+            angle_spin.setValue(float(g._port_effective_angle(port)))
+            angle_spin.blockSignals(False)
+            g._update_plot()
+        auto.toggled.connect(toggle_auto)
+        angle_spin.valueChanged.connect(
+            lambda val: self._glyph_apply(port, 'angle', float(val)))
+        form.addRow(auto)
+        form.addRow("Angle:", angle_spin)
+
+        self._glyph_appearance_rows(form, port, PORT_LW, 'white')
+        self.properties_layout.addLayout(form)
+
+        n_wires = len(port['connections'])
+        info = QLabel(f"{n_wires} wire(s) from this lead.\n"
+                      "Draw more with the edge tool (e): click the port, "
+                      "then a node, port, or txline end.")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: gray; font-size: 10px;")
+        self.properties_layout.addWidget(info)
+
+    def show_txline_properties(self, txline):
+        """Show properties for a txline glyph."""
+        self.clear_properties()
+        self.current_object = txline
+        self.current_type = 'txline'
+        self.displayed_single = txline
+        self.displayed_multi = None
+        self.title_label.setText(f"Transmission line: {txline['label']}")
+
+        form = QFormLayout()
+        label_edit = QLineEdit(txline['label'])
+        label_edit.textChanged.connect(
+            lambda text: self._glyph_apply(txline, 'label', text, save=False))
+        form.addRow("Label:", label_edit)
+
+        angle_spin = QDoubleSpinBox()
+        angle_spin.setRange(-360.0, 360.0)
+        angle_spin.setDecimals(1)
+        angle_spin.setSingleStep(5.0)
+        angle_spin.setSuffix("\u00b0")
+        angle_spin.setValue(float(txline.get('angle', 0.0)))
+        angle_spin.valueChanged.connect(
+            lambda val: self._glyph_apply(txline, 'angle', float(val)))
+        form.addRow("Angle:", angle_spin)
+
+        self._glyph_appearance_rows(form, txline, TXLINE_LW, '#cccccc')
+        self.properties_layout.addLayout(form)
+
+        n_wires = len(txline['ends']['x0']) + len(txline['ends']['xL'])
+        info = QLabel(f"{n_wires} wire(s) on the end stubs.\n"
+                      "Draw more with the edge tool (e): click an end dot, "
+                      "then a node, port, or another txline end.")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: gray; font-size: 10px;")
+        self.properties_layout.addWidget(info)
+
+    def show_glyph_wire_properties(self, owner, conn):
+        """Show properties for one glyph wire."""
+        self.clear_properties()
+        self.current_object = conn
+        self.current_type = 'glyph_wire'
+        self.displayed_single = conn
+        self.displayed_multi = None
+        self.title_label.setText(f"Wire from {owner['label']}")
+
+        form = QFormLayout()
+        label_edit = QLineEdit(conn.get('label', ''))
+        label_edit.textChanged.connect(
+            lambda text: self._glyph_apply(conn, 'label', text, save=False))
+        form.addRow("Label:", label_edit)
+        form.addRow("Label size \u00d7:", self._glyph_spin(
+            conn, 'label_size_mult', 1.0, GLYPH_LABEL_SIZE_MIN,
+            GLYPH_LABEL_SIZE_MAX))
+        form.addRow("Width \u00d7:", self._glyph_spin(
+            conn, 'linewidth_mult', 1.25, 0.2, 5.0))
+
+        style_combo = QComboBox()
+        style_combo.addItems(list(WIRE_LINESTYLES.keys()))
+        current = conn.get('linestyle') or '-'
+        for name, value in WIRE_LINESTYLES.items():
+            if value == current:
+                style_combo.setCurrentText(name)
+                break
+        style_combo.currentTextChanged.connect(
+            lambda name: self._glyph_apply(conn, 'linestyle',
+                                           WIRE_LINESTYLES[name]))
+        form.addRow("Style:", style_combo)
+
+        color_btn = QPushButton("Choose Color")
+
+        def pick():
+            start = QColor(conn.get('color') or WIRE_COLOR)
+            col = QColorDialog.getColor(start, self.graphulator,
+                                        "Wire color")
+            if col.isValid():
+                self._glyph_apply(conn, 'color', col.name())
+        color_btn.clicked.connect(pick)
+        form.addRow("Color:", color_btn)
+
+        reset = QPushButton(f"Reset color (default {WIRE_COLOR})")
+        reset.clicked.connect(lambda: self._glyph_apply(conn, 'color', None))
+        form.addRow("", reset)
+        self.properties_layout.addLayout(form)
+
     def show_no_selection(self):
         """Show message when nothing is selected"""
         self.clear_properties()
@@ -1141,9 +1392,17 @@ class PropertiesPanel(QWidget):
     # ---- Multi-selection editing -------------------------------------------------
 
     @staticmethod
-    def selection_signature(nodes, edges):
-        """A hashable signature identifying the current multi-selection by object identity."""
-        return (frozenset(id(n) for n in nodes), frozenset(id(e) for e in edges))
+    def selection_signature(nodes, edges, ports=(), txlines=(), wires=()):
+        """A hashable signature identifying the current multi-selection by object identity.
+
+        A wire is a (owner, conn) pair; the conn is what carries its style,
+        so that is what identifies it.
+        """
+        return (frozenset(id(n) for n in nodes),
+                frozenset(id(e) for e in edges),
+                frozenset(id(t) for t in ports),
+                frozenset(id(c) for c in txlines),
+                frozenset(id(conn) for _owner, conn in wires))
 
     def _make_multi_int_spinbox(self, values, apply_fn, minimum, maximum, suffix=""):
         """Spinbox for a common integer property across a multi-selection.
@@ -1227,19 +1486,33 @@ class PropertiesPanel(QWidget):
         cb.clicked.connect(on_click)
         return cb
 
-    def show_multi_properties(self, nodes, edges):
-        """Show editable common properties for a multi-selection of nodes and/or edges."""
+    def show_multi_properties(self, nodes, edges, ports=(), txlines=(),
+                              wires=()):
+        """Show editable common properties for a multi-selection of nodes,
+        edges, glyphs and/or wires."""
         self.clear_properties()
         self.current_object = None
         self.current_type = None
         self.displayed_single = None
-        self.displayed_multi = self.selection_signature(nodes, edges)
+        self.displayed_multi = self.selection_signature(nodes, edges, ports,
+                                                        txlines, wires)
+        ports = list(ports)
+        txlines = list(txlines)
+        glyphs = ports + txlines
+        wires = list(wires)
+        wire_conns = [conn for _owner, conn in wires]
 
         count_text = []
         if nodes:
             count_text.append(f"{len(nodes)} node(s)")
         if edges:
             count_text.append(f"{len(edges)} edge(s)")
+        if ports:
+            count_text.append(f"{len(ports)} port(s)")
+        if txlines:
+            count_text.append(f"{len(txlines)} txline(es)")
+        if wires:
+            count_text.append(f"{len(wires)} wire(s)")
         self.title_label.setText(f"Multiple Selection ({' + '.join(count_text)})")
 
         form = QFormLayout()
@@ -1274,10 +1547,10 @@ class PropertiesPanel(QWidget):
 
         # Edge properties (only when edges are selected)
         if edges:
-            lw_map = {'Thin': 1.0, 'Medium': 1.5, 'Thick': 2.0, 'X-Thick': 2.5}
+            lw_map = dict(config.EDGE_LINEWIDTH_OPTIONS)
             lw_reverse = {v: k for k, v in lw_map.items()}
             lw_sb = self._make_multi_combo(
-                ['Thin', 'Medium', 'Thick', 'X-Thick'],
+                list(config.EDGE_LINEWIDTH_OPTIONS),
                 [lw_reverse.get(e.get('linewidth_mult', 1.5)) for e in edges
                  if e.get('linewidth_mult', 1.5) in lw_reverse],
                 lambda text: self._apply_to_edges('linewidth_mult', lw_map[text]))
@@ -1336,6 +1609,77 @@ class PropertiesPanel(QWidget):
                     lambda val: self._apply_to_edges('flip', val))
                 form.addRow("Flip Direction:", flip_cb)
 
+        # Glyph properties (only when ports/txlines are selected)
+        if glyphs:
+            form.addRow(QLabel("<b>Glyphs</b>"))
+            form.addRow("Length \u00d7:", self._make_multi_double_spinbox(
+                [g.get('w_mult', 1.0) for g in glyphs],
+                lambda val: self._apply_to_glyphs('w_mult', val),
+                GLYPH_SIZE_MIN, GLYPH_SIZE_MAX, 0.1))
+            form.addRow("Height \u00d7:", self._make_multi_double_spinbox(
+                [g.get('h_mult', 1.0) for g in glyphs],
+                lambda val: self._apply_to_glyphs('h_mult', val),
+                GLYPH_SIZE_MIN, GLYPH_SIZE_MAX, 0.1))
+            form.addRow("Label size \u00d7:", self._make_multi_double_spinbox(
+                [g.get('label_size_mult', 1.0) for g in glyphs],
+                lambda val: self._apply_to_glyphs('label_size_mult', val),
+                GLYPH_LABEL_SIZE_MIN, GLYPH_LABEL_SIZE_MAX, 0.1))
+            form.addRow("Stroke width:", self._make_multi_double_spinbox(
+                [g.get('linewidth', PORT_LW) for g in glyphs],
+                lambda val: self._apply_to_glyphs('linewidth', val),
+                0.25, 8.0, 0.25, suffix=""))
+            stroke_btn = QPushButton("Choose Color (all glyphs)")
+            stroke_btn.clicked.connect(
+                lambda: self._choose_multi_glyph_color('color',
+                                                       "Glyph stroke color"))
+            form.addRow("Stroke color:", stroke_btn)
+            fill_btn = QPushButton("Choose Fill (all glyphs)")
+            fill_btn.clicked.connect(
+                lambda: self._choose_multi_glyph_color('fill',
+                                                       "Glyph fill color"))
+            form.addRow("Fill color:", fill_btn)
+            label_btn = QPushButton("Choose Label Color (all glyphs)")
+            label_btn.clicked.connect(
+                lambda: self._choose_multi_glyph_color('label_color',
+                                                       "Glyph label color"))
+            form.addRow("Label color:", label_btn)
+            if ports:
+                form.addRow("Auto-orient:", self._make_multi_checkbox(
+                    [not t.get('angle_pinned', False) for t in ports],
+                    self._apply_multi_auto_orient))
+
+        # Wire properties (only when port/txline wires are selected)
+        if wire_conns:
+            cfg_color, cfg_mult, cfg_style = (
+                self.graphulator.wire_defaults())
+            form.addRow(QLabel("<b>Wires</b>"))
+            form.addRow("Width \u00d7:", self._make_multi_double_spinbox(
+                [float(c.get('linewidth_mult') or cfg_mult)
+                 for c in wire_conns],
+                lambda val: self._apply_to_wires('linewidth_mult', val),
+                0.2, 5.0, 0.05))
+            form.addRow("Label size \u00d7:", self._make_multi_double_spinbox(
+                [c.get('label_size_mult', 1.0) for c in wire_conns],
+                lambda val: self._apply_to_wires('label_size_mult', val),
+                GLYPH_LABEL_SIZE_MIN, GLYPH_LABEL_SIZE_MAX, 0.1))
+            style_names = {v: k for k, v in WIRE_LINESTYLES.items()}
+            form.addRow("Style:", self._make_multi_combo(
+                list(WIRE_LINESTYLES.keys()),
+                [style_names.get(c.get('linestyle') or cfg_style)
+                 for c in wire_conns],
+                lambda name: self._apply_to_wires('linestyle',
+                                                  WIRE_LINESTYLES[name])))
+            wire_color_btn = QPushButton("Choose Color (all wires)")
+            wire_color_btn.clicked.connect(self._choose_multi_wire_color)
+            form.addRow("Color:", wire_color_btn)
+            wire_reset = QPushButton(f"Reset color (default {cfg_color})")
+            wire_reset.setToolTip(
+                "Drop the per-wire color override, so these wires follow "
+                "the configured default again.")
+            wire_reset.clicked.connect(
+                lambda: self._apply_to_wires('color', None))
+            form.addRow("", wire_reset)
+
         self.properties_layout.addLayout(form)
 
         hint = QLabel("Gray values differ across the selection; edit a field to apply it to all.")
@@ -1364,6 +1708,64 @@ class PropertiesPanel(QWidget):
         g._remember_edge_props(g.selected_edges[-1])
         g._update_plot()
 
+    def _apply_to_glyphs(self, key, value):
+        """Write a property to every selected glyph (single undo step)."""
+        g = self.graphulator
+        glyphs = g._selected_glyphs()
+        if not glyphs:
+            return
+        g._save_state()
+        for glyph in glyphs:
+            glyph[key] = value
+        g._update_plot()
+
+    def _apply_to_wires(self, key, value):
+        """Write a property to every selected wire (single undo step)."""
+        g = self.graphulator
+        if not g.selected_wires:
+            return
+        g._save_state()
+        for _owner, conn in g.selected_wires:
+            conn[key] = value
+        g._update_plot()
+
+    def _choose_multi_wire_color(self):
+        """Choose one color and apply it to every selected wire."""
+        g = self.graphulator
+        if not g.selected_wires:
+            return
+        first = g.selected_wires[0][1]
+        start = QColor(first.get('color') or g.wire_defaults()[0])
+        color = QColorDialog.getColor(start, g, "Wire color (all selected)")
+        if not color.isValid():
+            return
+        self._apply_to_wires('color', color.name())
+
+    def _apply_multi_auto_orient(self, value):
+        """Toggle auto-orient across every selected port."""
+        g = self.graphulator
+        if not g.selected_ports:
+            return
+        g._save_state()
+        for term in g.selected_ports:
+            g._apply_port_style(term, {'auto_orient': bool(value)})
+        g._update_plot()
+
+    def _choose_multi_glyph_color(self, key, title):
+        """Choose one color and apply it to every selected glyph."""
+        g = self.graphulator
+        glyphs = g._selected_glyphs()
+        if not glyphs:
+            return
+        start = QColor(glyphs[0].get(key) or 'black')
+        color = QColorDialog.getColor(start, g, title)
+        if not color.isValid():
+            return
+        g._save_state()
+        for glyph in glyphs:
+            glyph[key] = color.name()
+        g._update_plot()
+
     def _choose_multi_node_color(self):
         """Choose a color and apply it to all selected nodes."""
         g = self.graphulator
@@ -1374,11 +1776,8 @@ class PropertiesPanel(QWidget):
         if not color.isValid():
             return
         # Find a matching named color key, if any
-        color_key = g.selected_nodes[0].get('color_key', 'BLUE')
-        for key, val in config.MYCOLORS.items():
-            if val.lower() == color.name().lower():
-                color_key = key
-                break
+        color_key = (code_export.palette_key(color.name(), config)
+                     or g.selected_nodes[0].get('color_key', 'BLUE'))
         g._save_state()
         for node in g.selected_nodes:
             node['color'] = color.name()
@@ -1403,10 +1802,9 @@ class PropertiesPanel(QWidget):
             if color.isValid():
                 self.current_object['color'] = color.name()
                 # Find matching color key
-                for key, val in config.MYCOLORS.items():
-                    if val.lower() == color.name().lower():
-                        self.current_object['color_key'] = key
-                        break
+                key = code_export.palette_key(color.name(), config)
+                if key is not None:
+                    self.current_object['color_key'] = key
                 self.graphulator._update_plot()
 
     def _update_node_size(self):
@@ -1522,7 +1920,7 @@ class PropertiesPanel(QWidget):
 
     def _update_edge_linewidth(self):
         if self.current_object and self.current_type == 'edge':
-            lw_map = {'Thin': 1.0, 'Medium': 1.5, 'Thick': 2.0, 'X-Thick': 2.5}
+            lw_map = dict(config.EDGE_LINEWIDTH_OPTIONS)
             self.current_object['linewidth_mult'] = lw_map[self.linewidth_combo.currentText()]
             self.graphulator._remember_edge_props(self.current_object)
             self.graphulator._update_plot()
@@ -1724,7 +2122,7 @@ class GraphulatorSettingsDialog(SettingsDialogBase):
         self._refresh_ui()
 
 
-class Graphulator(GraphWindowCommonMixin, QMainWindow):
+class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
     """Main application window"""
 
     # Shared-behavior parametrization (see GraphWindowCommonMixin); the
@@ -1820,13 +2218,16 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # Edge parameters
         self.edges = []
         self.edge_mode_first_node = None  # First node selected in edge mode
+
+        # Schematic glyphs (ports, txlines and their wiring)
+        self._init_glyph_state()
         self.edge_mode_highlight_patch = None  # Visual highlight for first selected node
 
         # GraphCircuit for managing graph structure (allow duplicate labels)
         self.graph = gp.GraphCircuit(allow_duplicate_labels=True)
 
         # Placement mode
-        self.placement_mode = None  # None, 'single', 'continuous', 'continuous_duplicate', 'conjugation', 'edge', or 'edge_continuous'
+        self.placement_mode = None  # None, 'single', 'continuous', 'continuous_duplicate', 'conjugation', 'edge', 'edge_continuous', 'port', 'port_continuous', or 'txline'
 
         # Last placed node properties for duplication
         self.last_node_props = None
@@ -1849,6 +2250,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         self.drag_pending_node = None  # Node clicked but not yet dragging (waiting for motion)
         self.drag_pending_group = False  # Group clicked but not yet dragging
         self.drag_start_pos = None  # Starting position for group drag
+        self._drag_duplicate = False  # Option/Alt-drag: copy, don't move
         self.drag_threshold = 0.1  # Minimum distance to move before starting drag (data units)
         self.drag_preview_patches = []  # List of preview patches for group drag
         self.drag_preview_texts = []  # List of preview texts for group drag
@@ -2018,8 +2420,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         QShortcut(QKeySequence("f"), self).activated.connect(self._toggle_flip_labels)
         QShortcut(QKeySequence("Shift+F"), self).activated.connect(self._toggle_edge_rotation_mode)
 
-        # Edge mode shortcut
-        QShortcut(QKeySequence("e"), self).activated.connect(self._toggle_edge_mode)
+        # Edge mode. 'E' itself is owned by the Insert menu's wire-tool
+        # action (see the note above); only the continuous variant, which is
+        # not in a menu, is registered here.
         QShortcut(QKeySequence("Ctrl+E"), self).activated.connect(self._toggle_edge_continuous_mode)
 
         # Zoom controls
@@ -2043,17 +2446,20 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         QShortcut(QKeySequence("Ctrl+Up"), self).activated.connect(lambda: self._adjust_selfloop_scale('increase'))
         QShortcut(QKeySequence("Ctrl+Down"), self).activated.connect(lambda: self._adjust_selfloop_scale('decrease'))
         # Ctrl+Left/Right: adjust self-loop angle for self-loops, looptheta for regular edges
+        # ...and rotate a selected glyph in place
         ctrl_left = QShortcut(QKeySequence("Ctrl+Left"), self)
-        ctrl_left.activated.connect(lambda: self._adjust_edge_looptheta_or_selfloop_angle('decrease'))
+        ctrl_left.activated.connect(lambda: self._ctrl_arrow_action('left'))
         ctrl_right = QShortcut(QKeySequence("Ctrl+Right"), self)
-        ctrl_right.activated.connect(lambda: self._adjust_edge_looptheta_or_selfloop_angle('increase'))
+        ctrl_right.activated.connect(lambda: self._ctrl_arrow_action('right'))
         logger.debug(f"Ctrl+Left/Right shortcuts registered: {ctrl_left}, {ctrl_right}")
 
-        # File operations
-        QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(self._new_graph)
-        QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(self._open_graph)
-        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self._save_graph)
-        QShortcut(QKeySequence("Ctrl+Shift+S"), self).activated.connect(self._save_graph_as)
+        # NOTE: no shortcut registered here may also be set on a QAction in
+        # the menu bar. Qt treats a sequence owned twice as an "Ambiguous
+        # shortcut overload" and dispatches NEITHER, so the key silently
+        # goes dead while the menu item still works when clicked. The menu
+        # actions own the keys they display (File: Ctrl+N/O/S/Shift+S,
+        # Ctrl+Shift+E, Ctrl+Q; Insert: P, Shift+P, L, E); everything else
+        # is owned here. tests/test_shortcut_overlay.py gates this.
 
         # Selection and clipboard
         QShortcut(QKeySequence("Ctrl+A"), self).activated.connect(self._select_all)
@@ -2064,9 +2470,6 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         QShortcut(QKeySequence("Ctrl+Shift+Z"), self).activated.connect(self._redo)
         QShortcut(QKeySequence("Ctrl+Y"), self).activated.connect(self._redo)
 
-        # Export
-        QShortcut(QKeySequence("Ctrl+Shift+E"), self).activated.connect(self._export_code)
-
         # Toggle LaTeX rendering
         QShortcut(QKeySequence("Ctrl+L"), self).activated.connect(self._toggle_latex_mode)
 
@@ -2074,10 +2477,6 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Delete), self).activated.connect(self._delete_selected_nodes)
         QShortcut(QKeySequence(Qt.Key_Backspace), self).activated.connect(self._delete_selected_nodes)
         QShortcut(QKeySequence("d"), self).activated.connect(self._delete_selected_nodes)
-
-
-        # Quit
-        QShortcut(QKeySequence("Ctrl+Q"), self).activated.connect(self.close)
 
     def _print_instructions(self):
         """Print usage instructions to console"""
@@ -2088,8 +2487,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         logger.debug("  'g'             : Place single node (dialog for label/color)")
         logger.debug("  'G' (Shift+g)   : Continuous node placement mode")
         logger.debug("  'Ctrl+G'        : Continuous duplicate mode (auto-increment labels)")
-        logger.debug("  'e'             : Place single edge (exits after one edge)")
+        logger.debug("  'e'             : Edge / wire tool (exits after one edge)")
         logger.debug("  'Ctrl+E'        : Toggle continuous edge mode")
+        logger.debug("  'p'             : Place port glyph")
+        logger.debug("  'P' (Shift+p)   : Continuous port placement")
+        logger.debug("  'l'             : Place transmission line glyph")
         logger.debug("  'c'             : Conjugation mode (click nodes to toggle)")
         logger.debug("  'Esc'           : Exit placement mode / Clear selection")
         logger.debug("  'r'             : Rotate grid (45° square, 30° triangular)")
@@ -2111,9 +2513,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         logger.debug("  Shift+Up/Down   : Nudge node label / Adjust edge label offset")
         logger.debug("  Shift+Left/Right: Nudge node label horizontally")
         logger.debug("  Ctrl+A          : Select all nodes and edges")
-        logger.debug("  Ctrl+C          : Copy selected nodes and edges")
-        logger.info("  Ctrl+X          : Cut selected nodes and edges")
-        logger.debug("  Ctrl+V          : Paste nodes and edges at view center")
+        logger.debug("  Ctrl+C          : Copy the selection (nodes, edges, ports, txlines)")
+        logger.info("  Ctrl+X          : Cut the selection")
+        logger.debug("  Ctrl+V          : Paste at view center")
         logger.info("  Ctrl+Z          : Undo last action")
         logger.info("  Ctrl+Shift+Z/Y  : Redo last undone action")
         logger.debug("  Ctrl+R          : Rotate selected nodes 15° CCW")
@@ -2123,7 +2525,15 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         logger.debug("  'f'             : Flip edge labels (when edge selected)")
         logger.debug("  Shift+F         : Toggle edge label rotation mode (when edge selected)")
         logger.debug("                    Then use Left/Right arrows to rotate ±5°")
-        logger.debug("  'd' or Delete   : Delete selected nodes and edges")
+        logger.debug("  'd' or Delete   : Delete selected nodes, edges and glyphs")
+        logger.debug("")
+        logger.debug("Glyphs (port / txline), when one is selected:")
+        logger.debug("  Left/Right      : Stretch length")
+        logger.debug("  Up/Down         : Stretch height")
+        logger.debug("  Ctrl+Left/Right : Rotate 15 deg (pins a port's angle)")
+        logger.debug("  Ctrl+Up/Down    : Label size")
+        logger.debug("  Shift+arrows    : Nudge the label inside the glyph")
+        logger.debug("  'e' then click  : Wire a lead to a node/port/txline end")
         logger.debug("")
         logger.debug("Navigation:")
         logger.debug("  Middle button   : Pan (click and drag)")
@@ -2213,8 +2623,18 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         export_code_action = QAction("Python Code...", self)
         export_code_action.setShortcut("Ctrl+Shift+E")
-        export_code_action.triggered.connect(self._export_code)
+        export_code_action.triggered.connect(lambda: self._export_code())
         export_menu.addAction(export_code_action)
+
+        export_grouped_action = QAction("Python Code (grouped by style)...", self)
+        export_grouped_action.setStatusTip(
+            "Same drawing, with look-alike nodes/edges/wires factored into "
+            "named style dicts and lists of geometry -- shorter to read and "
+            "easier to edit or generate from."
+        )
+        export_grouped_action.triggered.connect(
+            lambda: self._export_code(compact=True))
+        export_menu.addAction(export_grouped_action)
 
         export_png_action = QAction("PNG Image...", self)
         export_png_action.triggered.connect(self._export_png)
@@ -2235,6 +2655,40 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
+
+        # Insert menu (the glyph vocabulary, discoverable without the keys)
+        insert_menu = menubar.addMenu("&Insert")
+
+        add_port_action = QAction("&Port", self)
+        add_port_action.setShortcut("P")
+        add_port_action.setStatusTip(
+            "Place a port glyph: a pentagon with a lead, where a wire "
+            "enters or leaves the drawing")
+        add_port_action.triggered.connect(self._toggle_port_mode)
+        insert_menu.addAction(add_port_action)
+
+        add_ports_action = QAction("Ports (&continuous)", self)
+        add_ports_action.setShortcut("Shift+P")
+        add_ports_action.triggered.connect(
+            self._toggle_port_continuous_mode)
+        insert_menu.addAction(add_ports_action)
+
+        add_txline_action = QAction("&Transmission line", self)
+        add_txline_action.setShortcut("L")
+        add_txline_action.setStatusTip(
+            "Place a transmission line glyph: a length of line with a stub at "
+            "each end")
+        add_txline_action.triggered.connect(self._toggle_txline_mode)
+        insert_menu.addAction(add_txline_action)
+
+        insert_menu.addSeparator()
+        wire_action = QAction("&Wire tool (edge mode)", self)
+        wire_action.setShortcut("E")
+        wire_action.setStatusTip(
+            "Click a port or a txline end, then a node, port or txline "
+            "end to wire them together")
+        wire_action.triggered.connect(self._toggle_edge_mode)
+        insert_menu.addAction(wire_action)
 
         # Help menu
         help_menu = menubar.addMenu("&Help")
@@ -2382,6 +2836,12 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 edge_data["label2_bgcolor"] = edge.get("label2_bgcolor", None)
             data["edges"].append(edge_data)
 
+        # Ports/txlines are appended only when the graph has them, so a
+        # glyph-free file is byte-identical to what earlier versions wrote
+        self._serialize_glyphs(data)
+        if "ports" in data or "txlines" in data:
+            data["version"] = "1.1"
+
         return data
 
     def _deserialize_graph(self, data):
@@ -2471,6 +2931,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     edge["label2_bgcolor"] = edge_data.get("label2_bgcolor", None)
                 self.edges.append(edge)
 
+        # Restore ports, txlines and their wiring
+        self._deserialize_glyphs(data)
+
         # Auto-fit view to loaded graph (center and zoom to fit all objects)
         self._auto_fit_view()
 
@@ -2493,6 +2956,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         self.current_filepath = None
         self.node_counter = 0
         self.node_id_counter = 0
+        self._init_glyph_state()
 
         # Reset view
         self.grid_type = config.DEFAULT_GRID_TYPE
@@ -2733,70 +3197,12 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
 
     def _auto_increment_label(self, label):
-        """Auto-increment a label based on its pattern
+        """Auto-increment a label based on its pattern.
 
-        Examples:
-        - 'A' -> 'B', 'Z' -> 'AA'
-        - 'A_1' -> 'A_2', 'A_9' -> 'A_{10}'
-        - '1' -> '2', '99' -> '100'
+        One shared table in common_window (negative subscripts included);
+        see :func:`~graphulator.common_window.auto_increment_label`.
         """
-        import re
-
-        # Pattern 1: Letter with underscore and number (e.g., 'A_1', 'B_12')
-        match = re.match(r'^([A-Za-z]+)_(\d+)$', label)
-        if match:
-            prefix = match.group(1)
-            num = int(match.group(2))
-            next_num = num + 1
-            # Use braces for multi-digit numbers
-            if next_num >= 10:
-                return f"{prefix}_{{{next_num}}}"
-            else:
-                return f"{prefix}_{next_num}"
-
-        # Pattern 2: Pure number (e.g., '1', '42')
-        match = re.match(r'^(\d+)$', label)
-        if match:
-            num = int(match.group(1))
-            return str(num + 1)
-
-        # Pattern 3: Pure letter(s) (e.g., 'A', 'Z', 'AA')
-        match = re.match(r'^([A-Z]+)$', label)
-        if match:
-            letters = match.group(1)
-            # Convert to number, increment, convert back
-            # A=1, B=2, ..., Z=26, AA=27, etc.
-            num = 0
-            for char in letters:
-                num = num * 26 + (ord(char) - ord('A') + 1)
-            num += 1
-
-            # Convert back to letters
-            result = ''
-            while num > 0:
-                num -= 1
-                result = chr(ord('A') + (num % 26)) + result
-                num //= 26
-            return result
-
-        # Pattern 4: lowercase letters
-        match = re.match(r'^([a-z]+)$', label)
-        if match:
-            letters = match.group(1)
-            num = 0
-            for char in letters:
-                num = num * 26 + (ord(char) - ord('a') + 1)
-            num += 1
-
-            result = ''
-            while num > 0:
-                num -= 1
-                result = chr(ord('a') + (num % 26)) + result
-                num //= 26
-            return result
-
-        # If no pattern matches, just return the original label
-        return label
+        return auto_increment_label(label)
 
     def _toggle_continuous_duplicate_mode(self):
         """Toggle continuous duplicate placement mode"""
@@ -2880,11 +3286,18 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             # Clear edge mode state if exiting edge mode
             if self.edge_mode_first_node is not None:
                 self.edge_mode_first_node = None
+            self._exit_wire_pending()
             self._update_plot()
-        elif self.selected_nodes or self.selected_edges:
+        elif self._wire_pending is not None:
+            self._exit_wire_pending()
+            self._update_plot()
+        elif (self.selected_nodes or self.selected_edges
+              or self.selected_ports or self.selected_txlines
+              or self.selected_wires):
             logger.debug(f"Cleared selection of {len(self.selected_nodes)} node(s) and {len(self.selected_edges)} edge(s)")
             self.selected_nodes.clear()
             self.selected_edges.clear()
+            self._clear_glyph_selection()
             self._update_plot()
 
 
@@ -3044,7 +3457,17 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         self._update_plot()
 
     def _pan_arrow(self, direction):
-        """Pan view using arrow keys, or adjust node/edge properties if selected"""
+        """Pan view using arrow keys, or adjust node/edge/glyph properties if selected"""
+        # Glyphs stretch: Up/Down = height, Left/Right = length
+        if self._selected_glyphs():
+            self._adjust_glyph_size(direction)
+            return
+
+        # Wires take the arrow keys the way edges do: Up/Down width,
+        # Left/Right label size
+        if self._adjust_wire_properties(direction):
+            return
+
         # If in edge rotation mode, adjust label rotation
         if self.edge_rotation_mode and self.selected_edges and direction in ['left', 'right']:
             self._adjust_edge_rotation(direction)
@@ -3125,7 +3548,12 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
 
     def _nudge_label(self, direction):
-        """Nudge node label position for selected nodes, or edge label offset for edges"""
+        """Nudge node label position for selected nodes, edge label offset for
+        edges, or the label position inside a selected glyph"""
+        if self._selected_glyphs():
+            self._nudge_glyph_label(direction)
+            return
+
         # If edges are selected, check if they are self-loops
         if self.selected_edges:
             # Check if any selected edges are self-loops
@@ -3246,8 +3674,23 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         logger.debug(f"Self-loop linewidth: {edge['linewidth_mult']:.3f}")
         self._update_plot()
 
+    def _ctrl_arrow_action(self, direction):
+        """Ctrl+Left/Right: rotate a selected glyph in place, else adjust the
+        self-loop angle / edge curvature as before."""
+        if self._selected_glyphs():
+            self._rotate_glyph_in_place(direction)
+            return
+        self._adjust_edge_looptheta_or_selfloop_angle(
+            'decrease' if direction == 'left' else 'increase')
+
     def _adjust_selfloop_scale(self, action):
-        """Adjust self-loop scale using Ctrl+Up/Down (20% increments)"""
+        """Ctrl+Up/Down: glyph label size when a glyph is selected, otherwise
+        the self-loop scale (20% increments)"""
+        if self._selected_glyphs():
+            self._adjust_glyph_label_size(
+                'up' if action == 'increase' else 'down')
+            return
+
         if not self.selected_edges:
             return
 
@@ -3366,10 +3809,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         label_size_mult = edge.get('label_size_mult', 1.0)
         label_offset_mult = edge.get('label_offset_mult', 1.0)
 
-        # lw_map = {1.0: 'Thin', 1.5: 'Medium', 2.0: 'Thick', 2.5: 'X-Thick'}
         # label_size_map = {1.0: 'Small', 1.4: 'Medium', 1.8: 'Large', 2.5: 'X-Large', 3.0: 'XX-Large'}
         # label_offset_map = {0.5: 'Close', 0.8: 'Medium', 1.2: 'Far'}
-        lw_map = {1.0: 'Thin', 1.5: 'Medium', 2.0: 'Thick', 2.5: 'X-Thick'}
+        lw_map = {v: k for k, v in config.EDGE_LINEWIDTH_OPTIONS.items()}
         label_size_map = {1.0: 'Small', 1.4: 'Medium', 1.8: 'Large', 2.5: 'X-Large', 3.0: 'XX-Large'}
         label_offset_map = {0.5: 'Close', 0.8: 'Medium', 1.2: 'Far'}
 
@@ -3653,6 +4095,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         # Base values calibrated for reference view (figsize=12, span~20 units)
         # This gives points_per_data_unit ≈ 43 for that reference
         reference_points_per_data_unit = 43.0
+        # the halo under a selected edge widens with the zoom, like the
+        # edge it sits under
+        zoom_lw_scale = points_per_data_unit / reference_points_per_data_unit
 
         for edge_index, edge in enumerate(self.edges):
             from_node = edge['from_node']
@@ -3680,6 +4125,23 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 arrowlength = from_radius / 2 * 2.25 / 4 * arrowlengthsc
 
                 # Draw the self-loop arc
+                if edge in self.selected_edges:
+                    # The halo goes down FIRST, so the edge draws over it
+                    gp.selfloop(
+                        ax=self.canvas.ax,
+                        nodecent=from_pos,
+                        R=from_radius * 1.2,
+                        baseangle=selfloopangle,
+                        dtheta=-34,
+                        loopR=loopR,
+                        arrowlength=arrowlength,
+                        lw=self._selection_halo_lw(scaled_lw, zoom_lw_scale),
+                        color=self.SELECTION_HALO_COLOR,
+                        flip=edge.get('flip', False),
+                        arrowstyle=edge.get('arrowstyle', 'open'),
+                        arrowscale=edge.get('arrowscale', 1.0),
+                        arrowopenang=config.ARROWHEAD_OPEN_ANGLE,
+                    )
                 gp.selfloop(
                     ax=self.canvas.ax,
                     nodecent=from_pos,
@@ -3765,23 +4227,6 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                          3*(1-t)*t**2 * bz_end[1] +
                          t**3 * v_end[1])
 
-                # Draw selection indicator for selected self-loops
-                if edge in self.selected_edges:
-                    # Place indicator at 75% along the bezier curve from node center
-                    apex_dist_from_center = np.sqrt((apex_x - from_pos[0])**2 + (apex_y - from_pos[1])**2)
-                    indicator_distance = apex_dist_from_center * 0.75
-                    apex_angle = np.arctan2(apex_y - from_pos[1], apex_x - from_pos[0])
-                    indicator_x = from_pos[0] + indicator_distance * np.cos(apex_angle)
-                    indicator_y = from_pos[1] + indicator_distance * np.sin(apex_angle)
-
-                    selection_circle = patches.Circle(
-                        (indicator_x, indicator_y), from_radius * 0.3,
-                        facecolor='lightcoral',
-                        edgecolor='red',
-                        linewidth=2,
-                        zorder=25
-                    )
-                    self.canvas.ax.add_patch(selection_circle)
             else:
                 # Draw edge using graph_primitives edge function
                 from_pos = from_node['pos']
@@ -3843,6 +4288,27 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 else:  # loopy
                     final_lw = scaled_lw
 
+                if edge in self.selected_edges:
+                    # The halo goes down FIRST, so the edge draws over it.
+                    # No labels on it: they would double-draw and fringe.
+                    halo_kwargs = dict(
+                        lw=self._selection_halo_lw(final_lw, zoom_lw_scale),
+                        arrowlength=0.4,
+                        arrowstyle=edge.get('arrowstyle', 'open'),
+                        arrowscale=edge.get('arrowscale', 1.0),
+                        arrowopenang=config.ARROWHEAD_OPEN_ANGLE,
+                        color=self.SELECTION_HALO_COLOR)
+                    gp.edge(
+                        ax=self.canvas.ax,
+                        nodexy=[from_pos, to_pos],
+                        nodeR=[from_radius, to_radius],
+                        label=[None, None],
+                        labeltheta=labeltheta,
+                        style=style,
+                        whichedges=edge['direction'],
+                        theta=edge.get('looptheta', 30),
+                        loopkwargs=halo_kwargs,
+                    )
                 gp.edge(
                     ax=self.canvas.ax,
                     nodexy=[from_pos, to_pos],
@@ -3864,23 +4330,14 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     usetex=self.use_latex,
                 )
 
-                # Draw selection indicator for selected edges
-                if edge in self.selected_edges:
-                    mid_x = (from_pos[0] + to_pos[0]) / 2
-                    mid_y = (from_pos[1] + to_pos[1]) / 2
-                    # Draw a small circle at the edge midpoint
-                    selection_circle = patches.Circle(
-                        (mid_x, mid_y), 0.3,
-                        facecolor='lightcoral',
-                        edgecolor='red',
-                        linewidth=2,
-                        zorder=20
-                    )
-                    self.canvas.ax.add_patch(selection_circle)
 
     def _on_motion(self, event):
         """Handle mouse motion"""
         if event.inaxes != self.canvas.ax:
+            return
+
+        # A glyph drag owns the pointer while it lasts
+        if self._maybe_handle_glyph_motion(event):
             return
 
         # Check for pending drag - activate only while the left button is actually
@@ -3967,60 +4424,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             self.canvas.draw_idle()
             return
 
-        # Handle group dragging
+        # Handle group dragging (nodes and glyphs together)
         if self.dragging_group and self.drag_start_pos is not None:
-            # Calculate offset from drag start
-            dx = event.xdata - self.drag_start_pos[0]
-            dy = event.ydata - self.drag_start_pos[1]
-
-            # Remove old previews
-            for patch in self.drag_preview_patches:
-                try:
-                    patch.remove()
-                except:
-                    pass
-            for text in self.drag_preview_texts:
-                try:
-                    text.remove()
-                except:
-                    pass
-            self.drag_preview_patches.clear()
-            self.drag_preview_texts.clear()
-
-            # Draw preview for each selected node
-            any_occupied = False
-            for node in self.selected_nodes:
-                new_x = node['pos'][0] + dx
-                new_y = node['pos'][1] + dy
-                snap_x, snap_y = self._snap_to_grid(new_x, new_y)
-
-                # Check if occupied by non-selected node
-                occupied = any(
-                    other_node not in self.selected_nodes and
-                    np.isclose(other_node['pos'][0], snap_x, atol=0.01) and
-                    np.isclose(other_node['pos'][1], snap_y, atol=0.01)
-                    for other_node in self.nodes
-                )
-                any_occupied = any_occupied or occupied
-
-                # Ghost appearance: use semi-transparent fill
-                color = 'red' if occupied else 'lightblue'
-                node_size_mult = node.get('node_size_mult', 1.0)
-
-                preview_patch = patches.Circle(
-                    (snap_x, snap_y), self.node_radius * node_size_mult,
-                    fill=True, facecolor=color, edgecolor='gray',
-                    linestyle=':', linewidth=1.5, alpha=0.5, zorder=15
-                )
-                self.canvas.ax.add_patch(preview_patch)
-                self.drag_preview_patches.append(preview_patch)
-
-                preview_text = self.canvas.ax.text(
-                    snap_x, snap_y, node['label'],
-                    ha='center', va='center', fontsize=14, color='gray', alpha=0.7, zorder=16
-                )
-                self.drag_preview_texts.append(preview_text)
-
+            self._draw_group_drag_previews(
+                event.xdata - self.drag_start_pos[0],
+                event.ydata - self.drag_start_pos[1])
             self.canvas.draw_idle()
             return
 
@@ -4124,8 +4532,11 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             self.pan_start = (event.xdata, event.ydata)
             return
 
-        # Right button - show context menu if on node/edge, otherwise start zoom window
+        # Right button - show context menu if on node/edge/glyph, otherwise start zoom window
         if event.button == 3:
+            if self._maybe_show_glyph_context_menu(event):
+                return
+
             clicked_node = self._find_node_at_position(event.xdata, event.ydata)
             if clicked_node:
                 # Show context menu for color selection
@@ -4153,6 +4564,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             modifiers = QApplication.keyboardModifiers()
             shift_pressed = modifiers & Qt.ShiftModifier
             ctrl_pressed = modifiers & Qt.ControlModifier
+            # Option on macOS is Qt's AltModifier: hold it while dragging to
+            # leave the selection where it is and drop a copy at the offset
+            alt_pressed = bool(modifiers & Qt.AltModifier)
 
             # Conjugation mode - toggle conjugation on clicked nodes (handle before other modes)
             if self.placement_mode == 'conjugation':
@@ -4166,8 +4580,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     self._update_plot()
                 return
 
-            # Edge mode - connect two nodes
+            # Edge mode - connect two nodes, or (on a glyph) run the wire tool
             if self.placement_mode in ['edge', 'edge_continuous']:
+                if self._maybe_handle_glyph_edge_click(event):
+                    return
                 clicked_node = self._find_node_at_position(event.xdata, event.ydata)
                 if clicked_node:
                     if self.edge_mode_first_node is None:
@@ -4289,6 +4705,27 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 return
 
             if self.placement_mode is None:
+                # Glyphs are hit-tested before nodes: they sit on top of the
+                # drawing, so a click that lands on one is never meant for
+                # whatever is underneath it.
+                is_double = False
+                if self.last_click_pos:
+                    time_diff = current_time - self.last_click_time
+                    pos_diff = np.sqrt(
+                        (event.xdata - self.last_click_pos[0]) ** 2
+                        + (event.ydata - self.last_click_pos[1]) ** 2)
+                    is_double = (time_diff < self.double_click_threshold
+                                 and pos_diff < 0.5)
+                if self._maybe_handle_glyph_click(event, shift_pressed,
+                                                  is_double, alt_pressed):
+                    if is_double:
+                        self.last_click_time = 0
+                        self.last_click_pos = None
+                    else:
+                        self.last_click_time = current_time
+                        self.last_click_pos = (event.xdata, event.ydata)
+                    return
+
                 clicked_node = self._find_node_at_position(event.xdata, event.ydata)
 
                 # Handle node selection with Shift key (do this before double-click check)
@@ -4329,11 +4766,13 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
                 # Single click on node - select and prepare for potential dragging
                 if clicked_node:
-                    # If clicking on an already selected node, prepare to drag the whole group
-                    if clicked_node in self.selected_nodes and len(self.selected_nodes) > 1:
-                        self.drag_pending_group = True
-                        self.drag_start_pos = (event.xdata, event.ydata)
+                    # Clicking an already-selected node drags the whole
+                    # selection -- glyphs included, which is what makes a
+                    # port + edge + node group movable as one
+                    if self._arm_group_drag_from(clicked_node, event.xdata,
+                                                 event.ydata, alt_pressed):
                         # Don't print yet - wait until actual drag starts
+                        pass
                     else:
                         # Select only this node and prepare to drag it
                         if clicked_node not in self.selected_nodes:
@@ -4343,6 +4782,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                             self._update_plot()
                         self.drag_pending_node = clicked_node
                         self.drag_start_pos = (event.xdata, event.ydata)
+                        self._drag_duplicate = alt_pressed
                         # Don't print yet - wait until actual drag starts
                     return
 
@@ -4387,6 +4827,14 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     self.selection_window_start = (event.xdata, event.ydata)
                     self._update_plot()
                     return
+
+            # Glyph placement modes
+            if self.placement_mode in ['port', 'port_continuous']:
+                self._on_click_port_placement(event)
+                return
+            if self.placement_mode == 'txline':
+                self._on_click_txline_placement(event)
+                return
 
             # Node placement mode
             if self.placement_mode in ['single', 'continuous', 'continuous_duplicate']:
@@ -4517,6 +4965,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         # Left button - complete selection window
         if event.button == 1:
+            if self._maybe_handle_glyph_release(event):
+                return
             if self.selection_window and self.selection_window_start is not None:
                 if event.inaxes == self.canvas.ax:
                     x0, y0 = self.selection_window_start
@@ -4545,11 +4995,41 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                             if edge not in self.selected_edges:
                                 self.selected_edges.append(edge)
 
+                    # Glyphs join the rubber-band selection too, so a
+                    # window over a sub-circuit picks up its ports and
+                    # txlines and rotates/moves with the rest of it
+                    for term in self.ports:
+                        tx, ty = term['pos']
+                        if (x0 <= tx <= x1 and y0 <= ty <= y1
+                                and term not in self.selected_ports):
+                            self.selected_ports.append(term)
+                    for cx in self.txlines:
+                        cxx, cxy = cx['pos']
+                        if (x0 <= cxx <= x1 and y0 <= cxy <= y1
+                                and cx not in self.selected_txlines):
+                            self.selected_txlines.append(cx)
+
+                    # Wires come too, so a window over a sub-circuit can
+                    # restyle its wiring in one go. Compared by identity:
+                    # two wires with the same overrides are equal dicts but
+                    # are not the same wire.
+                    have = {id(c) for _o, c in self.selected_wires}
+                    for owner, conn in self._glyph_wires_in_rect(x0, y0,
+                                                                 x1, y1):
+                        if id(conn) not in have:
+                            self.selected_wires.append((owner, conn))
+
                     msg = []
                     if self.selected_nodes:
                         msg.append(f"{len(self.selected_nodes)} node(s)")
                     if self.selected_edges:
                         msg.append(f"{len(self.selected_edges)} edge(s)")
+                    if self.selected_ports:
+                        msg.append(f"{len(self.selected_ports)} port(s)")
+                    if self.selected_txlines:
+                        msg.append(f"{len(self.selected_txlines)} txline(es)")
+                    if self.selected_wires:
+                        msg.append(f"{len(self.selected_wires)} wire(s)")
                     if msg:
                         logger.debug(f"Selected {' and '.join(msg)}")
 
@@ -4602,61 +5082,22 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         # Left button - complete group or single node dragging
         if event.button == 1:
-            # Complete group dragging
+            # Complete group dragging (nodes and glyphs together)
             if self.dragging_group and self.drag_start_pos is not None:
                 if event.inaxes == self.canvas.ax:
-                    dx = event.xdata - self.drag_start_pos[0]
-                    dy = event.ydata - self.drag_start_pos[1]
-
-                    # Check if all new positions are valid
-                    new_positions = []
-                    all_valid = True
-                    for node in self.selected_nodes:
-                        new_x = node['pos'][0] + dx
-                        new_y = node['pos'][1] + dy
-                        snap_x, snap_y = self._snap_to_grid(new_x, new_y)
-
-                        # Check if occupied by non-selected node
-                        occupied = any(
-                            other_node not in self.selected_nodes and
-                            np.isclose(other_node['pos'][0], snap_x, atol=0.01) and
-                            np.isclose(other_node['pos'][1], snap_y, atol=0.01)
-                            for other_node in self.nodes
-                        )
-
-                        if occupied:
-                            all_valid = False
-                            break
-
-                        new_positions.append((node, snap_x, snap_y))
-
-                    # If all positions valid, move all nodes
-                    if all_valid:
-                        self._save_state()
-                        for node, snap_x, snap_y in new_positions:
-                            node['pos'] = (snap_x, snap_y)
-                        logger.info(f"✓ Moved {len(self.selected_nodes)} node(s)")
-                        self._recompute_unpinned_selfloop_angles(
-                            {node['node_id'] for node in self.selected_nodes})
-                    else:
-                        logger.info(f"✗ Cannot move group - some positions occupied")
+                    message = self._commit_group_drag(
+                        event.xdata - self.drag_start_pos[0],
+                        event.ydata - self.drag_start_pos[1])
+                    if message:
+                        logger.info(message)
+                        self._status_message(message)
 
                 # Clean up
                 self.dragging_group = False
                 self.drag_pending_group = False
                 self.drag_start_pos = None
-                for patch in self.drag_preview_patches:
-                    try:
-                        patch.remove()
-                    except:
-                        pass
-                for text in self.drag_preview_texts:
-                    try:
-                        text.remove()
-                    except:
-                        pass
-                self.drag_preview_patches.clear()
-                self.drag_preview_texts.clear()
+                self._drag_duplicate = False
+                self._clear_group_drag_previews()
 
                 self._update_plot()
                 return
@@ -4674,19 +5115,30 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                         for node in self.nodes
                     )
 
-                    if not occupied:
+                    if occupied:
+                        logger.info(f"✗ Cannot move node '{self.dragging_node['label']}' - position occupied")
+                    elif getattr(self, '_drag_duplicate', False):
+                        # Option-drag: the original stays and a copy lands
+                        # where the drag ended
+                        old_pos = self.dragging_node['pos']
+                        landed = self._duplicate_selection_offset(
+                            snap_x - old_pos[0], snap_y - old_pos[1])
+                        message = (f"Copied {landed}" if landed
+                                   else "Nothing to copy in this selection")
+                        logger.info(message)
+                        self._status_message(message)
+                    else:
                         self._save_state()
                         old_pos = self.dragging_node['pos']
                         self.dragging_node['pos'] = (snap_x, snap_y)
                         logger.info(f"✓ Moved node '{self.dragging_node['label']}' from ({old_pos[0]:.3f}, {old_pos[1]:.3f}) to ({snap_x:.3f}, {snap_y:.3f})")
                         self._recompute_unpinned_selfloop_angles({self.dragging_node['node_id']})
-                    else:
-                        logger.info(f"✗ Cannot move node '{self.dragging_node['label']}' - position occupied")
 
                 # Clean up
                 self.dragging_node = None
                 self.drag_pending_node = None
                 self.drag_start_pos = None
+                self._drag_duplicate = False
                 for patch in self.drag_preview_patches:
                     try:
                         patch.remove()
@@ -4707,6 +5159,7 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             if self.drag_pending_node or self.drag_pending_group:
                 self.drag_pending_node = None
                 self.drag_pending_group = False
+                self._drag_duplicate = False
                 self.drag_start_pos = None
                 return
 
@@ -4725,29 +5178,38 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
 
     def _capture_state(self):
-        """Deep-copy the full graph state (every node/edge field)."""
-        return capture_graph_state(self.nodes, self.edges)
+        """Deep-copy the full graph state (every node/edge/glyph field)."""
+        return capture_graph_state(self.nodes, self.edges, extra={
+            'ports': self.ports,
+            'txlines': self.txlines,
+        })
 
     def _restore_state(self, state):
         """Install a captured state as the live graph."""
         self.nodes = state['nodes']
         self.edges = state['edges']
+        # .get: snapshots predating the glyph feature lack these keys
+        self.ports = state.get('ports', [])
+        self.txlines = state.get('txlines', [])
 
         # Clear selections (they reference the replaced dicts)
         self.selected_nodes.clear()
         self.selected_edges.clear()
+        self._clear_glyph_selection()
+        self._wire_pending = None
 
         self._update_plot()
 
 
     def _copy_nodes(self):
-        """Copy selected nodes and edges to clipboard"""
-        if not self.selected_nodes and not self.selected_edges:
-            logger.info("No nodes or edges selected to copy")
+        """Copy the selection - nodes, edges and glyphs - to the clipboard"""
+        if (not self.selected_nodes and not self.selected_edges
+                and not self._selected_glyphs()):
+            logger.info("Nothing selected to copy")
             self._status_message("Nothing selected to copy")
             return
 
-        self.clipboard = {'nodes': [], 'edges': []}
+        self.clipboard = {'nodes': [], 'edges': [], 'ports': [], 'txlines': []}
 
         # Copy nodes
         for node in self.selected_nodes:
@@ -4801,23 +5263,31 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                     edge_copy['label2_bgcolor'] = edge.get('label2_bgcolor', None)
                 self.clipboard['edges'].append(edge_copy)
 
-        msg = []
-        if len(self.clipboard['nodes']) > 0:
-            msg.append(f"{len(self.clipboard['nodes'])} node(s)")
-        if len(self.clipboard['edges']) > 0:
-            msg.append(f"{len(self.clipboard['edges'])} edge(s)")
-        logger.info(f"Copied {' and '.join(msg)}")
+        self._copy_glyphs_to_clipboard(self.clipboard)
+
+        logger.info(f"Copied {self._clipboard_summary(self.clipboard)}")
+
+    @staticmethod
+    def _clipboard_summary(clipboard):
+        counts = [(len(clipboard.get(key, [])), name) for key, name in
+                  (('nodes', 'node'), ('edges', 'edge'),
+                   ('ports', 'port'), ('txlines', 'txline'))]
+        return ' and '.join(f"{n} {name}(s)" for n, name in counts if n)
 
     def _cut_nodes(self):
-        """Cut selected nodes and edges to clipboard"""
-        if not self.selected_nodes and not self.selected_edges:
-            logger.info("No nodes or edges selected to cut")
+        """Cut the selection - nodes, edges and glyphs - to the clipboard"""
+        if (not self.selected_nodes and not self.selected_edges
+                and not self._selected_glyphs()):
+            logger.info("Nothing selected to cut")
             self._status_message("Nothing selected to cut")
             return
 
         self._save_state()
 
-        self.clipboard = {'nodes': [], 'edges': []}
+        self.clipboard = {'nodes': [], 'edges': [], 'ports': [], 'txlines': []}
+        # copy the glyphs BEFORE anything is removed: the wire filter reads
+        # the live selection to decide which wires travel with the copy
+        self._copy_glyphs_to_clipboard(self.clipboard)
         nodes_to_remove = list(self.selected_nodes)
         edges_to_remove = []
 
@@ -4883,35 +5353,75 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             if edge in self.edges:
                 self.edges.remove(edge)
 
-        msg = []
-        if len(self.clipboard['nodes']) > 0:
-            msg.append(f"{len(self.clipboard['nodes'])} node(s)")
-        if len(self.clipboard['edges']) > 0:
-            msg.append(f"{len(self.clipboard['edges'])} edge(s)")
-        logger.info(f"Cut {' and '.join(msg)}")
+        # Remove the glyphs, and any wire left pointing at a cut node
+        self._delete_selected_glyphs()
+        for node in nodes_to_remove:
+            self._drop_glyph_wires_for_node(node['node_id'])
+
+        logger.info(f"Cut {self._clipboard_summary(self.clipboard)}")
 
         self.selected_nodes.clear()
         self.selected_edges.clear()
+        self._clear_glyph_selection()
         self._update_plot()
 
-    def _paste_nodes(self):
-        """Paste nodes and edges from clipboard"""
-        if not self.clipboard or (not self.clipboard.get('nodes') and not self.clipboard.get('edges')):
+    def _duplicate_selection_offset(self, dx, dy):
+        """Copy the selection `(dx, dy)` away and select the copies.
+
+        This is what Option/Alt-drag commits: the originals stay put and
+        the copy lands where the drag ended. It borrows the clipboard
+        machinery (so wiring is relinked to the copy exactly as a paste
+        does) but puts the real clipboard back afterwards -- a duplicate
+        must not clobber what the user had copied.
+        """
+        saved = self.clipboard
+        try:
+            self.clipboard = {}
+            self._copy_nodes()
+            if not any(self.clipboard.get(key) for key in
+                       ('nodes', 'edges', 'ports', 'txlines')):
+                return None
+            summary = self._clipboard_summary(self.clipboard)
+            self._paste_nodes(offset=(dx, dy))
+        finally:
+            self.clipboard = saved
+        return summary
+
+    def _paste_nodes(self, *, offset=None):
+        """Paste nodes, edges and glyphs from the clipboard.
+
+        `offset` places the copy a given (dx, dy) from where it was copied
+        instead of at the view center -- the Option-drag duplicate path.
+        """
+        if not self.clipboard or not any(
+                self.clipboard.get(key) for key in
+                ('nodes', 'edges', 'ports', 'txlines')):
             logger.info("Clipboard is empty")
             return
 
         self._save_state()
 
+        if offset is not None:
+            offset_x, offset_y = offset
+            clip_positions = None
+        else:
+            clip_positions = True
         # Calculate offset to paste nodes relative to the center of the view
         xlim = self._get_xlim()
         ylim = self._get_ylim()
         view_center_x = (xlim[0] + xlim[1]) / 2
         view_center_y = (ylim[0] + ylim[1]) / 2
 
-        # Calculate centroid of clipboard nodes
-        if self.clipboard.get('nodes'):
-            clip_x = sum(n['pos'][0] for n in self.clipboard['nodes']) / len(self.clipboard['nodes'])
-            clip_y = sum(n['pos'][1] for n in self.clipboard['nodes']) / len(self.clipboard['nodes'])
+        # Centroid of everything on the clipboard. Glyph positions count
+        # too, or a glyph-only copy has no centroid at all and pastes
+        # exactly on top of the original.
+        if clip_positions is not None:
+            clip_positions = ([tuple(n['pos'])
+                               for n in self.clipboard.get('nodes', [])]
+                              + self._clipboard_glyph_positions(self.clipboard))
+        if clip_positions:
+            clip_x = sum(p[0] for p in clip_positions) / len(clip_positions)
+            clip_y = sum(p[1] for p in clip_positions) / len(clip_positions)
 
             # Snap the centroid to grid to get the base offset
             snap_center_x, snap_center_y = self._snap_to_grid(view_center_x, view_center_y)
@@ -4919,12 +5429,13 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             # Calculate offset based on snapped centroid
             offset_x = snap_center_x - clip_x
             offset_y = snap_center_y - clip_y
-        else:
+        elif offset is None:
             offset_x, offset_y = 0, 0
 
         # Clear selection and paste nodes
         self.selected_nodes.clear()
         self.selected_edges.clear()
+        self._clear_glyph_selection()
 
         # Map old node IDs to new nodes
         old_id_to_new_node = {}
@@ -5004,21 +5515,31 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
                 self.edges.append(new_edge)
                 self.selected_edges.append(new_edge)
 
-        msg = []
-        if len(self.selected_nodes) > 0:
-            msg.append(f"{len(self.selected_nodes)} node(s)")
-        if len(self.selected_edges) > 0:
-            msg.append(f"{len(self.selected_edges)} edge(s)")
-        logger.info(f"Pasted {' and '.join(msg)}")
+        self._paste_glyphs(self.clipboard, (offset_x, offset_y),
+                           old_id_to_new_node)
+
+        logger.info("Pasted " + self._clipboard_summary({
+            'nodes': self.selected_nodes, 'edges': self.selected_edges,
+            'ports': self.selected_ports, 'txlines': self.selected_txlines}))
         self._update_plot()
 
     def _delete_selected_nodes(self):
-        """Delete selected nodes and edges"""
-        if not self.selected_nodes and not self.selected_edges:
-            logger.info("No nodes or edges selected to delete")
+        """Delete the selection: nodes, edges, glyphs and wires"""
+        has_glyph_selection = bool(self.selected_ports
+                                   or self.selected_txlines
+                                   or self.selected_wires)
+        if (not self.selected_nodes and not self.selected_edges
+                and not has_glyph_selection):
+            logger.info("No nodes, edges or glyphs selected to delete")
             return
 
         self._save_state()
+
+        glyph_count = self._delete_selected_glyphs()
+        if glyph_count and not self.selected_nodes and not self.selected_edges:
+            logger.info(f"Deleted {glyph_count} glyph object(s)")
+            self._update_plot()
+            return
 
         # Delete selected nodes and any edges connected to them
         nodes_to_remove = list(self.selected_nodes)
@@ -5045,6 +5566,10 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             if edge in self.selected_edges:
                 self.selected_edges.remove(edge)
 
+        # Wires that pointed at a deleted node have nothing left to reach
+        for node in nodes_to_remove:
+            self._drop_glyph_wires_for_node(node['node_id'])
+
         node_count = len(nodes_to_remove)
         edge_count = len(edges_to_remove)
         msg = []
@@ -5052,6 +5577,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             msg.append(f"{node_count} node(s)")
         if edge_count > 0:
             msg.append(f"{edge_count} edge(s)")
+        if glyph_count > 0:
+            msg.append(f"{glyph_count} glyph object(s)")
         logger.info(f"Deleted {' and '.join(msg)}")
 
         self.selected_nodes.clear()
@@ -5059,367 +5586,77 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         self._update_plot()
 
 
-    def _export_code(self):
-        """Export graph as Python code using graph_primitives GraphCircuit"""
-        if not self.nodes:
-            logger.info("No nodes to export")
+    def _export_code(self, compact=False):
+        """Export graph as Python code using graph_primitives GraphCircuit.
+
+        With ``compact``, look-alike objects are grouped under named style
+        dicts and the geometry becomes plain lists -- the shape to edit or
+        generate from, rather than one fully spelled-out call per object.
+        """
+        code = code_export.build_code(self, compact=compact)
+        if code is None:
+            logger.info("Nothing to export")
             return
 
-        # Calculate full graph extents including all objects first
-        # This will be used for both scaling calculations and final plot limits
-        extent_x_min, extent_x_max, extent_y_min, extent_y_max = self._calculate_graph_extents()
-
-        # Calculate graph center - we'll shift all coordinates to center at origin
-        x_center = (extent_x_min + extent_x_max) / 2
-        y_center = (extent_y_min + extent_y_max) / 2
-
-        # Calculate the actual plot extent we'll use (with 10% padding)
-        full_extent_span = max(extent_x_max - extent_x_min, extent_y_max - extent_y_min) * 1.1
-
-        # Calculate points_per_data_unit for node label nudge calculations
-        # This is still needed for vertical adjustment compensation
-        figsize = 12
-        fig_size_points = figsize * 72
-        export_points_per_data_unit = fig_size_points / (full_extent_span * 2)  # *2 because extent is from -x_extent to +x_extent
-
-        # NO fontscale_compensation needed anymore!
-        # graph_primitives.py now auto-scales all labels (node, self-loop, edge) based on
-        # points_per_data_unit, so they maintain correct proportions regardless of extent
-        # All font size parameters (fontscale, selflooplabelscale, labelfontsize) now work
-        # consistently as multipliers on auto-calculated base sizes
-
-        # Debug: print the extent
-        logger.debug(f"Graph extent span: {full_extent_span:.3f}")
-
-        # Calculate linewidth scaling factor to keep linewidths proportional to node size
-        # Linewidths are in points (absolute), but need to scale with graph extent
-        # Use a reference extent (typical small graph is ~10-15 units after padding)
-        reference_extent = 15.0
-        lw_extent_scale = reference_extent / full_extent_span
-        logger.debug(f"Linewidth extent scale factor: {lw_extent_scale:.3f}")
-
-        # Use the export_rescale dictionary (tunable via UI in Export Scaling tab)
-        # These parameters provide absolute control over scaling, independent of graph size
-        RESCALE = self.export_rescale
-
-
-        # Generate Python code
-        code_lines = []
-        code_lines.append("#!/usr/bin/env python")
-        code_lines.append('"""')
-        code_lines.append("Generated graph code using graph_primitives")
-        code_lines.append('"""')
-        code_lines.append("")
-        code_lines.append("import matplotlib.pyplot as plt")
-        code_lines.append("import graphulator.graph_primitives as gp")
-        code_lines.append("import graphulator.graphulator_config as config")
-        code_lines.append("")
-        code_lines.append("# Create graph circuit (allow duplicate labels)")
-        code_lines.append("# Set use_latex=True for LaTeX rendering, False for MathText (default)")
-        use_latex_str = "True" if self.use_latex else "False"
-        code_lines.append(f"graph = gp.GraphCircuit(allow_duplicate_labels=True, use_latex={use_latex_str})")
-        code_lines.append("")
-
-        # Check for duplicate labels
-        label_counts = {}
-        has_duplicates = False
-        for node in self.nodes:
-            label = node['label']
-            label_counts[label] = label_counts.get(label, 0) + 1
-            if label_counts[label] > 1:
-                has_duplicates = True
-
-        # Find self-loops for each node
-        node_selfloops = {}  # Maps node_id to self-loop edge
-        for edge in self.edges:
-            if edge['is_self_loop']:
-                node_selfloops[edge['from_node_id']] = edge
-
-        code_lines.append("# Add nodes")
-
-        for i, node in enumerate(self.nodes):
-            label = node['label']
-            # Handle empty labels - use space to avoid math parsing errors
-            if not label or not label.strip():
-                label = ' '
-            node_id = node['node_id']
-            x, y = node['pos']
-            color_key = node['color_key']
-            node_size_mult = node.get('node_size_mult', 1.0)
-            label_size_mult = node.get('label_size_mult',1.0) * 0.75
-            conj = node.get('conj', False)
-
-            # HACK to fix the label_size_mult
-            # label_size_mult *= 0.1
-
-            # Use addnode for all nodes (consistent parameterization)
-            radius = self.node_radius * node_size_mult
-
-            # Check if this node has a self-loop
-            has_selfloop = node_id in node_selfloops
-            selfloop_edge = None
-            selfloop_label = ''
-            if has_selfloop:
-                selfloop_edge = node_selfloops[node_id]
-                selfloop_label = selfloop_edge.get('label1', '')
-
-            # Shift coordinates to center graph at origin
-            x_shifted = x - x_center
-            y_shifted = y - y_center
-
-            code_lines.append(f"# Node {i+1}: {label if label.strip() else '(blank)'}")
-            if has_duplicates:
-                # Include node_id to disambiguate
-                code_lines.append(f"graph.addnode(label='{label}', xy=({x_shifted:.3f}, {y_shifted:.3f}), node_id={node_id},")
-            else:
-                code_lines.append(f"graph.addnode(label='{label}', xy=({x_shifted:.3f}, {y_shifted:.3f}),")
-            code_lines.append(f"             nodecolor=config.MYCOLORS['{color_key}'],")
-            code_lines.append(f"             R={radius:.3f},")
-            # fontscale is now a simple multiplier - graph_primitives handles auto-scaling
-            code_lines.append(f"             fontscale={label_size_mult * RESCALE['NODELABELSCALE']:.3f},")
-            code_lines.append(f"             conj={conj},")
-
-            # Add outline properties if enabled (qt stores free color strings)
-            if node.get('outline_enabled', False):
-                outline_color = node.get('outline_color', config.DEFAULT_NODE_OUTLINE_COLOR)
-                outline_width = node.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH)
-                outline_alpha = node.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA)
-                code_lines.append(f"             nodeoutlinecolor='{outline_color}',")
-                code_lines.append(f"             nodelw={outline_width:.1f},")
-                code_lines.append(f"             nodeoutlinealpha={outline_alpha:.2f},")
-
-            # Add nodelabelnudge if non-zero
-            # Compensate for GUI's vertical adjustment (5% of font size downward)
-            # so exported position matches GUI appearance
-            nudge = node.get('nodelabelnudge', (0.0, 0.0))
-            if nudge != (0.0, 0.0) and (abs(nudge[0]) > 0.001 or abs(nudge[1]) > 0.001):
-                # Calculate vertical adjustment used in GUI rendering
-                # Use export parameters to calculate points_per_data_unit
-                conj_scale = config.CONJ_LABEL_SCALE if conj else 1.0
-                font_size_points = radius * 2 * export_points_per_data_unit * 0.35 * label_size_mult * conj_scale
-                adjustment_fraction = 0.05
-                vertical_adjustment_points = font_size_points * adjustment_fraction
-                vertical_adjustment_data = vertical_adjustment_points / export_points_per_data_unit
-
-                # Subtract the adjustment from y-component of nudge for export
-                # (GUI nudge is relative to adjusted position, export needs absolute position)
-                export_nudge = (nudge[0], nudge[1] - vertical_adjustment_data)
-                code_lines.append(f"             nodelabelnudge=({export_nudge[0]:.3f}, {export_nudge[1]:.3f}),")
-
-            # Add self-loop parameters if this node has a self-loop
-            if has_selfloop and selfloop_edge is not None:
-                code_lines.append(f"             drawselfloop=True,")
-                if selfloop_label:
-                    # Auto-enclose label with $ signs for math mode if not already present
-                    if not selfloop_label.startswith('$'):
-                        export_label = f'${selfloop_label}$'
-                    else:
-                        export_label = selfloop_label
-                    code_lines.append(f"             selflooplabel=r'{export_label}',")
-
-                    # Add selflooplabelscale if non-default
-                    label_size_mult = selfloop_edge.get('label_size_mult', 1.4)
-                    if abs(label_size_mult - 1.4) > 0.01:
-                        # selflooplabelscale works as multiplier relative to node label size
-                        # It multiplies scaled_nodelabelsize, so it automatically scales proportionally
-                        code_lines.append(f"             selflooplabelscale={label_size_mult * RESCALE['SELFLOOP_LABELSCALE']:.3f},")
-
-                code_lines.append(f"             selflooplw={2.5 * selfloop_edge['linewidth_mult'] * RESCALE['SLLW'] * lw_extent_scale:.1f},")
-
-                # Add selfloopangle
-                selfloopangle = selfloop_edge.get('selfloopangle', 0)
-                if selfloopangle != 0:
-                    code_lines.append(f"             selfloopangle={selfloopangle},")
-
-                # Add selfloopscale
-                selfloopscale = selfloop_edge.get('selfloopscale', 1.0)
-                if abs(selfloopscale - 1.0) > 0.01:
-                    code_lines.append(f"             selfloopscale={selfloopscale * RESCALE['SLSC']:.3f},")
-
-                # Add arrowlengthsc
-                arrowlengthsc = selfloop_edge.get('arrowlengthsc', 1.0)
-                if abs(arrowlengthsc - 1.0) > 0.01:
-                    code_lines.append(f"             arrowlengthsc={arrowlengthsc:.3f},")
-
-                # Add arrowstyle (self-loop arrowhead)
-                sl_arrowstyle = selfloop_edge.get('arrowstyle', 'open')
-                if sl_arrowstyle != 'open':
-                    code_lines.append(f"             arrowstyle='{sl_arrowstyle}',")
-
-                # Add flipselfloop
-                flip = selfloop_edge.get('flip', False)
-                if flip:
-                    code_lines.append(f"             flipselfloop={flip},")
-
-                # Add selflooplabelnudge if non-zero
-                # Apply SELFLOOP_LABELNUDGE_SCALE and EXPORT_SELFLOOP_LABEL_DISTANCE
-                nudge = selfloop_edge.get('selflooplabelnudge', (0.0, 0.0))
-                nudge_scale = RESCALE.get('SELFLOOP_LABELNUDGE_SCALE', 1.0)
-                export_distance_scale = RESCALE.get('EXPORT_SELFLOOP_LABEL_DISTANCE', 1.0)
-
-                # Calculate scaled nudge accounting for both the fine-tuning nudge and distance scaling
-                # The distance scale adjusts the overall radial position from the node center
-                # We approximate this by scaling the nudge in the direction of the self-loop angle
-                selfloopangle = selfloop_edge.get('selfloopangle', 0)
-                angle_rad = selfloopangle * np.pi / 180
-
-                # Base nudge from user adjustments
-                scaled_nudge_x = nudge[0] * nudge_scale
-                scaled_nudge_y = nudge[1] * nudge_scale
-
-                # Add distance scaling component (moves label radially based on angle)
-                if abs(export_distance_scale - 1.0) > 0.001:
-                    # Calculate radial offset to adjust distance from node center
-                    # This mimics changing the 3.2*R factor in the label positioning
-                    radial_adjustment = (export_distance_scale - 1.0) * 0.5  # Scale factor for nudge
-                    scaled_nudge_x += radial_adjustment * np.cos(angle_rad)
-                    scaled_nudge_y += radial_adjustment * np.sin(angle_rad)
-
-                if (abs(scaled_nudge_x) > 0.001 or abs(scaled_nudge_y) > 0.001):
-                    code_lines.append(f"             selflooplabelnudge=({scaled_nudge_x:.3f}, {scaled_nudge_y:.3f}),")
-
-                # Add selfloop label background color if set
-                label_bgcolor = selfloop_edge.get('label_bgcolor', None)
-                if label_bgcolor is not None:
-                    code_lines.append(f"             selflooplabelbgcolor='{label_bgcolor}',")
-
-                # Close the addnode call
-                code_lines.append(f"             )")
-            else:
-                code_lines.append(f"             drawselfloop=False)")
-            code_lines.append("")
-
-        # Add edges if any exist (skip self-loops, they're handled in addnode)
-        non_selfloop_edges = [e for e in self.edges if not e['is_self_loop']]
-        if non_selfloop_edges:
-            code_lines.append("# Add edges")
-            for i, edge in enumerate(non_selfloop_edges):
-                from_node = edge['from_node']
-                to_node = edge['to_node']
-                from_label = from_node['label']
-                to_label = to_node['label']
-                from_node_id = edge['from_node_id']
-                to_node_id = edge['to_node_id']
-
-                edge_label1 = edge.get('label1', '')
-                edge_label2 = edge.get('label2', '')
-                style = edge['style']
-                direction = edge['direction']
-                linewidth_mult = edge['linewidth_mult']
-                label_size_mult = edge['label_size_mult']
-                label_offset_mult = edge.get('label_offset_mult', 1.0)
-
-                code_lines.append(f"# Edge {i+1}: {from_label} → {to_label}")
-
-                # Calculate labeltheta from node positions
-                from_pos = from_node['pos']
-                to_pos = to_node['pos']
-                dx = to_pos[0] - from_pos[0]
-                dy = to_pos[1] - from_pos[1]
-                labeltheta = np.arctan2(dy, dx) * 180 / np.pi
-
-                # Flip labels by 180 degrees if requested
-                if edge.get('flip_labels', False):
-                    labeltheta += 180
-
-                # Add fine-tuning rotation offset
-                labeltheta += edge.get('label_rotation_offset', 0)
-
-                # Base values for figsize=12
-                base_lw = 4
-                base_labelfontsize = 50 * 0.4
-                base_labeloffset = 2.3
-
-                # Apply multipliers and extent scaling
-                # Scale linewidths inversely with extent to keep them proportional to circles
-                scaled_lw = base_lw * linewidth_mult * lw_extent_scale
-                scaled_labelfontsize = base_labelfontsize * label_size_mult
-                scaled_labeloffset = base_labeloffset * label_offset_mult
-
-                # Adjust linewidth for single/double styles (graph_primitives multiplies these)
-                # Since we're passing 'lw' in loopkwargs, we need to pre-multiply
-                single_double_lw_unit = 3.5
-                if style == 'single':
-                    scaled_lw *= single_double_lw_unit * 0.4
-                elif style == 'double':
-                    scaled_lw *= 0.9 * single_double_lw_unit
-                elif style == 'loopy':
-                    scaled_lw *= 0.4
-
-                # Format labels - add $ if not already present
-                def format_label(label_text):
-                    if label_text:
-                        if not label_text.startswith('$'):
-                            return f'${label_text}$'
-                        return label_text
-                    return None
-
-                formatted_label1 = format_label(edge_label1)
-                formatted_label2 = format_label(edge_label2)
-
-                # Build label list string
-                label1_str = f"r'{formatted_label1}'" if formatted_label1 else "None"
-                label2_str = f"r'{formatted_label2}'" if formatted_label2 else "None"
-                label_str = f"[{label1_str}, {label2_str}]"
-
-                # Use node_id if there are duplicates, otherwise use labels
-                if has_duplicates:
-                    code_lines.append(f"graph.addedge(fromnode_id={from_node_id}, tonode_id={to_node_id},")
-                else:
-                    code_lines.append(f"graph.addedge(fromnode='{from_label}', tonode='{to_label}',")
-                code_lines.append(f"             label={label_str},")
-                code_lines.append(f"             labeltheta={labeltheta:.1f},")
-                code_lines.append(f"             labeloffset={scaled_labeloffset * RESCALE['EDGELABELOFFSET']:.1f},")
-                code_lines.append(f"             labelfontsize={scaled_labelfontsize * RESCALE['EDGEFONTSCALE']:.0f},")
-
-                # Add label background colors if set
-                label1_bgcolor = edge.get('label1_bgcolor', None)
-                label2_bgcolor = edge.get('label2_bgcolor', None)
-                if label1_bgcolor or label2_bgcolor:
-                    bgcolor1_str = f"'{label1_bgcolor}'" if label1_bgcolor else "None"
-                    bgcolor2_str = f"'{label2_bgcolor}'" if label2_bgcolor else "None"
-                    code_lines.append(f"             labelbgcolor=[{bgcolor1_str}, {bgcolor2_str}],")
-
-                code_lines.append(f"             style='{style}',")
-                code_lines.append(f"             whichedges='{direction}',")
-                code_lines.append(f"             theta={edge.get('looptheta', 30)},")
-                loopkwargs_parts = [f"'lw': {scaled_lw * RESCALE['EDGELWSCALE']:.1f}", "'arrowlength': 0.4"]
-                arrowstyle = edge.get('arrowstyle', 'open')
-                arrowscale = edge.get('arrowscale', 1.0)
-                if arrowstyle != 'open':
-                    loopkwargs_parts.append(f"'arrowstyle': '{arrowstyle}'")
-                if abs(arrowscale - 1.0) > 0.01:
-                    loopkwargs_parts.append(f"'arrowscale': {arrowscale:.3f}")
-                code_lines.append(f"             loopkwargs={{{', '.join(loopkwargs_parts)}}})")
-                code_lines.append("")
-
-        code_lines.append("")
-        code_lines.append("# Draw the graph")
-        code_lines.append("# overfrac adds padding around the graph to ensure all elements are visible")
-        code_lines.append("# Increase overfrac if labels or self-loops are cut off")
-        code_lines.append("graph.draw(figsize=12, overfrac=0.2)")
-        code_lines.append("")
-        code_lines.append("plt.axis('off')")
-        code_lines.append("plt.title('')  # Remove title")
-        code_lines.append("plt.show()")
-
-        # Join and copy to clipboard or print
-        code = "\n".join(code_lines)
-
-        # Try to copy to system clipboard
         try:
-            clipboard = QApplication.clipboard()
-            clipboard.setText(code)
-            edge_str = f", {len(self.edges)} edge(s)" if self.edges else ""
-            logger.info(f"✓ Exported code for {len(self.nodes)} node(s){edge_str} to clipboard")
+            QApplication.clipboard().setText(code)
         except Exception as e:
             logger.debug(f"Code export (clipboard failed: {e}, printing to console):")
             logger.debug("=" * 70)
             logger.debug(code)
             logger.debug("=" * 70)
+            return
+
+        edge_str = f", {len(self.edges)} edge(s)" if self.edges else ""
+        glyph_str = ""
+        if self._has_glyphs:
+            glyph_str = (f", {len(self.ports)} port(s)"
+                         f", {len(self.txlines)} txline(es)")
+        shape = "grouped-by-style " if compact else ""
+        logger.info(f"✓ Exported {shape}code for {len(self.nodes)} node(s)"
+                    f"{edge_str}{glyph_str} to clipboard")
 
     def _update_properties_panel(self):
         """Update the properties panel based on current selection"""
+        panel = self.properties_panel
+        n_glyphs = len(self.selected_ports) + len(self.selected_txlines)
+        n_wires = len(self.selected_wires)
+        no_graph_selection = not self.selected_nodes and not self.selected_edges
+
+        # Single glyph wire selected
+        if n_wires == 1 and not n_glyphs and no_graph_selection:
+            owner, conn = self.selected_wires[0]
+            if panel.displayed_single is not conn:
+                panel.show_glyph_wire_properties(owner, conn)
+            self._update_shortcut_overlay()
+            return
+        # Single glyph selected
+        if n_glyphs == 1 and not n_wires and no_graph_selection:
+            glyph = (self.selected_ports or self.selected_txlines)[0]
+            if panel.displayed_single is not glyph:
+                if self.selected_ports:
+                    panel.show_port_properties(glyph)
+                else:
+                    panel.show_txline_properties(glyph)
+            self._update_shortcut_overlay()
+            return
+        # Several glyphs and/or wires (possibly alongside nodes/edges):
+        # the properties they share, editable for all at once. A lone wire
+        # or glyph took its own branch above, where the panel is richer.
+        if (n_glyphs or n_wires) and (n_glyphs + n_wires > 1
+                                      or not no_graph_selection):
+            signature = PropertiesPanel.selection_signature(
+                self.selected_nodes, self.selected_edges,
+                self.selected_ports, self.selected_txlines,
+                self.selected_wires)
+            if panel.displayed_multi != signature:
+                panel.show_multi_properties(
+                    self.selected_nodes, self.selected_edges,
+                    self.selected_ports, self.selected_txlines,
+                    self.selected_wires)
+            self._update_shortcut_overlay()
+            return
+
         # Single node selected
         if len(self.selected_nodes) == 1 and len(self.selected_edges) == 0:
             # Skip rebuilding if this object's widgets are already shown; rebuilding
@@ -5447,7 +5684,8 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
     # Curated, per-context shortcut hints (Graphulator uses static bindings)
     _SHORTCUT_HINTS = {
         'none': [
-            ('G', 'Add node'), ('E', 'Edge mode'), ('Ctrl+E', 'Continuous edge'),
+            ('G', 'Add node'), ('E', 'Edge / wire mode'),
+            ('P', 'Add port'), ('L', 'Add txline'),
             ('C', 'Conjugation mode'), ('↑↓←→', 'Pan view'), ('+ / −', 'Zoom'),
             ('Ctrl+Z', 'Undo'), ('Ctrl+,', 'Settings'), ('?', 'Hide hints'),
         ],
@@ -5465,14 +5703,22 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             ('Ctrl+← →', 'Rotate angle'), ('Ctrl+↑ ↓', 'Scale'),
             ('Right-click', 'Style / arrowhead'), ('D or Del', 'Delete'),
         ],
+        'glyph': [
+            ('← →', 'Length'), ('↑ ↓', 'Height'),
+            ('Ctrl+← →', 'Rotate'), ('Ctrl+↑ ↓', 'Label size'),
+            ('Shift+↑↓←→', 'Nudge label'),
+            ('Right-click', 'Auto-orient / delete'), ('D or Del', 'Delete'),
+        ],
     }
 
     # Full per-context shortcut lists (shown when "Show All Shortcuts" is on)
     _SHORTCUT_HINTS_ALL = {
         'none': [
             ('G', 'Add node'), ('Shift+G', 'Continuous nodes'),
-            ('Ctrl+G', 'Auto-increment mode'), ('E', 'Edge mode'),
-            ('Ctrl+E', 'Continuous edge'), ('C', 'Conjugation mode'),
+            ('Ctrl+G', 'Auto-increment mode'), ('E', 'Edge / wire mode'),
+            ('Ctrl+E', 'Continuous edge'), ('P', 'Add port'),
+            ('Shift+P', 'Continuous ports'), ('L', 'Add txline'),
+            ('C', 'Conjugation mode'),
             ('Esc', 'Exit / clear'), ('↑↓←→', 'Pan view'), ('+ / −', 'Zoom'),
             ('A', 'Auto-fit view'), ('R', 'Rotate grid'), ('T', 'Toggle grid type'),
             ('Ctrl+A', 'Select all'), ('Ctrl+Z', 'Undo'),
@@ -5498,6 +5744,15 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
             ('← →', 'Label size'), ('Right-click', 'Style / arrowhead'),
             ('Ctrl+C', 'Copy'), ('D or Del', 'Delete'),
         ],
+        'glyph': [
+            ('← →', 'Length'), ('↑ ↓', 'Height'),
+            ('Ctrl+← →', 'Rotate 15°'), ('Ctrl+↑ ↓', 'Label size'),
+            ('Shift+↑↓←→', 'Nudge label'),
+            ('Ctrl+R / Ctrl+Shift+R', 'Rotate selection'),
+            ('E', 'Wire tool'), ('Double-click', 'Edit…'),
+            ('Right-click', 'Rotate / auto-orient / delete'),
+            ('D or Del', 'Delete'),
+        ],
     }
 
     def _shortcut_hint_rows(self, context):
@@ -5506,12 +5761,16 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
         return self._SHORTCUT_HINTS.get(context, [])
 
     def _auto_fit_view(self):
-        """Auto-fit view to nodes"""
-        if not self.nodes:
-            logger.info("No nodes to fit view to")
+        """Auto-fit view to the nodes and the glyphs"""
+        glyph_pts = self._glyph_extent_points()
+        if not self.nodes and not glyph_pts:
+            logger.info("Nothing to fit view to")
             return
 
-        positions = np.array([node['pos'] for node in self.nodes])
+        # A txline is long enough to leave a node-only frame, so its corners
+        # take part in the fit
+        points = [node['pos'] for node in self.nodes] + list(glyph_pts)
+        positions = np.array(points, dtype=float)
         centroid = positions.mean(axis=0)
 
         distances = np.sqrt(((positions - centroid) ** 2).sum(axis=1))
@@ -5547,6 +5806,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         # Draw nodes (now after aspect is set, so limits are correct)
         self._draw_nodes()
+
+        # Draw the schematic glyphs and their wiring
+        self._draw_glyphs()
 
         # No edge mode highlight for export
 
@@ -5613,6 +5875,9 @@ class Graphulator(GraphWindowCommonMixin, QMainWindow):
 
         # Draw nodes (now after aspect is set, so limits are correct)
         self._draw_nodes()
+
+        # Draw the schematic glyphs and their wiring
+        self._draw_glyphs()
 
         # Draw edge mode highlight (if first node is selected)
         if self.placement_mode in ['edge', 'edge_continuous'] and self.edge_mode_first_node is not None:

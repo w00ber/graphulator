@@ -19,6 +19,15 @@ jobs:
       - name: Ruff
         run: ruff check .
 
+      # Undefined names (F821) over EVERY tracked file, including the
+      # monolithic app modules that [tool.ruff] extend-exclude skips for
+      # style. That exclusion hid three live NameErrors in
+      # graphulator_para.py; passing explicit paths bypasses it. A NameError
+      # in a widget constructor is invisible to tests that never open the
+      # widget and fires on the user's first click, so it gates the build.
+      - name: Ruff - undefined names, no exclusions
+        run: git ls-files '*.py' | xargs ruff check --select F821
+
   test:
     runs-on: ${{ matrix.os }}
     strategy:

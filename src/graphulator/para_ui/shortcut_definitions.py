@@ -54,6 +54,7 @@ SHORTCUT_CATEGORIES = [
     "View",
     "Node Placement",
     "Edge Operations",
+    "Ports & Lines",
     "Selection & Clipboard",
     "Grid Controls",
     "Graph Rotation",
@@ -271,6 +272,32 @@ SHORTCUT_DEFINITIONS: List[ShortcutDefinition] = [
         default_keys={"default": "Ctrl+E"},
     ),
 
+    # ===== PORTS & LINES (Explicit Ports mode) =====
+    ShortcutDefinition(
+        action_id="port.place_single",
+        display_name="Place Port",
+        category="Ports & Lines",
+        description="Enter single port placement mode (requires Explicit Ports mode)",
+        default_keys={"default": "P"},
+        is_single_key=True,
+    ),
+    ShortcutDefinition(
+        action_id="port.place_continuous",
+        display_name="Continuous Port Placement",
+        category="Ports & Lines",
+        description="Toggle continuous port placement mode",
+        default_keys={"default": "Shift+P"},
+        is_single_key=True,
+    ),
+    ShortcutDefinition(
+        action_id="line.place",
+        display_name="Place Transmission Line",
+        category="Ports & Lines",
+        description="Enter transmission-line placement mode (requires Explicit Ports mode)",
+        default_keys={"default": "L"},
+        is_single_key=True,
+    ),
+
     # ===== SELECTION & CLIPBOARD =====
     ShortcutDefinition(
         action_id="select.all",
@@ -283,14 +310,14 @@ SHORTCUT_DEFINITIONS: List[ShortcutDefinition] = [
         action_id="clipboard.copy",
         display_name="Copy",
         category="Selection & Clipboard",
-        description="Copy selected nodes and edges",
+        description="Copy the selection (nodes, edges, ports, lines)",
         default_keys={"default": "Ctrl+C"},
     ),
     ShortcutDefinition(
         action_id="clipboard.cut",
         display_name="Cut",
         category="Selection & Clipboard",
-        description="Cut selected nodes and edges",
+        description="Cut the selection (nodes, edges, ports, lines)",
         default_keys={"default": "Ctrl+X"},
     ),
     ShortcutDefinition(

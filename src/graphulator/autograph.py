@@ -11,11 +11,1301 @@ Author: Graphulator Development Team
 import json
 import logging
 import numpy as np
+from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Tuple, Set, Optional, Any, Union
 from more_itertools import collapse
 
 logger = logging.getLogger(__name__)
+
+
+def _edge_key(a, b):
+    """Canonical undirected edge key, robust to mixed int/str node ids
+    (line-macro expansion introduces string ids like "TL1:n3" alongside the
+    GUI's integer ids; plain sorted() cannot compare those)."""
+    return tuple(sorted([a, b], key=lambda v: (isinstance(v, str), v)))
+
+
+def compute_hub_bridge_links(node_ids, edge_pairs, hub_attachment_ids):
+    """Zero-offset frame links a spanning tree may use across shared hubs.
+
+    A shared port cross-damps every mode it attaches to, but no frequency
+    conversion happens through a resistor: all its attachments see the same
+    signal frequency. When a hub bridges parts of the graph that no real
+    (pump) edge connects, the spanning tree must still reach them so the
+    pump-frame (f_p) accumulation of those parts is not silently dropped —
+    and the bridging link carries f_p = 0.
+
+    Links are added ONLY between real-edge-disconnected components (union-
+    find), so within a pump-connected region the tree keeps using real
+    edges and the frame structure is untouched.
+
+    Parameters
+    ----------
+    node_ids : iterable
+        All node ids in the graph.
+    edge_pairs : iterable of (a, b)
+        Endpoint pairs of the real non-self-loop edges.
+    hub_attachment_ids : iterable of list
+        For each hub, the list of node ids it attaches to.
+
+    Returns
+    -------
+    list of (a, b) canonical pairs (see _edge_key), cycle-free.
+    """
+    parent = {nid: nid for nid in node_ids}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+            return True
+        return False
+
+    for a, b in edge_pairs:
+        if a in parent and b in parent:
+            union(a, b)
+
+    links = []
+    for ids in hub_attachment_ids:
+        ids = [i for i in ids if i in parent]
+        for other in ids[1:]:
+            if union(ids[0], other):
+                links.append(_edge_key(ids[0], other))
+    return links
+
+
+def pgraph_port_to_hub(port_data) -> Dict[str, Any]:
+    """Convert a .pgraph v3.0 'ports' entry (GUI schema) to a hub dict.
+
+    GUI attachments store {'node_id', 'rate', 'sign'} with rate in arb.
+    units; the hub schema stores (node_id, kappa, phase) with
+    kappa = sqrt(rate) and phase 0/180 from the sign.
+    """
+    attachments = []
+    for att in port_data.get('attachments', []):
+        rate = max(float(att.get('rate', 0.0)), 0.0)
+        phase = 0.0 if att.get('sign', 1) >= 0 else 180.0
+        attachments.append((att['node_id'], float(np.sqrt(rate)), phase))
+    return {
+        'hub_id': f"port:{port_data['port_id']}",
+        'label': port_data.get('label', f"P{port_data['port_id']}"),
+        'attachments': attachments,
+        'monitored': bool(port_data.get('monitored', True)),
+    }
+
+
+def pgraph_line_to_resonator(line_data) -> "LineResonator":
+    """Convert a .pgraph v3.0 'line_resonators' entry to a LineResonator."""
+    return LineResonator(
+        line_id=f"line:{line_data['line_id']}",
+        label=line_data.get('label', f"TL{line_data['line_id']}"),
+        FSR=float(line_data['FSR']),
+        Ztx=float(line_data['Ztx']),
+        f_max=float(line_data['f_max']),
+        port_end=line_data.get('port_end'),
+        Z0_port=float(line_data.get('Z0_port', 50.0)),
+        alpha_uniform=float(line_data.get('alpha_uniform', 0.0)),
+        conj=bool(line_data.get('conj', False)),
+        load=line_data.get('load'),
+    )
+
+# ---------------------------------------------------------------------------
+# Dissipation hubs
+# ---------------------------------------------------------------------------
+#
+# A DissipationHub is the single dissipation species of the assembly:
+#   monitored=True  -> a PORT: contributes (i/2) kappa kappa^dagger to M and a
+#                      column of K_ports (a scattering channel of S).
+#   monitored=False -> a LOSS HUB: contributes (i/2) lambda lambda^dagger to M
+#                      only; energy exits unobserved (a column of K_loss).
+# Legacy per-node B_ext auto-wraps into single-attachment monitored hubs at
+# matrix-build time (see GraphExtractor.get_effective_hubs), which reproduces
+# the pre-hub behavior exactly.
+#
+# Phase-1 restrictions (no-ansatz boundary — see the Phase-2 list below):
+#   * Attachment weights are REAL SIGNED: the schema stores (magnitude,
+#     phase_deg) for forward compatibility, but phase is restricted to
+#     {0, 180} degrees. Complex weights await the M_pumped derivation.
+#   * A hub may attach to nodes of ONE sector only (all conj=False or all
+#     conj=True). Mixed-sector hubs raise ValueError: the conjugation
+#     placement for hub attachments on conj-sector nodes is exactly the
+#     deferred M_pumped two-sector derivation.
+#
+# Phase-2 blocked-on-derivation list (do NOT implement without the derivations):
+#   * Complex hub weights on conj-sector nodes; mixed-sector hubs;
+#     Sigma_z-weighted / Manley-Rowe scattering through hubs
+#     -> blocked on the M_pumped two-sector derivation + harmonic-balance
+#        cross-check.
+#   * Band-limited comb expansion (low-side closure underived; the digamma
+#     tail covers the high side only).
+#   * Two-port line acceptance (requires a written-and-verified ABCD
+#     two-port reference).
+#   * Frequency-dependent weights lambda(omega) / connector embedding (when
+#     it lands: free-Y_L-pole convention; the clamped convention is known
+#     wrong by ~55 MHz).
+#   * Parallel pump edges between one node pair (separate pre-existing
+#     limitation).
+
+#: Tolerance for accepting an attachment phase as exactly 0 or 180 degrees.
+_HUB_PHASE_TOL_DEG = 1e-9
+
+_MIXED_SECTOR_MSG = (
+    "Hub '{hub_id}' attaches to both normal and conjugate (conj) sector "
+    "nodes: {details}. Mixed-sector hubs are a Phase-2 feature blocked on "
+    "the M_pumped two-sector derivation + harmonic-balance cross-check."
+)
+
+_COMPLEX_WEIGHT_MSG = (
+    "Hub '{hub_id}' attachment to node {node_id} has phase {phase} deg. "
+    "Phase-1 hub weights are real signed: phase must be 0 or 180 degrees. "
+    "Complex weights are a Phase-2 feature blocked on the M_pumped "
+    "derivation."
+)
+
+
+@dataclass
+class DissipationHub:
+    """A dissipation hub: one physical absorber attached to one or more modes.
+
+    Attributes
+    ----------
+    hub_id : Any
+        Stable identifier (unique among hubs; hashable).
+    label : str
+        Display label; used as the port label when monitored.
+    attachments : list of (node_id, weight_mag, weight_phase_deg)
+        Attachment vector entries, one per attached mode. `weight_mag` is the
+        coupling amplitude kappa_n in sqrt(rate) units (a single-attachment
+        port reduces to kappa = sqrt(B_ext)); `weight_phase_deg` is restricted
+        to {0, 180} in Phase 1 (real signed weights).
+    monitored : bool
+        True -> port (S channel); False -> loss hub (no channel).
+    """
+
+    hub_id: Any
+    label: str = ''
+    attachments: List[Tuple[Any, float, float]] = field(default_factory=list)
+    monitored: bool = True
+    #: Transmission-line ends terminated on this hub whose comb is truncated
+    #: at N: ``[{'line': LineResonator.to_dict(), 'end': 'x0'|'xL'}, ...]``.
+    #: The modes beyond N are closed analytically into the channel (see the
+    #: "comb tail closure" comment on GraphScatteringMatrix).
+    tails: List[Dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'hub_id': self.hub_id,
+            'label': self.label,
+            'attachments': [tuple(a) for a in self.attachments],
+            'monitored': self.monitored,
+            'tails': [dict(t) for t in self.tails],
+        }
+
+
+def _normalize_attachment(entry) -> Tuple[Any, float, float]:
+    """Normalize one attachment to (node_id, weight_mag, weight_phase_deg).
+
+    Accepts (node_id, weight) with a signed real weight, or the full
+    (node_id, weight_mag, weight_phase_deg) triple.
+    """
+    if len(entry) == 2:
+        node_id, weight = entry
+        if weight < 0:
+            return (node_id, -float(weight), 180.0)
+        return (node_id, float(weight), 0.0)
+    if len(entry) == 3:
+        node_id, mag, phase_deg = entry
+        return (node_id, float(mag), float(phase_deg))
+    raise ValueError(
+        f"Hub attachment {entry!r} must be (node_id, weight) or "
+        f"(node_id, weight_mag, weight_phase_deg)"
+    )
+
+
+def _normalize_hub(hub) -> Dict[str, Any]:
+    """Normalize a DissipationHub or dict to the stored dict schema."""
+    if isinstance(hub, DissipationHub):
+        hub = hub.to_dict()
+    if 'hub_id' not in hub:
+        raise ValueError(f"Hub {hub!r} is missing 'hub_id'")
+    tails = []
+    for spec in (hub.get('tails') or []):
+        end = spec.get('end')
+        if end not in LINE_LOAD_ENDS:
+            raise ValueError(
+                f"Hub {hub['hub_id']!r}: tail end must be one of "
+                f"{LINE_LOAD_ENDS!r}, got {end!r}")
+        line = spec['line']
+        tails.append({'line': (line.to_dict() if isinstance(line, LineResonator)
+                               else dict(line)),
+                      'end': end})
+    return {
+        'hub_id': hub['hub_id'],
+        'label': hub.get('label', str(hub['hub_id'])),
+        'attachments': [
+            _normalize_attachment(a) for a in hub.get('attachments', [])
+        ],
+        'monitored': bool(hub.get('monitored', True)),
+        'tails': tails,
+    }
+
+
+def _hub_signed_weight(hub_id, node_id, weight_mag, weight_phase_deg) -> float:
+    """Collapse (magnitude, phase) to the Phase-1 real signed weight.
+
+    Phase must be 0 or 180 degrees (mod 360); anything else raises, because
+    complex weights are blocked on the M_pumped derivation (Phase 2).
+    """
+    phase = float(weight_phase_deg) % 360.0
+    if abs(phase) <= _HUB_PHASE_TOL_DEG or abs(phase - 360.0) <= _HUB_PHASE_TOL_DEG:
+        return float(weight_mag)
+    if abs(phase - 180.0) <= _HUB_PHASE_TOL_DEG:
+        return -float(weight_mag)
+    raise ValueError(_COMPLEX_WEIGHT_MSG.format(
+        hub_id=hub_id, node_id=node_id, phase=weight_phase_deg))
+
+
+# ---------------------------------------------------------------------------
+# Line-resonator macro (transmission-line standing-wave comb)
+# ---------------------------------------------------------------------------
+#
+# A LineResonator expands at extraction time into the open-open standing-wave
+# mode comb of a transmission line plus (optionally) one monitored port hub
+# with signed couplings kappa_n = (+-1)^n sqrt(gamma) — one physical resistor
+# terminating one end of the line sees ONE scalar, which in the mode basis is
+# a rank-one dense damper. The expansion follows the reference numerics
+# `cmtline_core.comb_poles_K` (natural units v = ell = Ztx = 1, poles at
+# {0, +-n pi}); tests/test_line_macro_vs_core.py pins the expansion arrays to
+# the reference bitwise under the unit mapping below, per the
+# import-and-compare rule (never re-derive silently).
+#
+# Unit mapping (write once, test in test_units_layer.py): the natural comb
+# has angular pole spacing pi; the physical comb has linear-frequency
+# spacing FSR (the same units as autograph's freq/B fields). Frequencies and
+# rates therefore scale by FSR/pi, couplings (sqrt-rate) by sqrt(FSR/pi):
+#     gamma_phys / FSR = gamma_nat / pi = (2/pi) (Ztx / Z0_port)
+#
+# Uniform loss: a spatially uniform per-length amplitude attenuation alpha
+# damps EVERY open-open standing mode at the same amplitude rate alpha*v (by
+# mode orthogonality in the open-open basis: the loss operator is a multiple
+# of the identity there), i.e. Gamma_int = 2*alpha in natural angular units,
+# so per-mode B_int = (2/pi) * alpha_uniform * FSR with alpha_uniform the
+# ONE-WAY attenuation alpha*ell in nepers. Verified against a lossy-ABCD
+# reference (complex propagation angle) in tests/test_uniform_loss.py: the
+# loss-induced change in S11 matches the reference with the residual
+# vanishing at the same 1/N rate as the lossless truncation error.
+
+_LINE_PORT_ENDS = (None, 'x0', 'xL')
+
+_LINE_TWO_PORT_MSG = (
+    "LineResonator '{line_id}': port_end must be one of {ends!r} (one port "
+    "maximum, at either end; the other end is open). A two-port line is a "
+    "Phase-2 feature blocked on a written-and-verified ABCD two-port "
+    "reference."
+)
+
+
+def line_natural_frequency_to_physical(value, FSR):
+    """Map a natural-units (v = ell = 1, angular) frequency/rate to physical
+    linear-frequency units: natural pole spacing pi -> physical spacing FSR."""
+    return value * (FSR / np.pi)
+
+
+def line_natural_coupling_to_physical(value, FSR):
+    """Map a natural-units coupling amplitude (sqrt-rate) to physical units."""
+    return value * np.sqrt(FSR / np.pi)
+
+
+def _line_comb_natural(N, Z0, signs=True):
+    """The comb of `cmtline_core.comb_poles_K` at v = ell = Ztx = 1.
+
+    Mirrors the reference implementation operation for operation so the
+    arrays are bitwise equal (pinned by test_line_macro_vs_core.py):
+    poles {0, +-n pi}, couplings kappa = (+-1)^n sqrt(gamma),
+    gamma = 2 (Ztx/Z0)(v/ell) = 2/Z0.
+    """
+    gam = 2.0 * (1.0 / Z0) * (1.0 / 1.0)
+    poles = [0.0]
+    kap = [np.sqrt(gam)]
+    for n in range(1, N + 1):
+        s = (-1) ** n if signs else 1.0
+        poles += [n * np.pi * 1.0 / 1.0, -n * np.pi * 1.0 / 1.0]
+        kap += [s * np.sqrt(gam), s * np.sqrt(gam)]
+    return np.array(poles), np.array(kap, dtype=float), gam
+
+
+# ---------------------------------------------------------------------------
+# Loaded (reactively terminated) lines
+# ---------------------------------------------------------------------------
+#
+# A shunt reactance at one end DISPERSES the comb: the modes no longer sit at
+# n*FSR, and u_n(end), C_n and gamma_n all move with them. Everything below is
+# derived in docs/pumped_line_termination.md section 7 and reproduced
+# numerically by misc/loaded_line_checks.py; the gate is
+# tests/test_loaded_line.py (complex S11 vs exact ABCD through
+# tests/cmtline_core.py).
+#
+# Parameterization (7.1-7.2): an explicit TYPE plus one magnitude f_Z, the
+# frequency at which |X_elem| = Ztx. The SIGN of the reactance is deliberately
+# not the handle: this project's convention is Z_ind = -i w L and
+# Z_cap = +i/(w C), so here an inductor's reactance is negative and a
+# capacitor's positive -- the opposite of the textbook reading -- and a sign
+# only determines the frequency dependence for a single element anyway.
+
+LINE_LOAD_TYPES = ('inductive', 'capacitive')
+LINE_LOAD_ENDS = ('x0', 'xL')
+
+_CAPACITIVE_LOAD_MSG = (
+    "LineResonator '{line_id}': a capacitive end load is not supported yet. "
+    "Its comb S11 does not converge with mode count -- it plateaus near 0.94 "
+    "from N=10 to N=80 against exact ABCD, instead of falling like 1/N as the "
+    "inductive case does -- so a direct, non-resonant term (a Foster pole at "
+    "infinity) is missing from the comb and the answer would be silently "
+    "wrong. See docs/pumped_line_termination.md section 7.5. Inductive loads "
+    "are verified and available."
+)
+
+
+def line_load_reactance(f, f_Z, kind):
+    """Normalized reactance x = X_elem/Ztx at linear frequency `f` (7.2).
+
+    f_Z is the frequency where |X_elem| = Ztx, so x = f/f_Z for an inductor
+    and -f_Z/f for a capacitor, in absolute frequency with no reference
+    frequency to agree on.
+    """
+    if kind == 'inductive':
+        return float(f) / float(f_Z)
+    if kind == 'capacitive':
+        return -float(f_Z) / float(f)
+    raise ValueError(f"load type must be one of {LINE_LOAD_TYPES!r}, "
+                     f"got {kind!r}")
+
+
+@lru_cache(maxsize=8192)
+def line_loaded_theta(n, FSR, f_Z, kind):
+    """theta_n = k_n*ell of the n-th loaded mode (n >= 1), in radians.
+
+    Solves the source-free condition cot(theta) = x(f), f = theta*FSR/pi, on
+    the bracket theta in ((n-1)pi, n pi). The residual is taken in the
+    POLE-FREE form
+
+        h(theta) = s * (cos theta - x(f) sin theta),   s = (-1)^(n-1),
+
+    which is exactly +1 at the lower end of the bracket and -1 at the upper
+    (both endpoints have sin theta = 0), so bisection always brackets. cot is
+    strictly decreasing across the interval and x is monotone, so the root is
+    unique. Bisection runs to adjacent floats.
+    """
+    n = int(n)
+    if n < 1:
+        raise ValueError("loaded mode index must be >= 1 "
+                         "(an inductive load shorts DC; see section 7.4)")
+    s = (-1.0) ** (n - 1)
+    if kind == 'inductive':
+        a = FSR / (np.pi * f_Z)                      # x(theta) = a*theta
+        def h(t):
+            return s * (np.cos(t) - a * t * np.sin(t))
+    elif kind == 'capacitive':
+        b = np.pi * f_Z / FSR                        # x(theta) = -b/theta
+        def h(t):
+            # (b/theta) sin theta = b * sinc(theta/pi), finite at theta = 0
+            return s * (np.cos(t) + b * np.sinc(t / np.pi))
+    else:
+        raise ValueError(f"load type must be one of {LINE_LOAD_TYPES!r}, "
+                         f"got {kind!r}")
+    lo, hi = (n - 1) * np.pi, n * np.pi
+    while True:
+        mid = 0.5 * (lo + hi)
+        if not (lo < mid < hi):                      # adjacent floats
+            return float(mid)
+        if h(mid) > 0.0:
+            lo = mid
+        else:
+            hi = mid
+
+
+def line_fsr_for_target(f_target, n, f_Z, kind):
+    """FSR putting the n-th LOADED mode at `f_target` -- closed form (7.3).
+
+        FSR = pi f_t / (arccot(x(f_t)) + (n-1) pi),   arccot in (0, pi)
+
+    Evaluating the resonance condition AT the target removes the iteration
+    entirely. n = 1 is the quarter-wave-like fundamental.
+
+    Note what FSR then means: the GEOMETRIC parameter v/2*ell, not the mode
+    spacing -- a loaded comb is not uniformly spaced.
+    """
+    n = int(n)
+    if n < 1:
+        raise ValueError("target mode index must be >= 1")
+    if f_target <= 0:
+        raise ValueError("target frequency must be > 0")
+    x = line_load_reactance(f_target, f_Z, kind)
+    return float(np.pi * f_target / (np.arctan2(1.0, x) + (n - 1) * np.pi))
+
+
+
+# ---------------------------------------------------------------------------
+# Stepped-impedance lines (several sections of different Ztx)
+# ---------------------------------------------------------------------------
+#
+# The loaded basis above assumes one impedance. A stepped line keeps the same
+# recipe -- roots of a source-free condition, an energy normalization, end
+# profiles -- with the standing wave propagated PIECEWISE through the steps.
+# Derivation and numbers: docs/pumped_line_termination.md section 9 and
+# misc/stepped_line_checks.py; gate: tests/test_stepped_line.py (roots
+# against the ABCD admittance zero, complex S11 against the cascaded ABCD,
+# the uniform limit bit-for-bit).
+#
+# State (u, w) along the line, u the voltage (flux-rate) amplitude and
+# w = (1/Z_j) du/ds the current amplitude, s the electrical distance. Both
+# are continuous across a step (voltage and current are), and inside a
+# section of impedance Z_j they rotate:
+#
+#     u(s) = u0 cos s + Z_j w0 sin s,     w(s) = -(u0/Z_j) sin s + w0 cos s.
+#
+# Sections are taken from the OPEN end (u = 1, w = 0). At the far end the
+# source-free condition is
+#
+#     open      : w = 0
+#     inductive : u + Ztx x(f) w = 0,   x = f/f_Z   (one section: cos - x sin)
+#
+# and the mode mass is the per-section capacitive energy in closed form,
+#     C_n = sum_j  [1/(2 Z_j FSR theta_n)] * int_0^{delta_j} u^2 ds,
+# which reduces to C_line (1/2 + sin 2theta/4theta) for one section.
+# Phase velocity is taken common to all sections (fractions of ELECTRICAL
+# length), which is the CPW-on-one-substrate case; a per-section v would
+# only rescale the fractions.
+
+def _stepped_state(theta, sections):
+    """Propagate (u, w) from the open end through `sections` = ((Z, frac),..)
+    at electrical length theta. Returns (u_end, w_end, pieces) with pieces =
+    [(u0, w0, Z, delta), ...] per section for the energy integrals."""
+    u, w = 1.0, 0.0
+    pieces = []
+    for Z, frac in sections:
+        delta = theta * frac
+        pieces.append((u, w, Z, delta))
+        c, sn = np.cos(delta), np.sin(delta)
+        u, w = u * c + Z * w * sn, -(u / Z) * sn + w * c
+    return u, w, pieces
+
+
+def _stepped_residual(theta, sections, FSR, f_Z, kind):
+    """The pole-free source-free condition h(theta); its zeros are the modes."""
+    u, w, _ = _stepped_state(theta, sections)
+    if kind is None:
+        return w                                  # far end open
+    f = theta * FSR / np.pi
+    if kind == 'inductive':
+        # u + Ztx x(f) w with L = Ztx/(2 pi f_Z): Ztx cancels against the
+        # 1/Z in w only for a uniform line; keep it explicit via the
+        # reference impedance the load is defined against
+        return u + _STEPPED_ZREF[0] * (f / f_Z) * w
+    raise ValueError("stepped basis: capacitive load is refused (7.5)")
+
+
+# The reference impedance the load's f_Z refers to is passed through this
+# one-slot holder so the cached root finder stays a pure function of its
+# hashable arguments (it is set by the caller immediately before use).
+_STEPPED_ZREF = [1.0]
+
+
+@lru_cache(maxsize=8192)
+def _stepped_roots(sections, FSR, f_Z, kind, Zref, theta_max):
+    """All roots theta_1 < theta_2 < ... <= theta_max of the stepped
+    condition, by a sign scan fine enough for the shortest section and
+    bisection to adjacent floats. Cached on the hashable geometry."""
+    _STEPPED_ZREF[0] = Zref
+    h = lambda t: _stepped_residual(t, sections, FSR, f_Z, kind)   # noqa: E731
+    fmin = min(frac for _, frac in sections)
+    step = np.pi / 64.0 * min(1.0, fmin * 4.0)     # >= 16 samples per
+    roots = []                                       # quarter turn of any piece
+    t0 = step * 1e-3 if kind is None else step * 1e-3
+    h0 = h(t0)
+    t = t0
+    while t < theta_max + step:
+        t1 = t + step
+        h1 = h(t1)
+        if h0 == 0.0:
+            roots.append(t)
+        elif h0 * h1 < 0.0:
+            lo, hi, hlo = t, t1, h0
+            for _ in range(200):
+                mid = 0.5 * (lo + hi)
+                if mid == lo or mid == hi:
+                    break
+                hm = h(mid)
+                if hm == 0.0:
+                    lo = hi = mid
+                    break
+                if hlo * hm < 0.0:
+                    hi = mid
+                else:
+                    lo, hlo = mid, hm
+            roots.append(0.5 * (lo + hi))
+        t, h0 = t1, h1
+    # an open-open stepped line has w = 0 exactly at theta = 0 (the free DC
+    # mode); that root is the DC mode, handled separately, not mode 1
+    return tuple(r for r in roots if r > 1e-9)
+
+
+def line_fsr_for_target_general(f_target, n, load, sections, Ztx):
+    """FSR putting the n-th mode of a (possibly stepped, possibly loaded)
+    line at `f_target` (9.5).
+
+    Uniform + loaded has the closed form line_fsr_for_target. Stepped and
+    UNloaded, theta_n does not depend on FSR at all (the condition is
+    geometric), so FSR = pi f_target / theta_n exactly. Stepped and loaded,
+    theta_n depends on FSR through x(f) = f/f_Z, and f_n(FSR) is monotone
+    increasing, so bisection on FSR to adjacent floats.
+    """
+    n = int(n)
+    if not sections:
+        if load is None:
+            return float(f_target) / n
+        return line_fsr_for_target(f_target, n, load['f_Z'], load['type'])
+    probe = lambda fsr: LineResonator(                       # noqa: E731
+        line_id='solve', FSR=fsr, Ztx=Ztx, f_max=fsr, sections=sections,
+        load=load)
+    if load is None:
+        return float(np.pi * f_target / probe(1.0).mode_theta(n))
+    lo, hi = float(f_target) * 1e-3, float(f_target) * 1e3
+    for _ in range(300):
+        mid = 0.5 * (lo + hi)
+        if mid == lo or mid == hi:
+            break
+        if probe(mid).mode_freq(n) < f_target:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+@dataclass
+class LineResonator:
+    """Transmission-line standing-wave comb macro (GUI glyph: cylinder, "L").
+
+    Expands at extraction time into 2N+1 comb modes (full comb from DC,
+    N = ceil(f_max/FSR); band-limiting is Phase 2, blocked on an underived
+    low-side closure) plus one monitored port hub when port_end is set.
+    Expanded node ids are deterministic and addressable
+    (``f"{line_id}:n{k}"``, k = 0, +-1, ..., +-N) so pump edges and devices
+    can target specific modes.
+
+    Attributes
+    ----------
+    line_id : Any
+        Stable identifier; expanded ids and the port hub id derive from it.
+    label : str
+        Display label; the port hub (and hence the S channel) uses it.
+    FSR : float
+        Free spectral range in linear-frequency units (same units as node
+        freq fields).
+    Ztx : float
+        Line characteristic impedance.
+    f_max : float
+        Comb extent: modes up to N = ceil(f_max/FSR).
+    port_end : None | 'x0' | 'xL'
+        Which end carries the port termination (one port max, Phase 1).
+        'xL' -> alternating coupling signs, 'x0' -> all-plus, None -> no
+        port hub (isolated comb; both ends open).
+    Z0_port : float
+        Port termination impedance.
+    alpha_uniform : float
+        One-way amplitude attenuation alpha*ell in nepers; maps to per-mode
+        B_int = (2/pi) alpha FSR (see module comment; gated by
+        tests/test_uniform_loss.py).
+    load : None | dict
+        Optional shunt reactance terminating ONE end,
+        ``{'end': 'x0'|'xL', 'type': 'inductive', 'f_Z': float}``. None (the
+        default) means both ends open, which reproduces the open-open comb
+        bit-for-bit. A load disperses the comb: the modes move off n*FSR and
+        u_n(end), C_n and gamma_n move with them (see the module comment
+        above this class and docs/pumped_line_termination.md section 7).
+        Capacitive loads are refused pending their direct term (7.5).
+    """
+
+    line_id: Any
+    FSR: float
+    Ztx: float
+    f_max: float
+    label: str = ''
+    port_end: Optional[str] = None
+    Z0_port: float = 50.0
+    alpha_uniform: float = 0.0
+    #: Emit the comb in the CONJUGATE sector (the idler twin of a pumped
+    #: line). Same frequencies and couplings; every expanded node carries
+    #: conj=True, so pump edges from a normal comb land cross-sector and a
+    #: hub on this comb stays single-sector (a resistor does not convert
+    #: frequency: one hub column per sector).
+    conj: bool = False
+    #: Shunt reactance at one end; see the class docstring and section 7.
+    load: Optional[Dict[str, Any]] = None
+    #: Stepped impedance: [{'Z': ohms, 'frac': fraction of electrical
+    #: length}, ...] ordered from x0 to xL (fractions are normalized to sum
+    #: to 1). None (the default) is the uniform line at Ztx, bit-for-bit.
+    #: With sections, Ztx is the REFERENCE impedance the load's f_Z is
+    #: defined against (L = Ztx / 2 pi f_Z), so the physical element does not
+    #: change meaning when the line around it is stepped. Section 9.
+    sections: Optional[List[Dict[str, Any]]] = None
+
+    def __post_init__(self):
+        self.load = self._normalize_load(self.load)
+        self.sections = self._normalize_sections(self.sections)
+        if self.port_end not in _LINE_PORT_ENDS:
+            raise ValueError(_LINE_TWO_PORT_MSG.format(
+                line_id=self.line_id, ends=_LINE_PORT_ENDS))
+        if self.FSR <= 0:
+            raise ValueError(f"LineResonator '{self.line_id}': FSR must be > 0")
+        if self.f_max <= 0:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': f_max must be > 0")
+        if self.load is None and self.f_max < self.FSR:
+            # Only meaningful on the open-open comb, where FSR IS the mode
+            # spacing. Loaded, FSR is the geometric parameter v/2*ell and
+            # the fundamental can sit far below it (a near-shorted end puts
+            # it at FSR/2, and a weakly loaded one lower still), so the comb
+            # always holds at least one pair and this test would refuse
+            # perfectly ordinary lines.
+            raise ValueError(
+                f"LineResonator '{self.line_id}': f_max ({self.f_max}) must "
+                f"be >= FSR ({self.FSR}) so the comb has at least one pair")
+        if not self.label:
+            self.label = str(self.line_id)
+
+    def _normalize_load(self, load):
+        """Validate and canonicalize the optional end load (7.1-7.2)."""
+        if not load:
+            return None
+        end, kind, f_Z = load.get('end'), load.get('type'), load.get('f_Z')
+        if end not in LINE_LOAD_ENDS:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': load end must be one of "
+                f"{LINE_LOAD_ENDS!r}, got {end!r}")
+        if kind not in LINE_LOAD_TYPES:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': load type must be one of "
+                f"{LINE_LOAD_TYPES!r}, got {kind!r}. The TYPE is explicit on "
+                f"purpose -- the sign of the reactance is convention-"
+                f"dependent here (Z_ind = -i w L), see section 7.1.")
+        if kind == 'capacitive':
+            raise ValueError(_CAPACITIVE_LOAD_MSG.format(line_id=self.line_id))
+        if f_Z is None or float(f_Z) <= 0:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': load f_Z must be > 0 -- it "
+                f"is the frequency at which |X_elem| = Ztx, got {f_Z!r}")
+        return {'end': end, 'type': kind, 'f_Z': float(f_Z)}
+
+    def _normalize_sections(self, sections):
+        """Validate and canonicalize the optional impedance steps (9.1)."""
+        if not sections:
+            return None
+        out = []
+        for i, sec in enumerate(sections):
+            try:
+                Z, frac = float(sec['Z']), float(sec['frac'])
+            except (KeyError, TypeError, ValueError):
+                raise ValueError(
+                    f"LineResonator '{self.line_id}': each section needs "
+                    f"'Z' and 'frac', got {sec!r}")
+            if Z <= 0 or frac <= 0:
+                raise ValueError(
+                    f"LineResonator '{self.line_id}': section {i} must have "
+                    f"Z > 0 and frac > 0, got Z={Z}, frac={frac}")
+            out.append({'Z': Z, 'frac': frac})
+        if len(out) < 2:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': a stepped line needs at "
+                f"least two sections (one section is just Ztx)")
+        total = sum(sec['frac'] for sec in out)
+        for sec in out:
+            sec['frac'] /= total
+        return out
+
+    @property
+    def stepped(self) -> bool:
+        """True when the impedance changes along the line."""
+        return self.sections is not None
+
+    @property
+    def _uniform_analytic(self) -> bool:
+        """The open-open uniform comb: the natural-units reference path,
+        n*FSR roots and closed-form profiles. Everything else goes through
+        the general (piecewise, root-found) basis."""
+        return self.load is None and self.sections is None
+
+    def _sections_from(self, end):
+        """((Z, frac), ...) walking away from `end`."""
+        secs = self.sections or [{'Z': self.Ztx, 'frac': 1.0}]
+        seq = [(sec['Z'], sec['frac']) for sec in secs]
+        return tuple(seq if end == 'x0' else seq[::-1])
+
+    @property
+    def _load_kind(self):
+        return None if self.load is None else self.load['type']
+
+    @property
+    def _load_fz(self):
+        return 1.0 if self.load is None else float(self.load['f_Z'])
+
+    @property
+    def loaded(self) -> bool:
+        """True when one end carries a shunt reactance."""
+        return self.load is not None
+
+    @property
+    def _skip_dc(self) -> bool:
+        """An inductive load shorts DC, so the free n=0 mode is gone (7.4)."""
+        return self.load is not None and self.load['type'] == 'inductive'
+
+    @property
+    def _origin_end(self) -> str:
+        """The end that plays x = 0 in u_n(x) = cos(k_n x): the OPEN one."""
+        if self.load is None:
+            return 'x0'
+        return 'x0' if self.load['end'] == 'xL' else 'xL'
+
+    @property
+    def N(self) -> int:
+        """Number of nonzero-frequency pole pairs the comb carries.
+
+        Unloaded this is ceil(f_max/FSR). Loaded the modes are not at n*FSR,
+        so it is the smallest n whose LOADED frequency reaches f_max --
+        which reduces to ceil(f_max/FSR) when the roots are n*FSR, and is
+        never smaller (f_n < n*FSR always).
+        """
+        n = int(np.ceil(self.f_max / self.FSR))
+        if self._uniform_analytic:
+            return n
+        if self.sections is not None:
+            # stepped: the roots are not one per pi, so count them
+            roots = self._stepped_thetas(np.pi * self.f_max / self.FSR)
+            n = len(roots)
+            # make sure the comb reaches f_max (the scan is inclusive)
+            while self.mode_freq(n) < self.f_max:
+                n += 1
+            return max(n, 1)
+        while self.mode_freq(n) < self.f_max:
+            n += 1
+        return n
+
+    def _stepped_thetas(self, theta_max):
+        """Roots of the stepped condition up to theta_max (cached)."""
+        return _stepped_roots(self._sections_from(self._origin_end),
+                              float(self.FSR), self._load_fz, self._load_kind,
+                              float(self.Ztx), float(theta_max))
+
+    def mode_theta(self, n) -> float:
+        """theta_n = k_n*ell of mode n >= 1 (exactly n*pi when unloaded)."""
+        n = int(n)
+        if n < 1:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': mode index must be >= 1; "
+                f"the n=0 free mode has no k*ell root")
+        if self._uniform_analytic:
+            return float(n) * np.pi
+        if self.sections is not None:
+            # scan generously past where a uniform comb would put mode n
+            # (a step can move roots either way, but never past (n+J) pi)
+            theta_max = (n + len(self.sections) + 1) * np.pi
+            roots = self._stepped_thetas(theta_max)
+            while len(roots) < n:
+                theta_max *= 2.0
+                roots = self._stepped_thetas(theta_max)
+            return float(roots[n - 1])
+        return line_loaded_theta(n, float(self.FSR), float(self.load['f_Z']),
+                                 self.load['type'])
+
+    def mode_freq(self, n) -> float:
+        """Linear frequency of mode n >= 1 (n*FSR when unloaded)."""
+        if self._uniform_analytic:
+            return float(int(n)) * self.FSR
+        return self.mode_theta(n) * self.FSR / np.pi
+
+    def mode_freqs(self):
+        """[f_1, ..., f_N] -- the positive half of the comb."""
+        return [self.mode_freq(n) for n in range(1, self.N + 1)]
+
+    @property
+    def C_line(self) -> float:
+        """Total line capacitance: c*ell = 1/(2 Ztx FSR) uniform, the sum of
+        the sections' c_j ell_j = frac_j/(2 Z_j FSR) when stepped."""
+        if self.sections is None:
+            return 1.0 / (2.0 * self.Ztx * self.FSR)
+        return float(sum(sec['frac'] / (2.0 * sec['Z'] * self.FSR)
+                         for sec in self.sections))
+
+    @property
+    def C_load(self) -> float:
+        """The load's shunt capacitance; 0 unless the load is capacitive."""
+        if self.load is None or self.load['type'] != 'capacitive':
+            return 0.0
+        return 1.0 / (2.0 * np.pi * self.load['f_Z'] * self.Ztx)
+
+    def mode_profile(self, n, end) -> float:
+        """u_n(end): +1 at the open end, cos(k_n ell) at the far one.
+
+        Unloaded this is the familiar all-plus / alternating pattern, since
+        cos(n pi) = (-1)^n.
+        """
+        if end not in LINE_LOAD_ENDS:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': end must be 'x0' or 'xL', "
+                f"got {end!r}")
+        if end == self._origin_end:
+            return 1.0
+        if self.sections is not None:
+            u_end, _, _ = _stepped_state(self.mode_theta(n),
+                                         self._sections_from(self._origin_end))
+            return float(u_end)
+        return float(np.cos(self.mode_theta(n)))
+
+    def mode_mass(self, n) -> float:
+        """C_n (7.4): the line's own share, plus a shunt capacitor's.
+
+        A shunt capacitor's energy (1/2) C Phi_dot(ell)^2 is KINETIC, so it
+        adds to the mode's mass; an inductor's (1/2) Phi(ell)^2/L is
+        potential and the eigenvalue already carries it.
+        """
+        th = self.mode_theta(n)
+        if self.sections is None:
+            line_share = self.C_line * (0.5 + np.sin(2.0 * th) / (4.0 * th))
+            return float(line_share + self.C_load * np.cos(th) ** 2)
+        # stepped (9.2): per-section closed-form energy integral of
+        # u = a cos s + b sin s over its electrical length delta_j, weighted
+        # by that section's capacitance per electrical length 1/(2 Z_j FSR th)
+        u_end, _, pieces = _stepped_state(th, self._sections_from(self._origin_end))
+        line_share = 0.0
+        for u0, w0, Z, d in pieces:
+            a, b = u0, Z * w0
+            s2 = np.sin(2.0 * d)
+            integral = (a * a * (d / 2.0 + s2 / 4.0)
+                        + b * b * (d / 2.0 - s2 / 4.0)
+                        + a * b * (1.0 - np.cos(2.0 * d)) / 2.0)
+            line_share += integral / (2.0 * Z * self.FSR * th)
+        return float(line_share + self.C_load * u_end ** 2)
+
+    def load_participation(self, n, end) -> float:
+        """p_n: mode n's share of its own energy stored in the END LOAD.
+
+        Inductive load: p_n = u_n(end)^2/(w_n^2 C_n L_l), the ratio of the
+        element's inductive energy to the mode's total inductive energy,
+        with L_l = Ztx/(2 pi f_Z). Capacitive load: the kinetic counterpart
+        p_n = C_l u_n(end)^2/C_n, the same statement with C for L.
+
+        0 when there is no load, or when `end` is not the loaded one -- a
+        mode participates in an element only where that element is.
+        """
+        if self.load is None or self.load['end'] != end:
+            return 0.0
+        u = self.mode_profile(n, end)
+        if self.load['type'] == 'capacitive':
+            return float(self.C_load * u ** 2 / self.mode_mass(n))
+        L_load = self.Ztx / (2.0 * np.pi * self.load['f_Z'])
+        w_n = 2.0 * np.pi * self.mode_freq(n)
+        return float(u ** 2 / (w_n ** 2 * self.mode_mass(n) * L_load))
+
+    def mode_gamma(self, n) -> float:
+        """gamma_n = 1/(2 pi Z0 C_n): the port rate for a UNIT profile (7.4).
+
+        The rate a port at `end` actually sees is u_n(end)^2 times this; the
+        couplings below carry the profile explicitly. Reduces to the
+        n-independent (2/pi)(Ztx/Z0) FSR on the open-open comb.
+        """
+        n = int(n)
+        if n == 0:
+            # the free DC mode of an open-open line (9.3): the line is one
+            # capacitor C_tot, chi -> 2/(2 pi f C_tot Z0), a single pole at
+            # f = 0 with residue 1/(pi Z0 C_tot) -- twice the n >= 1 form,
+            # because it has no negative-frequency partner to share with.
+            # Reduces to the uniform comb's DC coupling exactly.
+            return float(1.0 / (np.pi * self.Z0_port * self.C_line))
+        return float(1.0 / (2.0 * np.pi * self.Z0_port * self.mode_mass(n)))
+
+    def _comb_ks(self):
+        """Comb mode indices in expansion order, DC first when it exists."""
+        ks = [] if self._skip_dc else [0]
+        for n in range(1, self.N + 1):
+            ks += [n, -n]
+        return ks
+
+    def expand_arrays(self):
+        """Return (freqs, kappas, gamma_phys, N) in physical units.
+
+        Unloaded, freqs[i]/kappas[i] follow the reference comb order
+        [0, +FSR, -FSR, +2 FSR, -2 FSR, ...] (frequencies to ~1 ulp of
+        k*FSR — they are produced by the tested unit mapping, not by
+        multiplying k*FSR directly) and gamma_phys is the single scalar
+        (2/pi)(Ztx/Z0) FSR. This path is untouched by the loaded basis and
+        stays bitwise equal to cmtline_core.
+
+        Loaded, the DC mode is dropped (an inductive load shorts it), the
+        frequencies are the loaded roots, and gamma_phys comes back as a
+        PER-MODE array aligned with freqs — the whole point of section 7.4
+        is that the port rate is no longer n-independent.
+        """
+        if self._uniform_analytic:
+            poles_nat, kap_nat, gam_nat = _line_comb_natural(
+                self.N, self.Z0_port / self.Ztx, signs=(self.port_end == 'xL'))
+            freqs = line_natural_frequency_to_physical(poles_nat, self.FSR)
+            kappas = line_natural_coupling_to_physical(kap_nat, self.FSR)
+            gamma_phys = line_natural_frequency_to_physical(gam_nat, self.FSR)
+            return freqs, kappas, gamma_phys, self.N
+
+        ks = self._comb_ks()
+        end = self.port_end or self._origin_end
+        freqs = np.array([np.sign(k) * self.mode_freq(abs(k)) if k != 0
+                          else 0.0 for k in ks])
+        gamma_phys = np.array([self.mode_gamma(abs(k)) for k in ks])
+        kappas = np.array([self.mode_profile(abs(k), end) if k != 0 else 1.0
+                           for k in ks]) * np.sqrt(gamma_phys)
+        return freqs, kappas, gamma_phys, self.N
+
+    @property
+    def gamma(self):
+        """Port coupling rate: the scalar (2/pi)(Ztx/Z0_port) FSR on an
+        open-open line, a per-mode array once an end is loaded (7.4)."""
+        return self.expand_arrays()[2]
+
+    @property
+    def B_int_per_mode(self) -> float:
+        """Per-mode internal loss from alpha_uniform (see module comment)."""
+        return line_natural_frequency_to_physical(
+            2.0 * self.alpha_uniform, self.FSR)
+
+    def mode_node_id(self, k: int) -> str:
+        """Deterministic node id of comb mode k (k = 0, +-1, ..., +-N)."""
+        return f"{self.line_id}:n{k}"
+
+    @property
+    def port_hub_id(self) -> str:
+        return f"{self.line_id}:port"
+
+    def comb_mode_ids(self):
+        """Comb mode node ids in expansion order [0, +1, -1, +2, -2, ...].
+
+        The DC entry is absent when an inductive load shorts that end (7.4);
+        ids of the remaining modes are unchanged, so pump edges and taps keep
+        addressing them by the same names.
+        """
+        return [self.mode_node_id(k) for k in self._comb_ks()]
+
+    def end_couplings(self, end):
+        """Hub attachments for terminating this line at `end`.
+
+        Returns [(node_id, kappa_magnitude, phase_deg), ...] over the comb,
+        with kappa_n = u_n(end) * sqrt(gamma): all-plus at x = 0, alternating
+        at x = L (the open-open standing-wave profile evaluated at the end;
+        see cmtline_core.line_arrays' `e` and `f` vectors).
+
+        Unlike `expand()`, the sign pattern comes from the `end` argument, so
+        one line can be terminated at either or both ends independently of
+        the (deprecated) port_end field.
+        """
+        if end not in ('x0', 'xL'):
+            raise ValueError(
+                f"LineResonator '{self.line_id}': end must be 'x0' or 'xL', "
+                f"got {end!r}")
+        if self._uniform_analytic:
+            _, kap_nat, _ = _line_comb_natural(
+                self.N, self.Z0_port / self.Ztx, signs=(end == 'xL'))
+            kappas = line_natural_coupling_to_physical(kap_nat, self.FSR)
+        else:
+            # same formula, general quantities: gamma_n is mode-dependent
+            # and u_n(far end) is no longer just (-1)^n. The DC mode of an
+            # open-open stepped line is flat (u_0 = 1 at both ends).
+            kappas = np.array([
+                (self.mode_profile(abs(k), end) if k != 0 else 1.0)
+                * np.sqrt(self.mode_gamma(abs(k)))
+                for k in self._comb_ks()])
+        return [
+            (node_id, float(abs(kappas[i])),
+             0.0 if kappas[i] >= 0 else 180.0)
+            for i, node_id in enumerate(self.comb_mode_ids())
+        ]
+
+    # ---- the comb's port susceptibility, exactly and as kept ----
+    #
+    # A one-port line's reflection depends on its modes only through the
+    # scalar chi(f) = sum_n kappa_n^2 / (f - f_n): S = (i chi/2 - 1)/(i chi/2 + 1)
+    # (cmtline_core.s11_graph_chi). Truncating the comb at N drops the tail
+    # of that sum, and the tail is NOT small: it is a reactive term
+    # ~ -2 gamma f / (FSR^2 N) that shifts every in-band resonance, which is
+    # why the macro converges only like 1/N (tests/test_line_macro_vs_abcd).
+    # But the FULL sum is known in closed form -- it is the line's exact
+    # input impedance, chi = -2i Z_in/Z0 (open-open: 2 (Ztx/Z0) cot(k ell),
+    # the Mittag-Leffler expansion of cot) -- so the tail is simply
+    # exact minus kept, and GraphScatteringMatrix folds it back into the
+    # hub channel (see its "comb tail closure" comment). ABCD in the JAA
+    # convention, mirroring tests/cmtline_core.py operation for operation.
+
+    def _load_impedance(self, z):
+        """Z of the end load at complex linear frequency z (JAA: -i w L)."""
+        if self.load is None:
+            return None
+        f_Z = self.load['f_Z']
+        if self.load['type'] == 'inductive':
+            # -i w L with L = Ztx / (2 pi f_Z)
+            return -1j * z * self.Ztx / f_Z
+        # +i/(w C) with C = 1/(2 pi f_Z Ztx)
+        return 1j * f_Z * self.Ztx / z
+
+    def input_impedance(self, end, z):
+        """Exact Z_in seen at `end` (the other end open or loaded), at complex
+        linear frequency z (an array), lossless line, JAA convention."""
+        if end not in LINE_LOAD_ENDS:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': end must be 'x0' or 'xL'")
+        z = np.asarray(z, dtype=complex)
+        theta = np.pi * z / self.FSR                    # k ell (total)
+        # ABCD of the line walking away from `end`: one section, or the
+        # cascade of the stepped sections (9.4), each
+        # [[cos, -i Z sin], [-i sin/Z, cos]] over its electrical length
+        A = np.ones_like(theta)
+        B = np.zeros_like(theta)
+        C = np.zeros_like(theta)
+        D = np.ones_like(theta)
+        for Z, frac in self._sections_from(end):
+            th = theta * frac
+            cos, sin = np.cos(th), np.sin(th)
+            a, b, c, d = cos, -1j * Z * sin, -1j * sin / Z, cos
+            A, B, C, D = (A * a + B * c, A * b + B * d,
+                          C * a + D * c, C * b + D * d)
+        Z_open = A / C                                  # far end open
+        if self.load is None:
+            return Z_open
+        ZL = self._load_impedance(z)
+        if self.load['end'] == end:
+            # the port shares the loaded end: the reactance shunts the line
+            return 1.0 / (1.0 / ZL + 1.0 / Z_open)
+        return (A * ZL + B) / (C * ZL + D)
+
+    def exact_susceptibility(self, end, z):
+        """chi(z) of the FULL (untruncated) line at `end`: -2i Z_in / Z0."""
+        return -2j * self.input_impedance(end, z) / self.Z0_port
+
+    def kept_susceptibility(self, end, z):
+        """chi(z) carried by the N pole pairs the comb keeps, with EXACTLY the
+        poles and residues the extractor places in M and K."""
+        z = np.asarray(z, dtype=complex)
+        freqs, _, _, _ = self.expand_arrays()
+        kap = np.array([mag * (1.0 if ph == 0.0 else -1.0)
+                        for _, mag, ph in self.end_couplings(end)])
+        return np.sum(kap[None, :] ** 2 / (z[:, None] - freqs[None, :]), axis=1)
+
+    #: Half-width (in FSR) of the guard band around a KEPT pole inside which
+    #: exact - kept is evaluated on the two symmetric edge points instead.
+    TAIL_POLE_GUARD = 1e-5
+
+    def tail_susceptibility(self, end, z):
+        """chi(z) of the modes BEYOND N: exact minus kept, in closed form.
+
+        exact and kept share every kept pole with the same residue, so their
+        difference is analytic there -- but numerically both blow up and the
+        subtraction loses all its digits (and is NaN exactly on a pole,
+        which a lossless sweep grid hits whenever a point lands on n*FSR).
+        Within TAIL_POLE_GUARD*FSR of a kept pole the tail is therefore taken
+        as the mean of its values on the two symmetric edges of the guard
+        band: the linear term cancels, leaving an O(guard^2) ~ 1e-10
+        interpolation error against a ~1e-11 cancellation error -- both far
+        below anything else in the model. Away from the kept poles the
+        subtraction is direct and exact to rounding.
+        """
+        z = np.asarray(z, dtype=complex)
+        freqs, _, _, _ = self.expand_arrays()
+        d = z[:, None] - freqs[None, :]
+        near = np.abs(d).min(axis=1) < self.TAIL_POLE_GUARD * self.FSR
+        out = np.empty_like(z)
+        safe = ~near
+        if np.any(safe):
+            out[safe] = (self.exact_susceptibility(end, z[safe])
+                         - self.kept_susceptibility(end, z[safe]))
+        if np.any(near):
+            pole = freqs[np.abs(d[near]).argmin(axis=1)]
+            # keep the (possibly complex) offset from the pole, e.g. the loss
+            # shift i B_int/2, and step along the real axis
+            off = z[near] - pole
+            step = self.TAIL_POLE_GUARD * self.FSR
+            zp = pole + off + step
+            zm = pole + off - step
+            tail = lambda zz: (self.exact_susceptibility(end, zz)  # noqa: E731
+                               - self.kept_susceptibility(end, zz))
+            out[near] = 0.5 * (tail(zp) + tail(zm))
+        return out
+
+    #: Conservative ("reactive") tap coupling profiles, VERIFIED against the
+    #: reference by extracting the exact a-basis couplings of a device tapped
+    #: onto the comb (cmtline_core.a_basis_A over the build_capacitive /
+    #: mutual-inductance circuits, N=10, fixed coupling element):
+    #:
+    #:    capacitive tap : g_n ~ u_n(end) * sqrt(w_n / C_n)
+    #:    inductive tap  : g_n ~ u_n(end) / sqrt(w_n * C_n)
+    #:
+    #: Both ratios came out constant to every printed digit over n = 1..10.
+    #: For the open-open comb C_n is n-independent (n >= 1), so relative to a
+    #: chosen reference harmonic the capacitance cancels entirely and the
+    #: profile is just sqrt(n/n_ref) or sqrt(n_ref/n).
+    TAP_COUPLINGS = ('capacitive', 'inductive')
+
+    def tap_couplings(self, end, n_ref, coupling='capacitive'):
+        """Relative conservative-coupling weights of a node tapped at `end`.
+
+        Returns [(comb_node_id, relative_weight, phase_deg), ...]. The
+        weights are normalized so the mode with harmonic number `n_ref` has
+        weight 1: the rate the user enters on the connection IS the coupling
+        rate at that harmonic, which removes the ambiguity when the attached
+        mode's frequency does not sit on a harmonic.
+
+        Phase-1 note: the DC (n = 0) comb mode is EXCLUDED. It is a free
+        mode (1/L = 0), and the reference's own a-basis transform drops it,
+        so the verification above covers n >= 1 only. For a capacitive tap
+        this coincides with the profile's own limit (w_0 = 0 -> no
+        coupling); for an inductive tap it is an explicit exclusion, not a
+        derived result. On an inductively LOADED line the question does not
+        arise: that end shorts DC and the free mode is gone (7.4).
+        """
+        if coupling not in self.TAP_COUPLINGS:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': coupling must be one of "
+                f"{self.TAP_COUPLINGS!r}, got {coupling!r}")
+        if end not in ('x0', 'xL'):
+            raise ValueError(
+                f"LineResonator '{self.line_id}': end must be 'x0' or 'xL'")
+        n_ref = int(n_ref)
+        if not 1 <= n_ref <= self.N:
+            raise ValueError(
+                f"LineResonator '{self.line_id}': reference harmonic must be "
+                f"between 1 and N = {self.N}, got {n_ref}")
+
+        exponent = 0.5 if coupling == 'capacitive' else -0.5
+        out = []
+        if self._uniform_analytic:
+            # C_n is n-independent on the open-open comb, so the general
+            # form below collapses to a pure harmonic ratio. Kept in closed
+            # form so every pinned golden stays bit-identical; the two agree
+            # to ~1e-15 (tests/test_loaded_line.py).
+            alternating = (end == 'xL')
+            for k in self._comb_ks():
+                n = abs(k)
+                if n == 0:
+                    continue                  # free mode, see docstring
+                weight = (n / n_ref) ** exponent
+                sign = (-1) ** n if alternating else 1
+                out.append((self.mode_node_id(k), float(weight),
+                            0.0 if sign > 0 else 180.0))
+            return out
+
+        # Loaded: u_n(end), f_n and C_n all move together (7.4), so carry
+        # the profile explicitly instead of the (-1)^n / sqrt(n) shorthand.
+        def amp(n):
+            return self.mode_freq(n) ** exponent * self.mode_mass(n) ** -0.5
+
+        ref = abs(self.mode_profile(n_ref, end)) * amp(n_ref)
+        for k in self._comb_ks():
+            n = abs(k)
+            if n == 0:
+                continue
+            u = self.mode_profile(n, end)
+            out.append((self.mode_node_id(k), float(abs(u) * amp(n) / ref),
+                        0.0 if u >= 0 else 180.0))
+        return out
+
+    def nearest_harmonic(self, freq):
+        """Mode number whose comb frequency is closest to `freq`.
+
+        Uses the LOADED frequencies when an end is loaded — on a dispersed
+        comb the n-th mode is not at n*FSR, so rounding freq/FSR would name
+        the wrong partner.
+        """
+        f = abs(float(freq))
+        if self._uniform_analytic:
+            return int(min(max(int(round(f / self.FSR)), 1), self.N))
+        return int(min(range(1, self.N + 1),
+                       key=lambda n: abs(self.mode_freq(n) - f)))
+
+    def expand(self):
+        """Expand to (nodes, hubs) in pgraph-style dicts.
+
+        nodes carry freq/B_int/B_ext directly (like .pgraph node dicts);
+        hubs is [] when port_end is None, else one monitored hub whose
+        attachment vector is the signed kappa comb.
+        """
+        freqs, kappas, _, N = self.expand_arrays()
+        ks = self._comb_ks()
+
+        B_int = self.B_int_per_mode
+        nodes = []
+        for i, k in enumerate(ks):
+            nodes.append({
+                'node_id': self.mode_node_id(k),
+                'label': f"{self.label}:n{k}",
+                'pos': (float(i), -2.0),
+                'conj': bool(self.conj),
+                # The -n member is the COUNTER-ROTATING half of the same
+                # physical mode -- the second partial fraction of its exact
+                # second-order response -- so it sits in the opposite
+                # sigma_z sector from +n inside the same cluster. Couplings
+                # read this (docs/pump_sector_rule.md); the diagonal does
+                # not, since the sign of f0 already says where it resonates.
+                'counter_rotating': bool(k < 0),
+                'freq': float(freqs[i]),
+                'B_int': float(B_int),
+                'B_ext': None,
+            })
+
+        hubs = []
+        if self.port_end is not None:
+            attachments = []
+            for i, k in enumerate(ks):
+                mag = float(abs(kappas[i]))
+                phase = 0.0 if kappas[i] >= 0 else 180.0
+                attachments.append((self.mode_node_id(k), mag, phase))
+            hubs.append({
+                'hub_id': self.port_hub_id,
+                'label': self.label,
+                'attachments': attachments,
+                'monitored': True,
+                # the comb beyond N, closed analytically into the channel
+                'tails': [{'line': self.to_dict(), 'end': self.port_end}],
+            })
+        return nodes, hubs
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'line_id': self.line_id,
+            'label': self.label,
+            'conj': bool(self.conj),
+            'FSR': self.FSR,
+            'Ztx': self.Ztx,
+            'f_max': self.f_max,
+            'port_end': self.port_end,
+            'Z0_port': self.Z0_port,
+            'alpha_uniform': self.alpha_uniform,
+            'load': dict(self.load) if self.load else None,
+            'sections': ([dict(sec) for sec in self.sections]
+                         if self.sections else None),
+        }
+
+
+def _normalize_line(line) -> "LineResonator":
+    """Accept a LineResonator or an equivalent dict."""
+    if isinstance(line, LineResonator):
+        return line
+    kwargs = {k: line[k] for k in ('line_id', 'FSR', 'Ztx', 'f_max')}
+    for k in ('label', 'port_end', 'Z0_port', 'alpha_uniform', 'conj',
+              'load', 'sections'):
+        if k in line and line[k] is not None:
+            kwargs[k] = line[k]
+    return LineResonator(**kwargs)
 
 def load_pgraph(filepath: Optional[Union[str, Path]] = None, use_dialog: bool = False) -> Dict[str, Any]:
     """
@@ -333,6 +1623,12 @@ class GraphExtractor:
         self.sign_override = False  # Default: auto-compute f_p signs
         self._unique_labels = True  # Flag indicating if all node labels are unique
         self._duplicate_labels = {}  # Dict mapping duplicate labels to list of node_ids
+        self._hub_link_pairs = set()  # zero-offset tree links across shared hubs
+        # Optional per-edge frame rule ('sector': crossing INTO the conjugate
+        # sector is -f_p, out of it +f_p), keyed by _edge_key. Macro-emitted
+        # pump buses set it; hand-drawn edges keep the frequency-ordering
+        # heuristic in _compute_accumulated_frequencies.
+        self._edge_frame_rules = {}
         self.label_to_node_id = None  # Mapping from label to node_id (only if labels are unique)
         self.node_id_to_label = {}  # Mapping from node_id to label (always available)
 
@@ -345,7 +1641,9 @@ class GraphExtractor:
         basis_order: Optional[List[Dict[str, Any]]] = None,
         root_node_id: Optional[int] = None,
         precomputed_tree_edges: Optional[List[List[int]]] = None,
-        precomputed_chord_edges: Optional[List[List[int]]] = None
+        precomputed_chord_edges: Optional[List[List[int]]] = None,
+        hubs: Optional[List[Any]] = None,
+        line_resonators: Optional[List[Any]] = None
     ) -> Dict[str, Any]:
         """
         Extract all graph structure and numerical parameters into a single dictionary.
@@ -371,6 +1669,18 @@ class GraphExtractor:
         precomputed_chord_edges : Optional[List[List[int]]], default=None
             Pre-computed chord edges as [[from_id, to_id], ...]. If provided, these will be used
             instead of computing chords.
+        hubs : Optional[List], default=None
+            Explicit dissipation hubs (DissipationHub instances or dicts with
+            keys hub_id/label/attachments/monitored). Monitored hubs are ports
+            (S channels, in list order); unmonitored hubs are loss channels.
+            Legacy per-node B_ext still auto-wraps into single-attachment
+            ports appended after the explicit ones (see get_effective_hubs).
+        line_resonators : Optional[List], default=None
+            LineResonator macros (instances or dicts). Each expands BEFORE
+            node processing into its standing-wave comb nodes (appended after
+            the explicit nodes, in comb order) plus its port hub (appended
+            after the explicit hubs). Expanded node ids are stable
+            (``f"{line_id}:n{k}"``) and addressable by pump edges.
 
         Returns
         -------
@@ -392,6 +1702,34 @@ class GraphExtractor:
         ValueError
             If root_node_id is specified but not found in nodes
         """
+        # Line-resonator macro pre-pass: expand each macro into its comb
+        # nodes + port hub before any node processing, so downstream code
+        # sees only ordinary nodes and hubs. Expanded nodes go after the
+        # explicit ones (deterministic basis position), expanded hubs after
+        # the explicit hubs (deterministic channel order).
+        normalized_lines = [_normalize_line(l) for l in (line_resonators or [])]
+        if normalized_lines:
+            nodes = list(nodes)
+            scattering_assignments = dict(scattering_assignments)
+            hubs = list(hubs or [])
+            if basis_order is not None:
+                basis_order = list(basis_order)
+            # keep expanded node dicts alive: assignments are keyed by id()
+            self._line_expansion_nodes = []
+            for line in normalized_lines:
+                line_nodes, line_hubs = line.expand()
+                for node in line_nodes:
+                    self._line_expansion_nodes.append(node)
+                    nodes.append(node)
+                    scattering_assignments[id(node)] = {
+                        'freq': node['freq'],
+                        'B_int': node['B_int'],
+                        'B_ext': node['B_ext'],
+                    }
+                    if basis_order is not None:
+                        basis_order.append(node)
+                hubs.extend(line_hubs)
+
         # Use basis_order if provided, otherwise use nodes list
         if basis_order is None:
             basis_order = nodes
@@ -415,6 +1753,7 @@ class GraphExtractor:
                 'label': node.get('label', ''),
                 'pos': node.get('pos', (0.0, 0.0)),
                 'conj': node.get('conj', False),
+                'counter_rotating': node.get('counter_rotating', False),
                 # Initialize all scattering parameters to None
                 'freq': None,
                 'B_int': None,
@@ -464,18 +1803,35 @@ class GraphExtractor:
             logger.warning("Duplicate node labels detected: %s", dup_labels_str)
             logger.warning("  label_to_node_id mapping will not be available.")
 
-        # Determine root node - default to first port node (B_ext > 0) in basis order
+        # Normalize and validate explicit hubs (Phase-1 gates raise here early)
+        node_id_set = {node['node_id'] for node in extracted_nodes}
+        normalized_hubs = []
+        for hub in (hubs or []):
+            normalized = _normalize_hub(hub)
+            self._validate_hub(normalized, extracted_nodes, node_id_set)
+            normalized_hubs.append(normalized)
+
+        # Determine root node - default to the first attachment node of the
+        # first explicit port hub; else first legacy port node (B_ext > 0) in
+        # basis order; else first node in basis order. For legacy graphs the
+        # hub rule is vacuous, so this coincides with the previous behavior.
         if root_node_id is None:
             if not basis_order:
                 raise ValueError("Cannot determine root node: no nodes in graph")
 
-            # Try to find first port node in basis order
-            for node in basis_order:
-                # Find corresponding extracted node data
-                extracted = next((n for n in extracted_nodes if n['node_id'] == node['node_id']), None)
-                if extracted and extracted['B_ext'] is not None and extracted['B_ext'] > 0:
-                    root_node_id = node['node_id']
+            for hub in normalized_hubs:
+                if hub['monitored'] and hub['attachments']:
+                    root_node_id = hub['attachments'][0][0]
                     break
+
+            # Try to find first port node in basis order
+            if root_node_id is None:
+                for node in basis_order:
+                    # Find corresponding extracted node data
+                    extracted = next((n for n in extracted_nodes if n['node_id'] == node['node_id']), None)
+                    if extracted and extracted['B_ext'] is not None and extracted['B_ext'] > 0:
+                        root_node_id = node['node_id']
+                        break
 
             # If no port node found, fall back to first node in basis order
             if root_node_id is None:
@@ -510,8 +1866,28 @@ class GraphExtractor:
                 edge_data['f_p'] = params.get('f_p', None)
                 edge_data['rate'] = params.get('rate', None)
                 edge_data['phase'] = params.get('phase', None)
+                rule = params.get('frame_rule')
+                if rule is not None:
+                    edge_data['frame_rule'] = rule
+                    self._edge_frame_rules[_edge_key(from_id, to_id)] = rule
 
             extracted_edges.append(edge_data)
+
+        # Zero-offset bridge links across shared hubs: a multi-attachment
+        # hub joins parts of the graph no real edge connects, and the
+        # spanning tree must reach them so their pump-frame accumulation is
+        # not silently dropped (the link itself carries f_p = 0 — no
+        # frequency conversion happens through a resistor). Links are only
+        # created between real-edge-disconnected components, so pump-derived
+        # frames are never rerouted.
+        real_pairs = [(e['from_node_id'], e['to_node_id'])
+                      for e in extracted_edges if not e['is_self_loop']]
+        self._edge_frame_rules = {
+            _edge_key(e['from_node_id'], e['to_node_id']): e['frame_rule']
+            for e in extracted_edges if e.get('frame_rule') is not None}
+        self._hub_link_pairs = set(compute_hub_bridge_links(
+            node_id_set, real_pairs,
+            [[a[0] for a in h['attachments']] for h in normalized_hubs]))
 
         # Use pre-computed tree/chord edges if provided, otherwise compute them
         if precomputed_tree_edges is not None and precomputed_chord_edges is not None:
@@ -530,9 +1906,17 @@ class GraphExtractor:
                     visited_nodes.add(to_id)
             is_connected = len(visited_nodes) == len(nodes)
         else:
-            # Compute spanning tree and chord edges
+            # Compute spanning tree and chord edges (hub bridge links are
+            # tree-eligible so hub-bridged parts stay reachable)
+            edges_for_tree = edges
+            if self._hub_link_pairs:
+                edges_for_tree = list(edges) + [
+                    {'from_node_id': a, 'to_node_id': b,
+                     'is_self_loop': False}
+                    for a, b in sorted(self._hub_link_pairs,
+                                       key=lambda p: (str(p[0]), str(p[1])))]
             tree_edges, chord_edges, is_connected = self.compute_spanning_tree(
-                nodes, edges, root_node_id
+                nodes, edges_for_tree, root_node_id
             )
 
         # Augment tree edges with f_p values: [from_id, to_id] -> [from_id, to_id, f_p]
@@ -540,7 +1924,7 @@ class GraphExtractor:
         # Create edge lookup dictionary for quick access
         edge_lookup = {}
         for edge in extracted_edges:
-            key = tuple(sorted([edge['from_node_id'], edge['to_node_id']]))
+            key = _edge_key(edge['from_node_id'], edge['to_node_id'])
             edge_lookup[key] = edge
 
         # Add f_p to each tree edge, preserving branch grouping
@@ -548,9 +1932,16 @@ class GraphExtractor:
         for branch in tree_edges:
             branch_with_fp = []
             for from_id, to_id in branch:
-                edge_key = tuple(sorted([from_id, to_id]))
+                edge_key = _edge_key(from_id, to_id)
                 edge = edge_lookup.get(edge_key)
-                f_p = edge['f_p'] if edge else None
+                if edge is not None:
+                    f_p = edge['f_p']
+                elif edge_key in self._hub_link_pairs:
+                    # hub bridge link: zero pump offset (a resistor does not
+                    # convert frequency)
+                    f_p = 0.0
+                else:
+                    f_p = None
                 branch_with_fp.append([from_id, to_id, f_p])
             tree_edges_with_fp.append(branch_with_fp)
 
@@ -561,6 +1952,8 @@ class GraphExtractor:
         self.graph_data = {
             'nodes': extracted_nodes,
             'edges': extracted_edges,
+            'hubs': normalized_hubs,
+            'line_resonators': [l.to_dict() for l in normalized_lines],
             'tree_edges': tree_edges_with_fp,
             'chord_edges': chord_edges,
             'frequency': frequency_settings.copy(),
@@ -636,6 +2029,13 @@ class GraphExtractor:
             }
             scattering_assignments[id(edge)] = edge_params
 
+        # Explicit ports / line macros (.pgraph format 3.0 sections, saved by
+        # the GUI's Explicit Ports mode; absent in older files)
+        hubs = [pgraph_port_to_hub(p) for p in pgraph_data.get('ports', [])]
+        hubs = [h for h in hubs if h['attachments']]  # attachment-less = inert
+        line_resonators = [pgraph_line_to_resonator(l)
+                           for l in pgraph_data.get('line_resonators', [])]
+
         # Get frequency settings and pre-computed tree/chord from scattering data
         precomputed_tree_edges = None
         precomputed_chord_edges = None
@@ -651,6 +2051,13 @@ class GraphExtractor:
         else:
             frequency_settings = {'start': 0.0, 'stop': 10.0, 'points': 100}
 
+        # Precomputed trees saved by the GUI predate the hub bridge links, so
+        # when hubs are present recompute the tree fresh (the extractor adds
+        # the zero-offset links itself)
+        if hubs or line_resonators:
+            precomputed_tree_edges = None
+            precomputed_chord_edges = None
+
         # Call the main extraction method
         return self.extract_graph_data(
             nodes=nodes,
@@ -660,7 +2067,9 @@ class GraphExtractor:
             basis_order=None,  # pgraph files don't store basis_order separately
             root_node_id=root_node_id,
             precomputed_tree_edges=precomputed_tree_edges,
-            precomputed_chord_edges=precomputed_chord_edges
+            precomputed_chord_edges=precomputed_chord_edges,
+            hubs=hubs,
+            line_resonators=line_resonators
         )
 
     def _convert_to_branch_format(
@@ -789,17 +2198,24 @@ class GraphExtractor:
             to_id = edge['to_node_id']
 
             # Create normalized edge key (undirected)
-            edge_key = tuple(sorted([from_id, to_id]))
+            edge_key = _edge_key(from_id, to_id)
             edge_dict[edge_key] = edge
 
             # Add to adjacency (both directions for undirected graph)
             adjacency[from_id].add((to_id, edge_key))
             adjacency[to_id].add((from_id, edge_key))
 
-        # DFS to build spanning tree, grouped by branches
+        # DFS to build spanning tree, grouped by branches.
+        # Branch entries are ORIENTED (parent, child) pairs in traversal
+        # order: _compute_accumulated_frequencies credits each hop's pump
+        # offset to the child, so the stored orientation must be the
+        # traversal, not the canonical (sorted) edge key. Edge keys are kept
+        # alongside only for the chord bookkeeping.
         visited = set()
-        tree_branches = []  # List of branches, each branch is a list of edges
+        tree_branches = []  # List of branches, each branch is a list of (parent, child)
+        tree_edge_keys = set()
         chord_edge_keys = []
+        chord_seen = set()          # membership only; the list keeps order
 
         def dfs_branch(node_id, current_branch):
             """
@@ -819,11 +2235,11 @@ class GraphExtractor:
 
             # Mark chord edges (edges to already-visited nodes)
             for neighbor_id, edge_key in adjacency[node_id]:
-                if neighbor_id in visited and edge_key not in chord_edge_keys:
-                    # Check if this edge is not already in any branch
-                    edge_in_tree = any(edge_key in branch for branch in tree_branches)
-                    if not edge_in_tree and edge_key not in [e for edges in [current_branch] for e in edges]:
+                if neighbor_id in visited and edge_key not in chord_seen:
+                    # Check if this edge is not already in the tree
+                    if edge_key not in tree_edge_keys:
                         chord_edge_keys.append(edge_key)
+                        chord_seen.add(edge_key)
 
             if len(unvisited_neighbors) == 0:
                 # Leaf node - end of current branch
@@ -834,7 +2250,8 @@ class GraphExtractor:
             elif len(unvisited_neighbors) == 1:
                 # Linear continuation - add to current branch
                 neighbor_id, edge_key = unvisited_neighbors[0]
-                current_branch.append(edge_key)
+                current_branch.append((node_id, neighbor_id))
+                tree_edge_keys.add(edge_key)
                 dfs_branch(neighbor_id, current_branch)
 
             else:
@@ -847,7 +2264,8 @@ class GraphExtractor:
                 # BUT: check if still unvisited (might have been visited by previous neighbor's DFS)
                 for neighbor_id, edge_key in unvisited_neighbors:
                     if neighbor_id not in visited:  # Re-check: might have been visited by earlier neighbor
-                        new_branch = [edge_key]
+                        new_branch = [(node_id, neighbor_id)]
+                        tree_edge_keys.add(edge_key)
                         dfs_branch(neighbor_id, new_branch)
 
         # Start DFS from root with empty branch
@@ -860,8 +2278,8 @@ class GraphExtractor:
             unreached = [node['node_id'] for node in nodes if node['node_id'] not in visited]
             logger.warning("Graph is disconnected. Unreached nodes: %s", unreached)
 
-        # Convert edge keys back to [from_id, to_id] lists, nested by branch
-        tree_edges = [[list(key) for key in branch] for branch in tree_branches]
+        # Oriented [parent, child] lists, nested by branch; chords by key
+        tree_edges = [[list(pair) for pair in branch] for branch in tree_branches]
         chord_edges = [list(key) for key in chord_edge_keys]
 
         return tree_edges, chord_edges, is_connected
@@ -886,8 +2304,17 @@ class GraphExtractor:
 
         missing = {
             'missing_nodes': [],
-            'missing_edges': []
+            'missing_edges': [],
+            'missing_hubs': []
         }
+
+        # Nodes carrying a self-loop, in one pass. Asking per node used to
+        # rescan every edge: on a pumped comb that is 270 nodes x 18k edges.
+        self_loop_nodes = set()
+        for edge in self.graph_data['edges']:
+            if edge['is_self_loop']:
+                self_loop_nodes.add(edge['from_node_id'])
+                self_loop_nodes.add(edge['to_node_id'])
 
         # Check nodes
         for node in self.graph_data['nodes']:
@@ -896,12 +2323,7 @@ class GraphExtractor:
             required = ['freq', 'B_int']
 
             # Check if node has self-loop (requires B_ext)
-            has_self_loop = any(
-                edge['is_self_loop'] and
-                (edge['from_node_id'] == node_id or edge['to_node_id'] == node_id)
-                for edge in self.graph_data['edges']
-            )
-            if has_self_loop:
+            if node_id in self_loop_nodes:
                 required.append('B_ext')
 
             # Check for missing parameters (now checking for None values)
@@ -915,7 +2337,7 @@ class GraphExtractor:
         # Extract just the (from_id, to_id) pairs from tree_edges (ignoring f_p value)
         # tree_edges is now nested by branch, so we need to flatten it first
         tree_edge_set = set(
-            tuple(sorted([e[0], e[1]]))
+            _edge_key(e[0], e[1])
             for branch in self.graph_data['tree_edges']
             for e in branch
         )
@@ -926,7 +2348,7 @@ class GraphExtractor:
 
             from_id = edge['from_node_id']
             to_id = edge['to_node_id']
-            edge_key = tuple(sorted([from_id, to_id]))
+            edge_key = _edge_key(from_id, to_id)
 
             required = ['rate', 'phase']
             if edge_key in tree_edge_set:
@@ -937,6 +2359,23 @@ class GraphExtractor:
             if missing_params:
                 missing['missing_edges'].append(
                     f"Edge {from_id}→{to_id}: missing {missing_params}"
+                )
+
+        # Check explicit hubs: each needs at least one attachment with a
+        # concrete weight (B_ext is tied to self-loops above only for the
+        # legacy per-node affordance; hub-attached nodes need no B_ext).
+        for hub in self.graph_data.get('hubs', []):
+            if not hub.get('attachments'):
+                missing['missing_hubs'].append(
+                    f"Hub {hub.get('label', hub['hub_id'])} "
+                    f"(id={hub['hub_id']}): no attachments"
+                )
+                continue
+            bad = [a for a in hub['attachments'] if a[1] is None]
+            if bad:
+                missing['missing_hubs'].append(
+                    f"Hub {hub.get('label', hub['hub_id'])} "
+                    f"(id={hub['hub_id']}): missing weights for {bad}"
                 )
 
         return missing
@@ -1102,9 +2541,34 @@ class GraphExtractor:
 
             # Accumulate along the branch
             for from_id, to_id, f_p in branch:
+                rule = self._edge_frame_rules.get(_edge_key(from_id, to_id))
                 if self.sign_override:
                     # User provided signed f_p, use as-is
                     signed_f_p = f_p if f_p is not None else 0.0
+                elif rule in ('sector', 'sector+') and f_p is not None:
+                    # Explicit sector rules (pump buses): the whole
+                    # conjugate cluster sits in ONE frame, whatever the
+                    # members' natural frequencies (a +-n comb defeats the
+                    # ordering heuristic).
+                    #   'sector'  : omega - f_p  -- the sum-frequency frame;
+                    #               holds amplification (twin +m at
+                    #               f_p - f_m) and down-conversion (twin -m
+                    #               at f_p + f_m)
+                    #   'sector+' : omega + f_p  -- holds up-conversion
+                    #               (twin -m at f_m - f_p), the rung the
+                    #               other frame only reaches at -omega
+                    # A two-frame truncation cannot hold all three at once;
+                    # the pump macro picks the frame of the pair the rate is
+                    # anchored to (explicit_ports._pump_anchor).
+                    into = -f_p if rule == 'sector' else +f_p
+                    from_conj = node_info[from_id]['conj']
+                    to_conj = node_info[to_id]['conj']
+                    if to_conj and not from_conj:
+                        signed_f_p = into
+                    elif from_conj and not to_conj:
+                        signed_f_p = -into
+                    else:
+                        signed_f_p = _determine_fp_sign(from_id, to_id, f_p)
                 else:
                     # Automatically compute sign based on effective frequency
                     signed_f_p = _determine_fp_sign(from_id, to_id, f_p)
@@ -1181,7 +2645,7 @@ class GraphExtractor:
 
             from_id = edge['from_node_id']
             to_id = edge['to_node_id']
-            edge_key = tuple(sorted([from_id, to_id]))
+            edge_key = _edge_key(from_id, to_id)
 
             # Check if this is a chord edge
             chord_key_forward = (from_id, to_id)
@@ -1405,6 +2869,160 @@ class GraphExtractor:
         # Mark that derived quantities need recomputation
         self._needs_recompute = True
 
+    def _validate_hub(
+        self,
+        hub: Dict[str, Any],
+        nodes: List[Dict[str, Any]],
+        node_id_set: Set[Any]
+    ) -> None:
+        """Enforce the Phase-1 hub gates on one normalized hub.
+
+        Raises ValueError for: attachment to an unknown node, an attachment
+        phase outside {0, 180} degrees (complex weights are Phase 2), or
+        attachments spanning both conj sectors (mixed-sector hubs are blocked
+        on the M_pumped derivation).
+        """
+        conj_by_id = {n['node_id']: n['conj'] for n in nodes}
+        sectors = set()
+        for node_id, mag, phase_deg in hub['attachments']:
+            if node_id not in node_id_set:
+                raise ValueError(
+                    f"Hub '{hub['hub_id']}' attaches to unknown node "
+                    f"{node_id!r}"
+                )
+            # Raises on phases other than 0/180 (Phase-2 complex weights)
+            _hub_signed_weight(hub['hub_id'], node_id, mag, phase_deg)
+            sectors.add(bool(conj_by_id[node_id]))
+        if len(sectors) > 1:
+            details = ', '.join(
+                f"node {node_id!r} (conj={conj_by_id[node_id]})"
+                for node_id, _, _ in hub['attachments']
+            )
+            raise ValueError(_MIXED_SECTOR_MSG.format(
+                hub_id=hub['hub_id'], details=details))
+
+    def assign_hub(
+        self,
+        hub_id: Any,
+        label: Optional[str] = None,
+        attachments: Optional[List[Any]] = None,
+        monitored: Optional[bool] = None
+    ) -> None:
+        """
+        Create or update an explicit dissipation hub.
+
+        A monitored hub is a port: it contributes (i/2) kappa kappa^dagger to
+        M and a scattering channel (column of K appearing in S). An
+        unmonitored hub is a loss hub: same M contribution, no channel.
+
+        Parameters
+        ----------
+        hub_id : Any
+            Stable hub identifier. If a hub with this id already exists it is
+            updated in place (its channel-order position is preserved);
+            otherwise a new hub is appended after the existing explicit hubs.
+        label : Optional[str], default=None
+            Display label (used as the port label). If None on creation, the
+            string form of hub_id is used; if None on update, unchanged.
+        attachments : Optional[List], default=None
+            List of (node_id, weight) with signed real weight, or
+            (node_id, weight_mag, weight_phase_deg) triples. Weights are
+            coupling amplitudes in sqrt(rate) units. Phase-1 gates: phase in
+            {0, 180} degrees only; all attached nodes in one conj sector.
+            If None on update, attachments are unchanged.
+        monitored : Optional[bool], default=None
+            True -> port, False -> loss hub. Defaults to True on creation;
+            unchanged if None on update.
+
+        Raises
+        ------
+        RuntimeError
+            If extract_graph_data() has not been called yet
+        ValueError
+            On unknown nodes, Phase-2 phases, or mixed-sector attachments
+            (message names the deferred M_pumped derivation).
+        """
+        if self.graph_data is None:
+            raise RuntimeError("Must call extract_graph_data() or extract_from_pgraph() first")
+
+        hubs = self.graph_data.setdefault('hubs', [])
+        existing = next((h for h in hubs if h['hub_id'] == hub_id), None)
+
+        candidate = {
+            'hub_id': hub_id,
+            'label': label if label is not None else (
+                existing['label'] if existing else str(hub_id)),
+            'attachments': attachments if attachments is not None else (
+                existing['attachments'] if existing else []),
+            'monitored': monitored if monitored is not None else (
+                existing['monitored'] if existing else True),
+        }
+        normalized = _normalize_hub(candidate)
+        node_id_set = {n['node_id'] for n in self.graph_data['nodes']}
+        self._validate_hub(normalized, self.graph_data['nodes'], node_id_set)
+
+        if existing is not None:
+            existing.update(normalized)
+        else:
+            hubs.append(normalized)
+
+        self._needs_recompute = True
+
+    def get_effective_hubs(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Return (port_hubs, loss_hubs) — the effective dissipation channels.
+
+        Port channels come first in K/S channel order: explicit monitored
+        hubs in their list order, then legacy per-node B_ext auto-wrapped
+        into single-attachment monitored hubs in the order the nodes appear
+        in graph_data['nodes'] (the basis-walk order used by the pre-hub
+        _build_K_matrix — this exactly reproduces the legacy channel order).
+        Loss channels are the explicit unmonitored hubs in list order.
+
+        Auto-wrapped hubs carry kappa = sqrt(B_ext), label = node label, and
+        a 'legacy_node_id' key so callers can preserve the historical
+        port_ids/port_dict contracts.
+
+        Raises
+        ------
+        ValueError
+            If any explicit hub violates a Phase-1 gate (checked again here
+            because weights/attachments may have been edited since assign).
+        """
+        if self.graph_data is None:
+            raise RuntimeError("Must call extract_graph_data() or extract_from_pgraph() first")
+
+        nodes = self.graph_data['nodes']
+        node_id_set = {n['node_id'] for n in nodes}
+
+        port_hubs = []
+        loss_hubs = []
+        for hub in self.graph_data.get('hubs', []):
+            normalized = _normalize_hub(hub)
+            self._validate_hub(normalized, nodes, node_id_set)
+            if normalized['monitored']:
+                port_hubs.append(normalized)
+            else:
+                loss_hubs.append(normalized)
+
+        # Legacy auto-wrap: one single-attachment port per node with B_ext > 0,
+        # appended in graph_data['nodes'] walk order (reproduces the legacy
+        # K-column order pinned by test_port_index_ordering.py).
+        for node in nodes:
+            if node['B_ext'] is not None and node['B_ext'] > 0:
+                port_hubs.append({
+                    'hub_id': ('legacy_B_ext', node['node_id']),
+                    'label': node.get('label', str(node['node_id'])),
+                    'attachments': [
+                        (node['node_id'], float(np.sqrt(node['B_ext'])), 0.0)
+                    ],
+                    'monitored': True,
+                    'legacy_node_id': node['node_id'],
+                    'legacy_B_ext': node['B_ext'],
+                })
+
+        return port_hubs, loss_hubs
+
     def assign_all_nodes(
         self,
         freq: Optional[float] = None,
@@ -1564,18 +3182,24 @@ class GraphScatteringMatrix:
     PORT_LABEL_X_MULT = 0.55     # X offset for port labels (× font width)
     XLABEL_EXTRA_MULT = -0.75    # Extra offset for xlabel below freq rows (× row_spacing)    
 
-    def __init__(self, extractor: GraphExtractor, f_root_s: np.ndarray, verbose: bool = False):
+    def __init__(self, extractor: GraphExtractor, f_root_s: np.ndarray,
+                 verbose: bool = False, tail_closure: bool = True):
         self.extractor = extractor
-        self.verbose = verbose  
+        self.verbose = verbose
         self.f_root_s = f_root_s
+        self.tail_closure = bool(tail_closure)
         self.num_modes = len(extractor.graph_data['nodes'])
-        self.M = np.zeros((len(self.f_root_s), self.num_modes, self.num_modes), dtype=complex)
 
+        # K is built before M: the external anti-Hermitian part of M is
+        # computed FROM K_full ((i/2) K_full K_full^dagger), so M and S share
+        # a single source of truth for external dissipation. The comb tail
+        # closure (per-channel lambda(f), see _build_tail_closure) is built
+        # between them because it scales that same term.
         self._build_f_drivesignals()
-        self._build_M_matrix()
         self._build_K_matrix()
+        self._build_tail_closure()
+        self._build_M_matrix()
         self._build_S_matrix()
-        self._build_det_M()
 
     def _build_f_drivesignals(self):
         accumulated_frequencies_flattened = list(
@@ -1587,121 +3211,438 @@ class GraphScatteringMatrix:
         }
 
     def _build_M_matrix(self):
-        # Assemble diagonals
+        # M = (static N x N part, broadcast over the sweep) + (diagonal) +
+        # (tail closure). Only the last two carry frequency dependence, so
+        # the static part is assembled once at (N, N) and M is FILLED from
+        # it rather than zeroed and then added to twice. On a pumped comb M
+        # is ~1 GB and every avoided full pass is ~2 GB of memory traffic.
+        #
+        # Arithmetic order is unchanged, so the result is bit-identical to
+        # the zero-then-accumulate assembly: the off-diagonals are still
+        # coupling + (i/2) gram in that order, and the diagonal's own term
+        # commutes with the gram's diagonal.
         if self.verbose:
             logger.debug("[_build_M_matrix] Node diagonal values:")
 
+        diag = np.empty((len(self.f_root_s), self.num_modes), dtype=complex)
         for idx, node in enumerate(self.extractor.graph_data['nodes']):
             node_id = node['node_id']
             f0 = node['freq']
-            if node['B_ext'] is None:
-                Btot = node['B_int']
-            else:
-                Btot = node['B_int'] + node['B_ext']
+            # External damping no longer enters here: it is added below as
+            # (i/2) K_full K_full^dagger, computed from the SAME K used in S
+            # (single source of truth). Only internal loss stays diagonal.
+            Btot = node['B_int']
             conj_state = node['conj']
             if self.verbose:
-                logger.debug("  Node %s: f0=%s, B_int=%s, B_ext=%s, Btot=%s", node_id, f0, node['B_int'], node['B_ext'], Btot)
+                logger.debug("  Node %s: f0=%s, B_int=%s", node_id, f0, node['B_int'])
 
             # drive_signals holds the (N,) array f_root_s + f_offset per node;
             # single-node case: node absent from drive_signals uses f_root_s directly
+            if node_id not in self.drive_signals and self.num_modes > 1:
+                logger.warning(
+                    "Node %r has no drive frame (unreached by the spanning "
+                    "tree); using the root drive. Check graph connectivity.",
+                    node_id)
             f_drive = self.drive_signals.get(node_id, self.f_root_s)
 
             sign = 1.0 if conj_state else -1.0
-            self.M[:, idx, idx] = f_drive + sign * f0 + Btot * 1j / 2
+            diag[:, idx] = f_drive + sign * f0 + Btot * 1j / 2
 
-        # Assemble off-diagonals
+        # Assemble off-diagonals.
+        #
+        # sigma_z SECTOR, not the raw cluster flag. In a +-n comb the -n node
+        # is the counter-rotating half of the same physical mode, so it sits
+        # in the opposite sector from +n inside the same cluster:
+        # sector = conj XOR counter_rotating. A real quadratic modulation of
+        # Phi = sum_n u_n (a_n + a_n^dagger) gives a dynamical matrix
+        # sigma_z H with H Hermitian, i.e.
+        #
+        #     M[k, j] = (s_j s_k) conj(M[j, k])
+        #
+        # -- Hermitian within a sector (beam-splitter, conversion),
+        # anti-Hermitian across it (two-mode squeezing, gain).
+        #
+        # Keying on the cluster flag alone made EVERY cross-cluster edge
+        # anti-Hermitian, so a pump that can only CONVERT still amplified:
+        # against the harmonic-balance oracle in the conversion band the
+        # graph returned max|S_ss|^2 = 4.58 where the circuit gives 0.999.
+        # See docs/pump_sector_rule.md and tests/test_pump_sector_rule.py.
+        #
+        # The DIAGONAL deliberately keeps the raw cluster flag: it sets the
+        # sign of f0, i.e. WHERE a node resonates, and the counter-rotating
+        # member must keep its own sign there.
+        #
+        # The assembled pair depends only on the UNORDERED {j, k}: whichever
+        # way the edge is drawn, the lower index gets beta and the higher
+        # gets (s_j s_k) conj(beta). Collected and written in two vectorized
+        # assignments -- a pumped comb carries ~18k edges, and a Python-level
+        # strided write per edge over the frequency axis dominated assembly.
+        static = np.zeros((self.num_modes, self.num_modes), dtype=complex)
         basis = self.extractor.graph_data['basis_order']
+        basis_index = {node_id: i for i, node_id in enumerate(basis)}
+        nodes = self.extractor.graph_data['nodes']
+        sector = np.array([bool(n['conj']) ^ bool(n.get('counter_rotating'))
+                           for n in nodes], dtype=bool)
+
         if self.verbose:
             logger.debug("[_build_M_matrix] Edge off-diagonal values:")
+
+        ej, ek, ebeta = [], [], []
         for edge in self.extractor.graph_data['edges']:
             from_id = edge['from_node_id']
             to_id = edge['to_node_id']
+            j = basis_index[from_id]
+            k = basis_index[to_id]
+            if j == k:
+                continue
+            beta = edge['rate'] / 2 * np.exp(1j * edge['phase'] * np.pi / 180)
+            if self.verbose:
+                logger.debug("  Edge %s→%s: f_p=%s, rate=%s, phase=%s, beta=%s",
+                             from_id, to_id, edge['f_p'], edge['rate'],
+                             edge['phase'], beta)
+            ej.append(j)
+            ek.append(k)
+            ebeta.append(beta)
 
-            j = basis.index(from_id)
-            k = basis.index(to_id)
+        if ej:
+            ej = np.asarray(ej)
+            ek = np.asarray(ek)
+            ebeta = np.asarray(ebeta, dtype=complex)
+            lo = np.minimum(ej, ek)
+            hi = np.maximum(ej, ek)
+            sgn = np.where(sector[ej] == sector[ek], 1.0, -1.0)
+            # beta carries NO frequency dependence, so the couplings are one
+            # (N, N) matrix broadcast over the sweep. Scattering them
+            # straight into M[:, lo, hi] instead walks the frequency axis
+            # once per edge -- 14M strided writes on a pumped comb, where
+            # this is 18k writes plus one contiguous add.
+            # Duplicate {j, k} pairs resolve to the LAST edge, as the
+            # per-edge assignment loop did.
+            static[lo, hi] = ebeta
+            static[hi, lo] = sgn * np.conj(ebeta)
 
-            if j != k:
-                f_p = edge['f_p']
-                rate = edge['rate']
-                phase = edge['phase']
+        # External anti-Hermitian part, computed FROM K_full so that the
+        # S-matrix identity S^dagger S = 1 - (M^-1 K)^dagger Gamma_int (M^-1 K)
+        # holds by construction. The Gram is frequency-independent (Phase 1),
+        # so precompute once and broadcast over the frequency axis. A hub with
+        # >= 2 attachments places dissipation OFF-diagonal (cross-damping);
+        # a legacy single-attachment port reduces to the historical
+        # (i/2) B_ext diagonal entry (up to the sqrt(B_ext)**2 round-trip,
+        # ~1 ulp).
+        if self.K_full.size:
+            gram = self.K_full @ self.K_full.conj().T
+            static += 0.5j * gram
 
-                beta = rate/2 * np.exp(1j * phase * np.pi / 180)
-                if self.verbose:
-                    logger.debug("  Edge %s→%s: f_p=%s, rate=%s, phase=%s, beta=%s", from_id, to_id, f_p, rate, phase, beta)
+        # Store the INGREDIENTS, not the sweep. M is assembled a frequency
+        # block at a time by M_block(); materializing the whole
+        # (n_freq, N, N) stack is what made large sweeps slow, and it was
+        # never needed -- each frequency's system is independent. On a pumped
+        # comb (N = 270, 801 points) that array is 934 MB, and simply
+        # allocating and first-touching it cost more than every other stage
+        # of the sweep put together.
+        self._M_static = static
+        self._M_diag = diag
+        # the comb tail closure's per-channel rank-one correction:
+        # channel h's damper is scaled by lambda_h(f) = 1/(1 + i chi_t,h/2),
+        # carried as the DIFFERENCE from the plain Gram above so channels
+        # without a tail (lambda = 1) contribute exact zeros and legacy
+        # graphs stay bit-identical.
+        self._M_tail = []
+        if self.K_full.size and self.has_tail_closure:
+            dlam = self.lam - 1.0
+            for h in range(self.K_full.shape[1]):
+                if not np.any(dlam[:, h]):
+                    continue
+                col = self.K_full[:, h]
+                self._M_tail.append((dlam[:, h],
+                                     0.5j * np.outer(col, col.conj())))
 
-                conj_j = self.extractor.graph_data['nodes'][j]['conj']
-                conj_k = self.extractor.graph_data['nodes'][k]['conj']
+    def M_block(self, lo, hi):
+        """M over frequency points [lo, hi), shape (hi - lo, N, N).
 
-                if conj_j == conj_k:
-                    if j < k:
-                        self.M[:, j, k] = beta
-                        self.M[:, k, j] = np.conj(beta)
-                    else:
-                        self.M[:, k, j] = beta
-                        self.M[:, j, k] = np.conj(beta)
-                else:
-                    if j < k:
-                        self.M[:, j, k] = beta
-                        self.M[:, k, j] = -np.conj(beta)
-                    else:
-                        self.M[:, k, j] = beta
-                        self.M[:, j, k] = -np.conj(beta)   
+        Assembled from the frequency-independent static part plus this
+        block's diagonal and tail-closure corrections. Identical, term by
+        term and in the same order, to the full-sweep assembly this replaced.
+        """
+        block = np.empty((hi - lo,) + self._M_static.shape, dtype=complex)
+        block[...] = self._M_static
+        idx = np.arange(self.num_modes)
+        block[:, idx, idx] += self._M_diag[lo:hi]
+        for dlam_h, outer in self._M_tail:
+            block += dlam_h[lo:hi, None, None] * outer
+        return block
+
+    def _freq_blocks(self):
+        """(lo, hi) frequency slices sized so one M block stays cache-warm."""
+        nf = len(self.f_root_s)
+        step = max(1, int(2 ** 22 // max(self.num_modes ** 2, 1)))
+        return [(a, min(a + step, nf)) for a in range(0, nf, step)]
+
+    @property
+    def M(self):
+        """The full (n_freq, N, N) stack, assembled ON DEMAND and cached.
+
+        Nothing in the S-matrix path calls this -- it goes block by block
+        through M_block(). Kept because identity checks and det_M want the
+        whole stack; on a large comb it is a ~1 GB allocation, so ask for it
+        deliberately.
+        """
+        if getattr(self, '_M_full', None) is None:
+            blocks = [self.M_block(lo, hi) for lo, hi in self._freq_blocks()]
+            self._M_full = (blocks[0] if len(blocks) == 1
+                            else np.concatenate(blocks, axis=0))
+        return self._M_full
+
+    def _build_tail_closure(self):
+        """Close each channel's truncated comb tail into a scalar lambda_h(f).
+
+        COMB TAIL CLOSURE. A transmission-line macro keeps N pole pairs; the
+        modes beyond N still load the port, and their effect is a reactive
+        term ~ -2 gamma f/(FSR^2 N) that shifts every in-band resonance -- the
+        1/N convergence of tests/test_line_macro_vs_abcd.py is exactly this
+        tail. Eliminating those modes exactly (a Schur complement; they touch
+        the rest of the graph only through the hub column) collapses them
+        into ONE scalar per channel,
+
+            chi_t,h(f) = sum_{tail} kappa_n^2 / (f - f_n)   (closed form:
+                         LineResonator.tail_susceptibility = exact - kept),
+            lambda_h(f) = 1 / (1 + i chi_t,h / 2),
+
+        and the assembly becomes
+
+            M   = D + sum_edges + (i/2) sum_h lambda_h kappa_h kappa_h^dagger
+            S   = -Lambda_d + i diag(lambda) K^dagger M^-1 K diag(lambda)
+            Lambda_d,h = (1 - i chi_t,h/2) / (1 + i chi_t,h/2)   (a phase).
+
+        The identity is exact: for a one-port line at N = 2 this reproduces
+        the ABCD reflection to 1e-14 (tests/test_tail_closure.py), because
+        the kept comb plus its analytic tail IS the line. What the closure
+        drops is only the tail modes' OTHER couplings -- pump edges and taps
+        onto modes beyond N -- which are second order in those rates and
+        fall off with N themselves. So N need only span the modes whose
+        couplings matter, not the modes that load the port.
+
+        Channels with no tail get lambda = 1 and Lambda_d = 1 exactly, so
+        graphs without lines are assembled bit-for-bit as before.
+        """
+        port_hubs, loss_hubs = self.port_hubs, self.loss_hubs
+        n_chan = len(port_hubs) + len(loss_hubs)
+        n_f = len(self.f_root_s)
+        self.chi_tail = np.zeros((n_f, n_chan), dtype=complex)
+        self.has_tail_closure = False
+        if self.tail_closure:
+            for h, hub in enumerate(port_hubs + loss_hubs):
+                tails = hub.get('tails') or []
+                if not tails:
+                    continue
+                # the channel's frame: that of the modes it damps
+                first = next((a[0] for a in hub['attachments']
+                              if a[0] in self.drive_signals), None)
+                f_d = (self.drive_signals[first] if first is not None
+                       else self.f_root_s)
+                for spec in tails:
+                    line = _normalize_line(spec['line'])
+                    # the kept modes sit at f_d - f_n + (i/2) B_int; the tail
+                    # is evaluated at the same complex argument
+                    z = np.asarray(f_d, dtype=complex) + 0.5j * line.B_int_per_mode
+                    self.chi_tail[:, h] += line.tail_susceptibility(spec['end'], z)
+                self.has_tail_closure = True
+        self.lam = 1.0 / (1.0 + 0.5j * self.chi_tail)
+        self.direct = (1.0 - 0.5j * self.chi_tail) / (1.0 + 0.5j * self.chi_tail)
 
     def _build_K_matrix(self):
+        """Build the coupling matrices from the effective dissipation hubs.
+
+        Columns are dissipation channels, ports first then loss hubs; rows
+        are indexed by the graph node basis (same basis/ordering as M).
+        Column p of K_ports is port p's attachment vector kappa^(p) (entries
+        in sqrt(rate) units); a single-attachment legacy port reduces to the
+        historical one-nonzero column sqrt(B_ext).
+
+        Arrays are built complex for schema forward-compatibility (Phase-2
+        complex weights); Phase-1 weights are real, and `.K` is exposed with
+        the legacy float dtype whenever all port weights are real so existing
+        downstream code and tests are unaffected.
+        """
+        basis = self.extractor.graph_data['basis_order']
+        port_hubs, loss_hubs = self.extractor.get_effective_hubs()
+        self.port_hubs = port_hubs
+        self.loss_hubs = loss_hubs
+        self.loss_hubs = loss_hubs
+        self.num_ports = len(port_hubs)
+        self.num_loss_hubs = len(loss_hubs)
+
+        # Legacy contracts: port_dict maps port NODE id -> B_ext for the
+        # auto-wrapped legacy ports (exactly the pre-hub content); port_ids
+        # lists, per channel, the legacy node_id for auto-wrapped ports and
+        # the hub_id for explicit hubs. For legacy graphs both are identical
+        # to the pre-hub attributes (order pinned by
+        # test_port_index_ordering.py: basis walk order, not sorted ids).
         self.port_dict = {}
-
-        if self.verbose:
-            logger.debug("[_build_K_matrix] Building port dictionary:")
-        for node in self.extractor.graph_data['nodes']:
-            node_id = node['node_id']
-            if node['B_ext'] is not None and node['B_ext'] > 0:
-                self.port_dict[node_id] = node['B_ext']
-                if self.verbose:
-                    logger.debug("  Added port: node_id=%s, B_ext=%s", node_id, node['B_ext'])
-
-        self.num_ports = len(self.port_dict)
-
-        # Port node_ids in S-matrix row/column order. port_dict is filled by
-        # walking graph_data['nodes'], so this follows the basis order, which
-        # is not the same as ascending node_id once a basis reordering has
-        # moved nodes around. Anything mapping a port index back to a node
-        # must use this list, never sorted(port_dict).
-        self.port_ids = list(self.port_dict.keys())
-
-        if self.verbose:
-            logger.debug("[_build_K_matrix] Total ports: %d", self.num_ports)
-        self.K = np.zeros(shape=(self.num_modes, len(self.port_dict)), dtype=float)
-
-        if self.verbose:
-            logger.debug("[_build_K_matrix] K matrix entries:")
-        for node_id, B_ext in self.port_dict.items():
-            mode_idx = self.extractor.graph_data['basis_order'].index(node_id)
-            port_idx = self.port_ids.index(node_id)
-            self.K[mode_idx, port_idx] = np.sqrt(B_ext)
+        self.port_ids = []
+        self.port_labels = []
+        for hub in port_hubs:
+            if 'legacy_node_id' in hub:
+                self.port_dict[hub['legacy_node_id']] = hub['legacy_B_ext']
+                self.port_ids.append(hub['legacy_node_id'])
+            else:
+                self.port_ids.append(hub['hub_id'])
+                # An explicit hub is a channel with a frequency axis of its
+                # own, like a legacy port node: it inherits the drive frame
+                # of the modes it damps. Those all share one frame -- the
+                # zero-offset bridge links (compute_hub_bridge_links) put a
+                # shared hub's attachments in the same frame by construction
+                # -- so the first attachment's is the hub's; a mismatch is a
+                # bug upstream, not a choice to make here.
+                frames = [self.drive_signals[a[0]] for a in hub['attachments']
+                          if a[0] in self.drive_signals]
+                if frames:
+                    if any(not np.allclose(f, frames[0]) for f in frames[1:]):
+                        logger.warning(
+                            "Hub %r spans attachments in different drive "
+                            "frames; using the first attachment's for its "
+                            "channel axis.", hub['hub_id'])
+                    self.drive_signals[hub['hub_id']] = frames[0]
+            self.port_labels.append(hub['label'])
             if self.verbose:
-                logger.debug("  K[%d,%d] = sqrt(%s) = %s", mode_idx, port_idx, B_ext, np.sqrt(B_ext))
+                logger.debug("  Port channel %d: %s", len(self.port_ids) - 1, hub)
+
+        if self.verbose:
+            logger.debug("[_build_K_matrix] Total ports: %d, loss hubs: %d",
+                         self.num_ports, self.num_loss_hubs)
+
+        def build_columns(hubs):
+            cols = np.zeros(shape=(self.num_modes, len(hubs)), dtype=complex)
+            for col, hub in enumerate(hubs):
+                for node_id, mag, phase_deg in hub['attachments']:
+                    weight = _hub_signed_weight(hub['hub_id'], node_id, mag, phase_deg)
+                    cols[basis.index(node_id), col] += weight
+                    if self.verbose:
+                        logger.debug("  K[%d,%d] += %s", basis.index(node_id), col, weight)
+            return cols
+
+        K_ports = build_columns(port_hubs)
+        K_loss = build_columns(loss_hubs)
+        self.K_full = np.column_stack([K_ports, K_loss])
+
+        # Phase-1 weights are real; keep the legacy float dtype on .K (and
+        # .K_loss) so downstream consumers see the historical arrays.
+        if np.all(K_ports.imag == 0):
+            self.K = K_ports.real.copy()
+        else:
+            self.K = K_ports
+        if np.all(K_loss.imag == 0):
+            self.K_loss = K_loss.real.copy()
+        else:
+            self.K_loss = K_loss
+
+    def _channel_S(self, K, n_chan):
+        """S over the first n_chan channels, assembled block by block.
+
+        Two things this does NOT do. It does not invert M: S only ever
+        contracts M^-1 against the few channel columns, so a full
+        (n_freq, N, N) inverse computes -- and allocates -- N/n_chan times
+        more than the result needs; a batched SOLVE gives M^-1 K directly.
+        And it does not hold the sweep's M at once: each frequency's system
+        is independent, so M is built one block at a time (M_block) and the
+        block is discarded. On a pumped comb that is the difference between
+        touching a gigabyte and staying in cache.
+
+        Per frequency the arithmetic is unchanged, so results are identical
+        to the whole-sweep assembly.
+        """
+        S = np.empty((len(self.f_root_s), n_chan, n_chan), dtype=complex)
+        for lo, hi in self._freq_blocks():
+            rhs = np.broadcast_to(K, (hi - lo,) + K.shape)
+            MinvK = np.linalg.solve(self.M_block(lo, hi), rhs)
+            S[lo:hi] = self._scatter(K, MinvK, n_chan, lo, hi)
+        return S
 
     def _build_S_matrix(self):
-        # Batched inverse over the (N, m, m) stack; matmul broadcasts K across
-        # the frequency axis, so the whole sweep is one vectorized expression
-        Minv = np.linalg.inv(self.M)
-        self.S = 1j * (self.K.T @ Minv @ self.K) - np.eye(self.num_ports)
+        # Contraction uses the conjugate transpose (identical to .T for the
+        # real Phase-1 K) and PORT columns only: loss-hub damping is inside M
+        # but exposes no channel.
+        self.S = self._channel_S(self.K, self.num_ports)
         self.SdB = 20 * np.log10(np.abs(self.S))
 
         # Initialize empty trace list for plotting
         self._plot_traces = []
 
+    @property
+    def S_full(self):
+        """Dilated scattering matrix over ALL dissipation channels.
+
+        S_full = -1 + i K_full^dagger M^-1 K_full, shape
+        (num_freqs, n_chan, n_chan) with n_chan = num_ports + num_loss_hubs,
+        ports first then loss hubs. Exactly unitary when every B_int is zero
+        (all dissipation is then carried by channels) — a built-in self-test
+        even for lossy models. The leading num_ports x num_ports block equals
+        .S identically (same inverse algorithm).
+
+        Computed on demand (the (num_freqs, N, N) inverse is not cached —
+        line-macro graphs make it large).
+        """
+        return self._channel_S(self.K_full, self.K_full.shape[1])
+
+    def _scatter(self, K, MinvK, n_chan, lo=0, hi=None):
+        """S over the first n_chan channels: i K^dagger M^-1 K - I, with the
+        comb tail closure's per-channel lambda on both sides and its direct
+        phase on the diagonal when a channel closes a tail (see
+        _build_tail_closure). Without tails this is the historical
+        expression, evaluated identically."""
+        if hi is None:
+            hi = len(self.f_root_s)
+        core = 1j * (K.conj().T @ MinvK)
+        if not self.has_tail_closure:
+            return core - np.eye(n_chan)
+        lam = self.lam[lo:hi, :n_chan]
+        S = lam[:, :, None] * core * lam[:, None, :]
+        idx = np.arange(n_chan)
+        S[:, idx, idx] -= self.direct[lo:hi, :n_chan]
+        return S
+
+    @property
+    def absorption(self):
+        """Per-port-channel missing power, shape (num_freqs, num_ports).
+
+        Column k is 1 - sum_j |S_jk|^2: the power driven into port k that
+        does not return through any port. With B_int = 0 this equals the flux
+        into the loss-hub channels, sum_loss |S_full[loss, k]|^2 (the energy
+        audit); with B_int > 0 it additionally counts uniform internal loss.
+        """
+        return 1.0 - np.sum(np.abs(self.S) ** 2, axis=1)
+
     def _build_det_M(self):
-        """Compute the determinant of M at each frequency point.
+        """Determinant of M at each frequency point, cached.
+
+        Computed ON DEMAND. Nothing in the S-matrix path needs it -- it is a
+        diagnostic display and a golden-artifact field -- and it costs two
+        more O(n_freq N^3) factorizations, which on a pumped comb was ~13% of
+        the sweep for a number that had already overflowed to inf.
 
         Creates:
             self.det_M : np.ndarray
-                Complex determinant of M matrix at each frequency, shape (len(f_root_s),)
+                Complex determinant of M at each frequency, shape (n_freq,)
             self.det_M_dB : np.ndarray
-                Magnitude of determinant in dB, shape (len(f_root_s),)
+                Magnitude of the determinant in dB, shape (n_freq,)
         """
-        self.det_M = np.linalg.det(self.M)
-        self.det_M_dB = 20 * np.log10(np.abs(self.det_M))
+        self._det_M = np.linalg.det(self.M)
+        # det overflows to inf for large mode counts (e.g. line-macro combs);
+        # slogdet keeps the dB display finite
+        _, logabsdet = np.linalg.slogdet(self.M)
+        self._det_M_dB = (20.0 / np.log(10.0)) * logabsdet
+
+    @property
+    def det_M(self):
+        if getattr(self, '_det_M', None) is None:
+            self._build_det_M()
+        return self._det_M
+
+    @property
+    def det_M_dB(self):
+        if getattr(self, '_det_M_dB', None) is None:
+            self._build_det_M()
+        return self._det_M_dB
 
     # =========================================================================
     # Plotting API - Trace Management
@@ -1776,7 +3717,15 @@ class GraphScatteringMatrix:
         return resolved
 
     def _get_port_label(self, port_id):
-        """Get node label for a port ID."""
+        """Get the display label for a port channel reference.
+
+        `port_id` is an entry of self.port_ids: the node_id for a legacy
+        auto-wrapped port (label = node label, as before hubs) or the hub_id
+        for an explicit hub (label = hub label).
+        """
+        for hub, ref in zip(self.port_hubs, self.port_ids):
+            if ref == port_id:
+                return hub['label']
         for node in self.extractor.graph_data['nodes']:
             if node['node_id'] == port_id:
                 return node.get('label', str(port_id))
