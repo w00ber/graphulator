@@ -108,6 +108,11 @@ ehthumbs.db
 # Syncthing conflict files
 *.sync-conflict-*
 
+# macOS/cloud-sync duplicate copies ("common_window 2.py", "FOUR_MODE_MIX 2.pkl").
+# They are byte-identical clones that pytest happily collects: the duplicate
+# test modules run twice and tests/golden/*.pkl doubles the golden set.
+* [0-9].*
+
 # Private dev notes (kept locally, not tracked)
 PARAGRAPHULATOR_REFACTORING_PLAN.md
 APPBUILD_notes.md

@@ -76,7 +76,7 @@ graphulator = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q --ignore-glob='* [0-9].py'"
 
 [tool.ruff]
 line-length = 120

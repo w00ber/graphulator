@@ -17,6 +17,7 @@ nothing more.
 """
 
 import pickle
+import re
 from pathlib import Path
 
 import numpy as np
@@ -38,7 +39,15 @@ def load_artifact(name):
         return pickle.load(fh)
 
 
-GOLDEN_NAMES = sorted(p.stem for p in GOLDEN_DIR.glob("*.pkl"))
+# A cloud-sync duplicate ("FOUR_MODE_MIX 2.pkl") is a byte-identical clone, so
+# it passes its own regression and only breaks the completeness count -- which
+# is the one assertion here that would catch a genuinely missing artifact. Skip
+# the clones so that gate keeps meaning what it says.
+_SYNC_COPY = re.compile(r" \d+$")
+
+GOLDEN_NAMES = sorted(
+    p.stem for p in GOLDEN_DIR.glob("*.pkl") if not _SYNC_COPY.search(p.stem)
+)
 
 
 def test_golden_set_is_complete():
