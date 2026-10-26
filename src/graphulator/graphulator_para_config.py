@@ -477,3 +477,44 @@ SAVE_NUMERIC_PRECISION = 9  # decimal places for rounding
 # numerics are hub-based either way. Opening a .pgraph containing ports or
 # lines auto-enables this for the session.
 EXPLICIT_PORTS_MODE = False
+
+# --- what a NEWLY PLACED port / line / wire starts from ----------------------
+# The glyph GEOMETRY constants (pentagon proportions, lead lengths) live in
+# para_features.explicit_ports next to the drawing code. These are the user
+# settings on top of that geometry, surfaced by the Settings dialog's
+# "Port & Wire Defaults" tab; the placement dialogs are pre-filled from them
+# (and thereafter from the last glyph placed, so a run stays consistent).
+GLYPH_ROTATION_INCREMENT = 15     # degrees per Ctrl+U / Ctrl+I
+DEFAULT_PORT_MONITORED = True     # False places loss hubs by default
+DEFAULT_PORT_AUTO_ORIENT = True   # the lead aims at the attached group
+DEFAULT_PORT_LINEWIDTH = 2.0
+DEFAULT_PORT_COLOR = 'black'
+DEFAULT_PORT_FILL = 'white'
+# Fixed port geometry, in units of the node radius. Neither scales with the
+# port's length, so stretching a port (or letting its label autosize it)
+# leaves the point of the pentagon -- and therefore where its wires leave --
+# exactly where it was. Read at draw time, so a change restyles every port
+# that has no override of its own.
+DEFAULT_PORT_APEX_DEPTH = 0.55    # how far the nose juts past the body
+DEFAULT_PORT_LEAD_LENGTH = 1.2    # straight run of a wire past the nose
+DEFAULT_LINE_LINEWIDTH = 1.6
+DEFAULT_LINE_COLOR = 'black'
+DEFAULT_LINE_FILL = '#cccccc'
+
+# Wires. A wire leaves `color` unset until something overrides it, so these
+# are read at DRAW time: changing one restyles every wire that has no
+# override of its own. The two signed port colors keep sign legible at a
+# glance; a tap gets its own color because it is conservative, not lossy.
+DEFAULT_WIRE_COLOR = 'dimgray'
+DEFAULT_WIRE_COLOR_INVERTED = 'firebrick'   # a sign = -1 attachment
+DEFAULT_WIRE_COLOR_TAP = 'teal'             # a conservative node tap
+DEFAULT_WIRE_LINEWIDTH_MULT = 1.25
+# Round caps on every dash of a dashed/dotted wire (and on its two ends).
+# Off gives matplotlib's square-ended dashes.
+DEFAULT_WIRE_ROUND_CAPS = True
+
+# Coupling rates a new link is created with, in milli-arb. units. The port
+# attachment default tracks DEFAULT_NODE_B_EXT, which is the same quantity
+# written the legacy per-node way.
+DEFAULT_ATTACHMENT_RATE = 100.0   # port/loss-hub to mode (dissipative)
+DEFAULT_TAP_RATE = 100.0          # mode to line end (conservative)

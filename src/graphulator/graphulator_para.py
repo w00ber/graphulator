@@ -247,6 +247,30 @@ SETTINGS_PARAMS = {
         ('EDGELWSCALE', 'Edge Linewidth Scale', 'float', 0.1, 5.0, 0.1),
         ('EDGELABELOFFSET', 'Edge Label Offset', 'float', 0.1, 3.0, 0.05),
     ],
+    # Defaults for the explicit-ports surface. Shown unconditionally: the
+    # settings outlive the session that EXPLICIT_PORTS_MODE was toggled in,
+    # and opening a .pgraph with ports auto-enables the mode anyway.
+    'Port & Wire Defaults': [
+        ('DEFAULT_PORT_MONITORED', 'New Ports Are Monitored (not loss hubs)',
+         'bool', None, None, None),
+        ('DEFAULT_PORT_AUTO_ORIENT', 'Auto-Orient New Ports', 'bool', None, None, None),
+        ('GLYPH_ROTATION_INCREMENT', 'Rotation Step (°)', 'int', 1, 90, 1),
+        ('DEFAULT_PORT_LINEWIDTH', 'Port Stroke Width', 'float', 0.25, 8.0, 0.25),
+        ('DEFAULT_PORT_COLOR', 'Port Stroke Color', 'color', None, None, None),
+        ('DEFAULT_PORT_FILL', 'Port Fill Color', 'color', None, None, None),
+        ('DEFAULT_PORT_APEX_DEPTH', 'Port Nose Depth (×R)', 'float', 0.0, 3.0, 0.05),
+        ('DEFAULT_PORT_LEAD_LENGTH', 'Port Lead Length (×R)', 'float', 0.0, 5.0, 0.1),
+        ('DEFAULT_LINE_LINEWIDTH', 'Line Stroke Width', 'float', 0.25, 8.0, 0.25),
+        ('DEFAULT_LINE_COLOR', 'Line Stroke Color', 'color', None, None, None),
+        ('DEFAULT_LINE_FILL', 'Line Fill Color', 'color', None, None, None),
+        ('DEFAULT_WIRE_COLOR', 'Wire Color (sign +)', 'color', None, None, None),
+        ('DEFAULT_WIRE_COLOR_INVERTED', 'Wire Color (sign −)', 'color', None, None, None),
+        ('DEFAULT_WIRE_COLOR_TAP', 'Tap Wire Color', 'color', None, None, None),
+        ('DEFAULT_WIRE_LINEWIDTH_MULT', 'Wire Width (×)', 'float', 0.2, 5.0, 0.05),
+        ('DEFAULT_WIRE_ROUND_CAPS', 'Rounded Wire Dash Caps', 'bool', None, None, None),
+        ('DEFAULT_ATTACHMENT_RATE', 'Port Attachment Rate [mau]', 'float', 0.0, 1e5, 10.0),
+        ('DEFAULT_TAP_RATE', 'Line Tap Rate [mau]', 'float', 0.0, 1e5, 10.0),
+    ],
     'Interface': [
         ('SHOW_SHORTCUT_OVERLAY', 'Show Shortcut Hints', 'bool', None, None, None),
         ('SHORTCUT_OVERLAY_CORNER', 'Hints Corner', 'dropdown',
@@ -280,6 +304,14 @@ LIVE_PARAMS = (
     'SHOW_SHORTCUT_OVERLAY',   # toggling/corner/detail apply to the overlay immediately
     'SHORTCUT_OVERLAY_CORNER',
     'SHORTCUT_OVERLAY_SHOW_ALL',
+    # Wires store no color until one is picked, so the default is resolved
+    # at draw time and restyles every unoverridden wire as it changes.
+    'DEFAULT_WIRE_COLOR',
+    'DEFAULT_WIRE_COLOR_INVERTED',
+    'DEFAULT_WIRE_COLOR_TAP',
+    'DEFAULT_WIRE_ROUND_CAPS',
+    'DEFAULT_PORT_APEX_DEPTH',   # fixed geometry, read when the port draws
+    'DEFAULT_PORT_LEAD_LENGTH',
 )
 
 
@@ -3485,7 +3517,9 @@ class PropertiesPanel(QWidget):
         width_combo = QComboBox()
         names = list(config.EDGE_LINEWIDTH_OPTIONS.keys())
         width_combo.addItems(names)
-        current = float(conn.get('linewidth_mult', 1.25))
+        current = float(conn.get(
+            'linewidth_mult',
+            getattr(config, 'DEFAULT_WIRE_LINEWIDTH_MULT', 1.25)))
         closest = min(config.EDGE_LINEWIDTH_OPTIONS.items(),
                       key=lambda kv: abs(kv[1] - current))[0]
         width_combo.setCurrentText(closest)
@@ -3586,8 +3620,6 @@ class PropertiesPanel(QWidget):
 
     def show_attachment_properties(self, port, att):
         """Properties for one port-to-mode wire."""
-        from .para_features.explicit_ports import (WIRE_COLOR,
-                                                   WIRE_COLOR_INVERTED)
         self.clear_properties()
         self.current_object = att
         self.current_type = 'attachment'
@@ -3604,8 +3636,8 @@ class PropertiesPanel(QWidget):
             "External coupling rate of this mode to the port's channel "
             "[milli-arb. units].")
         self._wire_sign_row(form, att)
-        default = WIRE_COLOR if att.get('sign', 1) >= 0 else WIRE_COLOR_INVERTED
-        self._add_wire_appearance_rows(form, att, default)
+        self._add_wire_appearance_rows(
+            form, att, g.wire_default_color('port', att.get('sign', 1)))
         self.properties_layout.addLayout(form)
 
         info = QLabel(
@@ -3619,8 +3651,7 @@ class PropertiesPanel(QWidget):
 
     def show_tap_properties(self, line, end, conn):
         """Properties for one node-tap wire onto a line end."""
-        from .para_features.explicit_ports import (WIRE_COLOR_TAP,
-                                                   LineResonator,
+        from .para_features.explicit_ports import (LineResonator,
                                                    line_payload)
         self.clear_properties()
         self.current_object = conn
@@ -3661,7 +3692,8 @@ class PropertiesPanel(QWidget):
         form.addRow("Reference harmonic:", n_ref)
 
         self._wire_sign_row(form, conn)
-        self._add_wire_appearance_rows(form, conn, WIRE_COLOR_TAP)
+        self._add_wire_appearance_rows(form, conn,
+                                       g.wire_default_color('tap'))
         self.properties_layout.addLayout(form)
 
         info = QLabel(
@@ -4257,12 +4289,20 @@ class PropertiesPanel(QWidget):
     # every selected object in ONE undo step.
 
     @staticmethod
-    def selection_signature(nodes, edges, ports=(), lines=()):
-        """A hashable signature identifying a multi-selection by identity."""
+    def selection_signature(nodes, edges, ports=(), lines=(),
+                            attachments=(), taps=()):
+        """A hashable signature identifying a multi-selection by identity.
+
+        An attachment is a (port, att) pair and a tap a (line, end, conn)
+        triple; the att / conn dict is what carries the editable state, so
+        that is what identifies the link.
+        """
         return (frozenset(id(n) for n in nodes),
                 frozenset(id(e) for e in edges),
                 frozenset(id(p) for p in ports),
-                frozenset(id(ln) for ln in lines))
+                frozenset(id(ln) for ln in lines),
+                frozenset(id(a) for _port, a in attachments),
+                frozenset(id(c) for _ln, _e, c in taps))
 
     def _make_multi_double_spinbox(self, values, apply_fn, minimum, maximum,
                                    step, suffix="x", decimals=3):
@@ -4377,6 +4417,45 @@ class PropertiesPanel(QWidget):
         self._apply_to_objects(list(g.selected_ports) + list(g.selected_lines),
                                key, value)
 
+    def _selected_wire_conns(self):
+        """The att / conn dicts behind every selected link."""
+        g = self.graphulator
+        return ([a for _port, a in getattr(g, 'selected_attachments', ())]
+                + [c for _ln, _e, c in getattr(g, 'selected_taps', ())])
+
+    def _apply_to_wires(self, key, value):
+        """Write a property to every selected link (one undo step).
+
+        Rate and sign feed the extractor, so the scattering data is dropped
+        with them; appearance-only keys would not need that, but one path
+        is cheaper than two and an invalidation is idempotent.
+        """
+        g = self.graphulator
+        conns = self._selected_wire_conns()
+        if not conns:
+            return
+        g._save_state()
+        for conn in conns:
+            conn[key] = value
+        g._invalidate_scattering_data()
+        if hasattr(g, '_schedule_scattering_update'):
+            g._schedule_scattering_update()
+        g._update_plot()
+
+    def _choose_multi_wire_color(self):
+        """Choose one color and apply it to every selected link."""
+        g = self.graphulator
+        conns = self._selected_wire_conns()
+        if not conns:
+            return
+        start = QColor(conns[0].get('color')
+                       or g.wire_default_color('port',
+                                               conns[0].get('sign', 1)))
+        color = QColorDialog.getColor(start, g, "Wire color (all selected)")
+        if not color.isValid():
+            return
+        self._apply_to_wires('color', color.name())
+
     def _apply_multi_auto_orient(self, value):
         """Toggle auto-orient across every selected port glyph."""
         g = self.graphulator
@@ -4420,7 +4499,8 @@ class PropertiesPanel(QWidget):
             glyph[key] = color.name()
         g._update_plot()
 
-    def show_multi_properties(self, nodes, edges, ports=(), lines=()):
+    def show_multi_properties(self, nodes, edges, ports=(), lines=(),
+                              attachments=(), taps=()):
         """Editable common properties for a multi-selection."""
         from .para_features.explicit_ports import (GLYPH_SIZE_MIN,
                                                    GLYPH_SIZE_MAX,
@@ -4428,13 +4508,17 @@ class PropertiesPanel(QWidget):
         self.clear_properties()
         self.current_object = None
         self.current_type = None
-        self.displayed_multi = self.selection_signature(nodes, edges, ports,
-                                                        lines)
+        self.displayed_multi = self.selection_signature(
+            nodes, edges, ports, lines, attachments, taps)
         nodes = list(nodes)
         edges = list(edges)
         ports = list(ports)
         lines = list(lines)
         glyphs = ports + lines
+        attachments = list(attachments)
+        taps = list(taps)
+        wire_conns = ([a for _port, a in attachments]
+                      + [c for _ln, _e, c in taps])
 
         counts = []
         if nodes:
@@ -4445,6 +4529,10 @@ class PropertiesPanel(QWidget):
             counts.append(f"{len(ports)} port(s)")
         if lines:
             counts.append(f"{len(lines)} line(s)")
+        if attachments:
+            counts.append(f"{len(attachments)} wire(s)")
+        if taps:
+            counts.append(f"{len(taps)} tap(s)")
         self.title_label.setText(f"Multiple Selection ({' + '.join(counts)})")
 
         form = QFormLayout()
@@ -4563,6 +4651,60 @@ class PropertiesPanel(QWidget):
                 form.addRow("Auto-orient:", self._make_multi_checkbox(
                     [not p.get('angle_pinned', False) for p in ports],
                     self._apply_multi_auto_orient))
+
+        # Wires: port attachments and line taps share rate, sign and
+        # appearance. The two rates are not the same quantity (an
+        # attachment's is dissipative, a tap's is the conservative coupling
+        # at its own n_ref), so the row says which kinds are in play rather
+        # than pretending one label fits both. n_ref itself stays on the
+        # single-tap panel: it is indexed per line and has no shared range.
+        if wire_conns:
+            default_mult = getattr(config, 'DEFAULT_WIRE_LINEWIDTH_MULT',
+                                   1.25)
+            kinds = ([] if not attachments else ["attachment"]) + \
+                    ([] if not taps else ["tap"])
+            form.addRow(QLabel("<b>Wires</b> <i>(%s)</i>"
+                               % " + ".join(kinds)))
+            rate_box = self._make_multi_double_spinbox(
+                [float(c.get('rate', 0.0)) * 1000.0 for c in wire_conns],
+                lambda val: self._apply_to_wires('rate', val / 1000.0),
+                config.B_EXT_SPINBOX_MIN, config.B_EXT_SPINBOX_MAX,
+                config.B_EXT_SPINBOX_STEP, suffix="",
+                decimals=config.B_EXT_SPINBOX_DECIMALS)
+            rate_box.setToolTip(
+                "Coupling rate of every selected wire [milli-arb. units]. "
+                "For a tap this is the rate at that tap's own reference "
+                "harmonic.")
+            form.addRow("Rate [mau]:", rate_box)
+            form.addRow("Sign:", self._make_multi_combo(
+                ["+", "\N{MINUS SIGN}"],
+                ["+" if c.get('sign', 1) >= 0 else "\N{MINUS SIGN}"
+                 for c in wire_conns],
+                lambda text: self._apply_to_wires(
+                    'sign', 1 if text == "+" else -1)))
+            lw_map = dict(config.EDGE_LINEWIDTH_OPTIONS)
+            lw_reverse = {v: k for k, v in lw_map.items()}
+            form.addRow("Line Width:", self._make_multi_combo(
+                list(lw_map.keys()),
+                [lw_reverse.get(float(c.get('linewidth_mult')
+                                      or default_mult))
+                 for c in wire_conns],
+                lambda text: self._apply_to_wires('linewidth_mult',
+                                                  lw_map[text])))
+            form.addRow("Label Size:", self._make_multi_double_spinbox(
+                [c.get('label_size_mult', 1.0) for c in wire_conns],
+                lambda val: self._apply_to_wires('label_size_mult', val),
+                0.2, 5.0, 0.1))
+            wire_color_btn = QPushButton("Choose Color (all wires)")
+            wire_color_btn.clicked.connect(self._choose_multi_wire_color)
+            form.addRow("Color:", wire_color_btn)
+            wire_reset = QPushButton("Default")
+            wire_reset.setToolTip(
+                "Drop the per-wire color override, so these wires follow "
+                "the configured default (and its sign coloring) again.")
+            wire_reset.clicked.connect(
+                lambda: self._apply_to_wires('color', None))
+            form.addRow("", wire_reset)
 
         self.properties_layout.addLayout(form)
 
@@ -8002,6 +8144,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         self.dragging_group = False  # True if dragging multiple selected nodes
         self.drag_pending_node = None  # Node clicked but not yet dragging (waiting for motion)
         self.drag_pending_group = False  # Group clicked but not yet dragging
+        self._drag_duplicate = False  # Option/Alt-drag: copy, don't move
         self.drag_start_pos = None  # Starting position for group drag
         self.drag_threshold = 0.1  # Minimum distance to move before starting drag (data units)
         self.drag_preview_patches = []  # List of preview patches for group drag
@@ -8643,8 +8786,10 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         sm.bind_shortcut("grid.toggle_type", self._toggle_grid_type, self)
 
         # ===== GRAPH ROTATION =====
-        sm.bind_shortcut("rotate.ccw", lambda: self._rotate_selected_nodes(15), self)
-        sm.bind_shortcut("rotate.cw", lambda: self._rotate_selected_nodes(-15), self)
+        sm.bind_shortcut("rotate.ccw", lambda: self._rotate_selected_nodes(
+            getattr(config, 'GLYPH_ROTATION_INCREMENT', 15)), self)
+        sm.bind_shortcut("rotate.cw", lambda: self._rotate_selected_nodes(
+            -getattr(config, 'GLYPH_ROTATION_INCREMENT', 15)), self)
         sm.bind_shortcut("graph.flip_horizontal", self._flip_selected_nodes_horizontal, self, wrap_for_input=True)
         sm.bind_shortcut("graph.flip_vertical", self._flip_selected_nodes_vertical, self)
 
@@ -8765,9 +8910,9 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         print("  Shift+Up/Down   : Nudge node label / Adjust edge label offset")
         print("  Shift+Left/Right: Nudge node label horizontally")
         print("  Ctrl+A          : Select all nodes and edges")
-        print("  Ctrl+C          : Copy selected nodes and edges")
-        print("  Ctrl+X          : Cut selected nodes and edges")
-        print("  Ctrl+V          : Paste nodes and edges at view center")
+        print("  Ctrl+C          : Copy the selection (nodes, edges, ports, lines)")
+        print("  Ctrl+X          : Cut the selection")
+        print("  Ctrl+V          : Paste at view center")
         print("  Ctrl+Z          : Undo last action")
         print("  Ctrl+U          : Rotate selected nodes 15° CCW")
         print("  Ctrl+I          : Rotate selected nodes 15° CW")
@@ -13926,6 +14071,11 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             self._adjust_edge_properties(direction)
             return
 
+        # Wires take the arrow keys the way edges do: Up/Down width,
+        # Left/Right label size
+        if self._adjust_wire_properties(direction):
+            return
+
         # Selected port/line glyphs stretch with the arrow keys (node-key
         # parity: Up/Down height, Left/Right length)
         if getattr(self, 'selected_ports', None) or \
@@ -15338,6 +15488,9 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         # Base values calibrated for reference view (figsize=12, span~20 units)
         # This gives points_per_data_unit ≈ 43 for that reference
         reference_points_per_data_unit = 43.0
+        # the halo under a selected edge widens with the zoom, like the
+        # edge it sits under
+        zoom_lw_scale = points_per_data_unit / reference_points_per_data_unit
 
         for edge in self.edges:
             from_node = edge['from_node']
@@ -15378,6 +15531,20 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     edge_color = edge.get('color', 'black')  # Keep original color
 
                 # Draw the self-loop arc
+                if edge in self.selected_edges:
+                    # The halo goes down FIRST, so the loop draws over it
+                    gp.selfloop(
+                        ax=self.canvas.ax,
+                        nodecent=from_pos,
+                        R=from_radius * 1.2,
+                        baseangle=selfloopangle,
+                        dtheta=-34,
+                        loopR=loopR,
+                        arrowlength=arrowlength,
+                        lw=self._selection_halo_lw(scaled_lw, zoom_lw_scale),
+                        color=self.SELECTION_HALO_COLOR,
+                        flip=edge.get('flip', False),
+                    )
                 gp.selfloop(
                     ax=self.canvas.ax,
                     nodecent=from_pos,
@@ -15460,23 +15627,6 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                          3*(1-t)*t**2 * bz_end[1] +
                          t**3 * v_end[1])
 
-                # Draw selection indicator for selected self-loops
-                if edge in self.selected_edges:
-                    # Place indicator at 75% along the bezier curve from node center
-                    apex_dist_from_center = np.sqrt((apex_x - from_pos[0])**2 + (apex_y - from_pos[1])**2)
-                    indicator_distance = apex_dist_from_center * 0.75
-                    apex_angle = np.arctan2(apex_y - from_pos[1], apex_x - from_pos[0])
-                    indicator_x = from_pos[0] + indicator_distance * np.cos(apex_angle)
-                    indicator_y = from_pos[1] + indicator_distance * np.sin(apex_angle)
-
-                    selection_circle = patches.Circle(
-                        (indicator_x, indicator_y), from_radius * 0.3,
-                        facecolor='lightcoral',
-                        edgecolor='red',
-                        linewidth=2,
-                        zorder=25
-                    )
-                    self.canvas.ax.add_patch(selection_circle)
             else:
                 # Draw edge using graph_primitives edge function
                 from_pos = from_node['pos']
@@ -15564,6 +15714,24 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                             edge_alpha = 0.5
                         edge_color = 'steelblue'
 
+                if edge in self.selected_edges:
+                    # The halo goes down FIRST, so the edge draws over it.
+                    # No labels on it: they would double-draw and fringe.
+                    gp.edge(
+                        ax=self.canvas.ax,
+                        nodexy=[from_pos, to_pos],
+                        nodeR=[from_radius, to_radius],
+                        label=[None, None],
+                        labeltheta=labeltheta,
+                        style=style,
+                        whichedges=edge['direction'],
+                        theta=edge.get('looptheta', 30),
+                        loopkwargs={
+                            'lw': self._selection_halo_lw(final_lw,
+                                                          zoom_lw_scale),
+                            'arrowlength': 0.4,
+                            'color': self.SELECTION_HALO_COLOR},
+                    )
                 gp.edge(
                     ax=self.canvas.ax,
                     nodexy=[from_pos, to_pos],
@@ -15581,19 +15749,6 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     usetex=self.use_latex,
                 )
 
-                # Draw selection indicator for selected edges
-                if edge in self.selected_edges:
-                    mid_x = (from_pos[0] + to_pos[0]) / 2
-                    mid_y = (from_pos[1] + to_pos[1]) / 2
-                    # Draw a small circle at the edge midpoint
-                    selection_circle = patches.Circle(
-                        (mid_x, mid_y), 0.3,
-                        facecolor='lightcoral',
-                        edgecolor='red',
-                        linewidth=2,
-                        zorder=20
-                    )
-                    self.canvas.ax.add_patch(selection_circle)
 
     def _on_motion(self, event):
         """Handle mouse motion - dispatches to appropriate handler."""
@@ -15689,74 +15844,16 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 self.canvas.draw_idle()
             return
 
-        # Handle group dragging
+        # Handle group dragging (nodes and glyphs together)
         if self.dragging_group and self.drag_start_pos is not None:
-            # Calculate offset from drag start
-            dx = event.xdata - self.drag_start_pos[0]
-            dy = event.ydata - self.drag_start_pos[1]
-
-            # Remove old previews
-            for patch in self.drag_preview_patches:
-                try:
-                    patch.remove()
-                except:
-                    pass
-            for text in self.drag_preview_texts:
-                try:
-                    text.remove()
-                except:
-                    pass
-            for outline in self.drag_preview_outlines:
-                try:
-                    outline.remove()
-                except:
-                    pass
-            self.drag_preview_patches.clear()
-            self.drag_preview_texts.clear()
-            self.drag_preview_outlines.clear()
-
-            # Determine which canvas/nodes to use
-            if event.inaxes == self.kron_canvas.ax and hasattr(self, 'kron_graph') and self.kron_graph:
-                target_canvas = self.kron_canvas
-                target_nodes = self.kron_graph['nodes']
-            else:
-                target_canvas = self.canvas
-                target_nodes = self.nodes
-
-            # Draw preview for each selected node
-            any_occupied = False
-            for node in self.selected_nodes:
-                new_x = node['pos'][0] + dx
-                new_y = node['pos'][1] + dy
-                snap_x, snap_y = self._snap_to_grid(new_x, new_y)
-
-                # Check if occupied by non-selected node
-                occupied = any(
-                    other_node not in self.selected_nodes and
-                    np.isclose(other_node['pos'][0], snap_x, atol=0.01) and
-                    np.isclose(other_node['pos'][1], snap_y, atol=0.01)
-                    for other_node in target_nodes
-                )
-                any_occupied = any_occupied or occupied
-
-                # Ghost appearance: use semi-transparent fill
-                color = 'red' if occupied else 'lightblue'
-                node_size_mult = node.get('node_size_mult', 1.0)
-
-                preview_patch = patches.Circle(
-                    (snap_x, snap_y), self.node_radius * node_size_mult,
-                    fill=True, facecolor=color, edgecolor='gray',
-                    linestyle=':', linewidth=1.5, alpha=0.5, zorder=15
-                )
-                target_canvas.ax.add_patch(preview_patch)
-                self.drag_preview_patches.append(preview_patch)
-
-                preview_text = target_canvas.ax.text(
-                    snap_x, snap_y, node['label'],
-                    ha='center', va='center', fontsize=14, color='gray', alpha=0.7, zorder=16
-                )
-                self.drag_preview_texts.append(preview_text)
-
+            target_canvas, target_nodes = self._get_target_canvas_and_nodes(
+                event)
+            if target_canvas is None:
+                target_canvas, target_nodes = self.canvas, self.nodes
+            self._draw_group_drag_previews(
+                event.xdata - self.drag_start_pos[0],
+                event.ydata - self.drag_start_pos[1],
+                nodes=target_nodes, ax=target_canvas.ax)
             target_canvas.draw_idle()
             return
 
@@ -16112,6 +16209,9 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         # Use Qt's keyboard modifiers for reliable Shift/Ctrl detection
         modifiers = QApplication.keyboardModifiers()
         shift_pressed = modifiers & Qt.ShiftModifier
+        # Option on macOS is Qt's AltModifier: hold it while dragging to
+        # leave the selection where it is and drop a copy at the offset
+        alt_pressed = bool(modifiers & Qt.AltModifier)
 
         # Basis ordering mode - select nodes in order
         if self.basis_ordering_mode:
@@ -16145,7 +16245,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
         # Normal mode (no placement) - select, drag, double-click
         if self.placement_mode is None:
-            self._on_click_normal_mode(event, shift_pressed)
+            self._on_click_normal_mode(event, shift_pressed, alt_pressed)
             return
 
         # Node placement mode
@@ -16411,7 +16511,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 self._update_plot()
         return
 
-    def _on_click_normal_mode(self, event, shift_pressed):
+    def _on_click_normal_mode(self, event, shift_pressed,
+                              alt_pressed=False):
         """Handle click in normal mode - select, drag, or double-click."""
         current_time = time.time()
 
@@ -16429,7 +16530,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             is_double_pl = (time_diff < self.double_click_threshold and
                             pos_diff < 0.5)
         if self._maybe_handle_ports_normal_click(event, shift_pressed,
-                                                 is_double_pl):
+                                                 is_double_pl, alt_pressed):
             if is_double_pl:
                 self.last_click_time = 0
                 self.last_click_pos = None
@@ -16492,11 +16593,13 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
         # Single click on node - select and prepare for potential dragging
         if clicked_node:
-            # If clicking on an already selected node, prepare to drag the whole group
-            if clicked_node in self.selected_nodes and len(self.selected_nodes) > 1:
-                self.drag_pending_group = True
-                self.drag_start_pos = (event.xdata, event.ydata)
+            # Clicking an already-selected node drags the whole selection --
+            # glyphs included, which is what makes a port + edge + node
+            # group movable as one
+            if self._arm_group_drag_from(clicked_node, event.xdata,
+                                         event.ydata, alt_pressed):
                 # Don't print yet - wait until actual drag starts
+                pass
             else:
                 # Select only this node and prepare to drag it
                 if clicked_node not in self.selected_nodes:
@@ -16506,6 +16609,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     self._update_plot()
                 self.drag_pending_node = clicked_node
                 self.drag_start_pos = (event.xdata, event.ydata)
+                self._drag_duplicate = alt_pressed
                 # Don't print yet - wait until actual drag starts
             return
 
@@ -16759,6 +16863,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             if self.drag_pending_node or self.drag_pending_group:
                 self.drag_pending_node = None
                 self.drag_pending_group = False
+                self._drag_duplicate = False
                 self.drag_start_pos = None
 
     def _on_release_selection_window(self, event):
@@ -16799,6 +16904,18 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     if line not in self.selected_lines:
                         self.selected_lines.append(line)
 
+            # Attachments and taps come too, so a window over a sub-circuit
+            # can retune its whole wiring at once. Compared by identity:
+            # two links with the same rate are equal dicts but are not the
+            # same link.
+            band_atts, band_taps = self._links_in_rect(x0, y0, x1, y1)
+            have = {id(a) for _p, a in self.selected_attachments}
+            self.selected_attachments += [(p, a) for p, a in band_atts
+                                          if id(a) not in have]
+            have = {id(c) for _l, _e, c in self.selected_taps}
+            self.selected_taps += [(ln, e, c) for ln, e, c in band_taps
+                                   if id(c) not in have]
+
             msg = []
             if self.selected_nodes:
                 msg.append(f"{len(self.selected_nodes)} node(s)")
@@ -16806,6 +16923,9 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 msg.append(f"{len(self.selected_edges)} edge(s)")
             if self.selected_ports or self.selected_lines:
                 msg.append(f"{len(self.selected_ports) + len(self.selected_lines)} port/line glyph(s)")
+            n_links = len(self.selected_attachments) + len(self.selected_taps)
+            if n_links:
+                msg.append(f"{n_links} wire(s)")
             if msg:
                 print(f"Selected {' and '.join(msg)}")
 
@@ -16892,46 +17012,23 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             self._update_plot()
 
     def _on_release_group_drag(self, event):
-        """Complete group node dragging."""
+        """Complete group dragging (nodes and glyphs together)."""
         target_canvas, target_nodes = self._get_target_canvas_and_nodes(event)
 
         if target_nodes is not None:
-            dx = event.xdata - self.drag_start_pos[0]
-            dy = event.ydata - self.drag_start_pos[1]
-
-            new_positions = []
-            all_valid = True
-            for node in self.selected_nodes:
-                new_x = node['pos'][0] + dx
-                new_y = node['pos'][1] + dy
-                snap_x, snap_y = self._snap_to_grid(new_x, new_y)
-
-                occupied = any(
-                    other_node not in self.selected_nodes and
-                    np.isclose(other_node['pos'][0], snap_x, atol=0.01) and
-                    np.isclose(other_node['pos'][1], snap_y, atol=0.01)
-                    for other_node in target_nodes
-                )
-
-                if occupied:
-                    all_valid = False
-                    break
-                new_positions.append((node, snap_x, snap_y))
-
-            if all_valid:
-                self._save_state()
-                for node, snap_x, snap_y in new_positions:
-                    node['pos'] = (snap_x, snap_y)
-                print(f"✓ Moved {len(self.selected_nodes)} node(s)")
-                self._recompute_unpinned_selfloop_angles(
-                    {node['node_id'] for node in self.selected_nodes})
-            else:
-                print(f"✗ Cannot move group - some positions occupied")
+            message = self._commit_group_drag(
+                event.xdata - self.drag_start_pos[0],
+                event.ydata - self.drag_start_pos[1],
+                nodes=target_nodes)
+            if message:
+                print(message)
+                self._status_message(message)
 
         # Clean up
         self.dragging_group = False
         self.drag_pending_group = False
         self.drag_start_pos = None
+        self._drag_duplicate = False
         self._clear_drag_previews()
         self._update_target_canvas(target_canvas)
 
@@ -16949,7 +17046,19 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 for node in target_nodes
             )
 
-            if not occupied:
+            if occupied:
+                print(f"✗ Cannot move node '{self.dragging_node['label']}' - position occupied")
+            elif getattr(self, '_drag_duplicate', False):
+                # Option-drag: the original stays and a copy lands where
+                # the drag ended
+                old_pos = self.dragging_node['pos']
+                landed = self._duplicate_selection_offset(
+                    snap_x - old_pos[0], snap_y - old_pos[1])
+                message = (f"Copied {landed}" if landed
+                           else "Nothing to copy in this selection")
+                print(message)
+                self._status_message(message)
+            else:
                 self._save_state()
                 old_pos = self.dragging_node['pos']
                 self.dragging_node['pos'] = (snap_x, snap_y)
@@ -16964,13 +17073,12 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
                 print(f"✓ Moved node '{self.dragging_node['label']}' from ({old_pos[0]:.3f}, {old_pos[1]:.3f}) to ({snap_x:.3f}, {snap_y:.3f})")
                 self._recompute_unpinned_selfloop_angles({self.dragging_node['node_id']})
-            else:
-                print(f"✗ Cannot move node '{self.dragging_node['label']}' - position occupied")
 
         # Clean up
         self.dragging_node = None
         self.drag_pending_node = None
         self.drag_start_pos = None
+        self._drag_duplicate = False
         self._clear_drag_previews()
 
         if target_canvas == self.kron_canvas and hasattr(self, 'kron_graph') and self.kron_graph:
@@ -17384,10 +17492,62 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             edge_copy['scattering_params'] = None
         return edge_copy
 
+    def _clipboard_has_content(self):
+        """True when there is anything at all to paste.
+
+        Ports and lines count on their own: a copy of a bare port glyph is
+        a legitimate clipboard, and testing only nodes/edges made it look
+        empty.
+        """
+        return bool(self.clipboard) and any(
+            self.clipboard.get(key)
+            for key in ('nodes', 'edges', 'ports', 'lines'))
+
+    def _glyph_selection_for_clipboard(self):
+        """The port/line glyphs a copy or cut would pick up."""
+        return (list(getattr(self, 'selected_ports', ()))
+                + list(getattr(self, 'selected_lines', ())))
+
+    def _clipboard_glyph_labels(self):
+        """(port_labels, line_labels): clipboard label -> pasted label.
+
+        Ports and lines auto-increment against their OWN namespaces, so
+        pasting P1 next to P1 gives P2 rather than colliding or inheriting a
+        node's numbering.
+        """
+        port_labels = LabelPatternAnalyzer.compute_next_labels(
+            [p['label'] for p in self.clipboard.get('ports', [])],
+            {p['label'] for p in getattr(self, 'ports', ())})
+        line_labels = LabelPatternAnalyzer.compute_next_labels(
+            [ln['label'] for ln in self.clipboard.get('lines', [])],
+            {ln['label'] for ln in getattr(self, 'line_resonators', ())})
+        return port_labels, line_labels
+
+    def _paste_summary(self, n_ports, n_lines, n_constraints):
+        """Tally of what a paste actually landed."""
+        return self._clipboard_counts(
+            {'nodes': self.selected_nodes, 'edges': self.selected_edges,
+             'ports': range(n_ports), 'lines': range(n_lines)},
+            n_constraints)
+
+    @staticmethod
+    def _clipboard_counts(clipboard, n_constraints=0):
+        """Human-readable tally of what a clipboard or paste contained."""
+        msg = []
+        for key, name in (('nodes', 'node'), ('edges', 'edge'),
+                          ('ports', 'port'), ('lines', 'line')):
+            count = len(clipboard.get(key, ()))
+            if count:
+                msg.append(f"{count} {name}(s)")
+        if n_constraints:
+            msg.append(f"{n_constraints} constraint group(s)")
+        return ' and '.join(msg) if msg else "nothing"
+
     def _copy_nodes(self):
-        """Copy selected nodes and edges to clipboard"""
-        if not self.selected_nodes and not self.selected_edges:
-            logger.info("No nodes or edges selected to copy")
+        """Copy selected nodes, edges and port/line glyphs to clipboard"""
+        if (not self.selected_nodes and not self.selected_edges
+                and not self._glyph_selection_for_clipboard()):
+            logger.info("Nothing selected to copy")
             self._status_message("Nothing selected to copy")
             return
 
@@ -17442,19 +17602,19 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     'is_conjugate_pair': group_data.get('is_conjugate_pair', False)
                 })
 
-        msg = []
-        if len(self.clipboard['nodes']) > 0:
-            msg.append(f"{len(self.clipboard['nodes'])} node(s)")
-        if len(self.clipboard['edges']) > 0:
-            msg.append(f"{len(self.clipboard['edges'])} edge(s)")
-        if len(self.clipboard['constraint_groups']) > 0:
-            msg.append(f"{len(self.clipboard['constraint_groups'])} constraint group(s)")
-        print(f"Copied {' and '.join(msg)}")
+        # Ports, lines and their links travel with the sub-circuit, so a
+        # copied group pastes back as a working group instead of bare modes
+        self._copy_ports_lines_to_clipboard(self.clipboard)
+
+        summary = self._clipboard_counts(
+            self.clipboard, len(self.clipboard['constraint_groups']))
+        print(f"Copied {summary}")
 
     def _cut_nodes(self):
-        """Cut selected nodes and edges to clipboard"""
-        if not self.selected_nodes and not self.selected_edges:
-            logger.info("No nodes or edges selected to cut")
+        """Cut selected nodes, edges and port/line glyphs to clipboard"""
+        if (not self.selected_nodes and not self.selected_edges
+                and not self._glyph_selection_for_clipboard()):
+            logger.info("Nothing selected to cut")
             self._status_message("Nothing selected to cut")
             return
 
@@ -17469,10 +17629,19 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         nodes_to_remove = list(self.selected_nodes)
         edges_to_remove = []
 
+        # Glyphs FIRST, while the scene is still intact: the copy decides
+        # which links travel by looking at the live nodes, and the loop
+        # below both removes those nodes and clears the links to them
+        self._copy_ports_lines_to_clipboard(self.clipboard)
+
         # Copy and remove nodes
         for node in nodes_to_remove:
             self.clipboard['nodes'].append(self._create_node_copy_dict(node))
             self.nodes.remove(node)
+            # Cutting a node drops the port attachments and line taps that
+            # pointed at it, exactly as deleting one does -- a link left
+            # pointing at a cut node still reaches the extractor
+            self._drop_attachments_for_node(node['node_id'])
 
             # Find all edges connected to this node
             for edge in self.edges:
@@ -17529,22 +17698,43 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             if edge in self.edges:
                 self.edges.remove(edge)
 
-        msg = []
-        if len(self.clipboard['nodes']) > 0:
-            msg.append(f"{len(self.clipboard['nodes'])} node(s)")
-        if len(self.clipboard['edges']) > 0:
-            msg.append(f"{len(self.clipboard['edges'])} edge(s)")
-        if len(self.clipboard['constraint_groups']) > 0:
-            msg.append(f"{len(self.clipboard['constraint_groups'])} constraint group(s)")
-        print(f"Cut {' and '.join(msg)}")
+        summary = self._clipboard_counts(
+            self.clipboard, len(self.clipboard['constraint_groups']))
+        self._delete_selected_ports_lines()
+        print(f"Cut {summary}")
 
         self.selected_nodes.clear()
         self.selected_edges.clear()
         self._update_plot()
 
-    def _paste_nodes(self):
-        """Smart paste with autoincrement labels and scattering params."""
-        if not self.clipboard or (not self.clipboard.get('nodes') and not self.clipboard.get('edges')):
+    def _duplicate_selection_offset(self, dx, dy):
+        """Copy the selection `(dx, dy)` away and select the copies.
+
+        This is what Option/Alt-drag commits: the originals stay put and
+        the copy lands where the drag ended. It borrows the clipboard
+        machinery (so links are relinked to the copy exactly as a paste
+        does) but puts the real clipboard back afterwards -- a duplicate
+        must not clobber what the user had copied.
+        """
+        saved = self.clipboard
+        try:
+            self.clipboard = {}
+            self._copy_nodes()
+            if not self._clipboard_has_content():
+                return None
+            summary = self._clipboard_counts(self.clipboard)
+            self._paste_nodes(offset=(dx, dy))
+        finally:
+            self.clipboard = saved
+        return summary
+
+    def _paste_nodes(self, *, offset=None):
+        """Smart paste with autoincrement labels and scattering params.
+
+        `offset` places the copy a given (dx, dy) from where it was copied
+        instead of at the view center -- the Option-drag duplicate path.
+        """
+        if not self._clipboard_has_content():
             print("Clipboard is empty")
             return
 
@@ -17561,10 +17751,17 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         view_center_x = (xlim[0] + xlim[1]) / 2
         view_center_y = (ylim[0] + ylim[1]) / 2
 
-        # Calculate centroid of clipboard nodes
-        if self.clipboard.get('nodes'):
-            clip_x = sum(n['pos'][0] for n in self.clipboard['nodes']) / len(self.clipboard['nodes'])
-            clip_y = sum(n['pos'][1] for n in self.clipboard['nodes']) / len(self.clipboard['nodes'])
+        # Centroid of EVERYTHING on the clipboard, glyphs included: a
+        # glyph-only copy has no node centroid at all, and the paste would
+        # land exactly on top of the original.
+        clip_positions = (
+            [tuple(n['pos']) for n in self.clipboard.get('nodes', [])]
+            + self._clipboard_ports_lines_positions(self.clipboard))
+        if offset is not None:
+            offset_x, offset_y = offset
+        elif clip_positions:
+            clip_x = sum(px for px, _ in clip_positions) / len(clip_positions)
+            clip_y = sum(py for _, py in clip_positions) / len(clip_positions)
 
             # Snap the centroid to grid to get the base offset
             snap_center_x, snap_center_y = self._snap_to_grid(view_center_x, view_center_y)
@@ -17746,19 +17943,23 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             if pasted_constraint_count > 0 and hasattr(self, 'properties_panel'):
                 self.properties_panel._apply_constraint_styling()
 
-        msg = []
-        if len(self.selected_nodes) > 0:
-            msg.append(f"{len(self.selected_nodes)} node(s)")
-        if len(self.selected_edges) > 0:
-            msg.append(f"{len(self.selected_edges)} edge(s)")
-        if pasted_constraint_count > 0:
-            msg.append(f"{pasted_constraint_count} constraint group(s)")
-        print(f"Pasted {' and '.join(msg)}")
+        # Port/line glyphs last: they need the node id mapping above so a
+        # copied link lands on the pasted mode, not the original
+        port_labels, line_labels = self._clipboard_glyph_labels()
+        n_ports, n_lines = self._paste_ports_lines(
+            self.clipboard, (offset_x, offset_y), old_id_to_new_node,
+            port_labels, line_labels)
+
+        print(f"Pasted {self._paste_summary(n_ports, n_lines, pasted_constraint_count)}")
         self._update_plot()
 
     def _paste_nodes_raw(self):
-        """Raw paste keeping original labels and scattering params (Ctrl+Shift+V)."""
-        if not self.clipboard or (not self.clipboard.get('nodes') and not self.clipboard.get('edges')):
+        """Raw paste keeping original labels and scattering params (Ctrl+Shift+V).
+
+        No `offset` twin: Option-drag duplicates through the smart path, so
+        a dragged copy gets its own labels rather than colliding.
+        """
+        if not self._clipboard_has_content():
             print("Clipboard is empty")
             return
 
@@ -17770,10 +17971,15 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         view_center_x = (xlim[0] + xlim[1]) / 2
         view_center_y = (ylim[0] + ylim[1]) / 2
 
-        # Calculate centroid of clipboard nodes
-        if self.clipboard.get('nodes'):
-            clip_x = sum(n['pos'][0] for n in self.clipboard['nodes']) / len(self.clipboard['nodes'])
-            clip_y = sum(n['pos'][1] for n in self.clipboard['nodes']) / len(self.clipboard['nodes'])
+        # Centroid of EVERYTHING on the clipboard, glyphs included: a
+        # glyph-only copy has no node centroid at all, and the paste would
+        # land exactly on top of the original.
+        clip_positions = (
+            [tuple(n['pos']) for n in self.clipboard.get('nodes', [])]
+            + self._clipboard_ports_lines_positions(self.clipboard))
+        if clip_positions:
+            clip_x = sum(px for px, _ in clip_positions) / len(clip_positions)
+            clip_y = sum(py for _, py in clip_positions) / len(clip_positions)
 
             # Snap the centroid to grid to get the base offset
             snap_center_x, snap_center_y = self._snap_to_grid(view_center_x, view_center_y)
@@ -17930,22 +18136,23 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             if pasted_constraint_count > 0 and hasattr(self, 'properties_panel'):
                 self.properties_panel._apply_constraint_styling()
 
-        msg = []
-        if len(self.selected_nodes) > 0:
-            msg.append(f"{len(self.selected_nodes)} node(s)")
-        if len(self.selected_edges) > 0:
-            msg.append(f"{len(self.selected_edges)} edge(s)")
-        if pasted_constraint_count > 0:
-            msg.append(f"{pasted_constraint_count} constraint group(s)")
-        print(f"Raw pasted {' and '.join(msg)}")
+        # Raw paste keeps the original glyph labels, as it does for nodes
+        n_ports, n_lines = self._paste_ports_lines(
+            self.clipboard, (offset_x, offset_y), old_id_to_new_node)
+
+        print(f"Raw pasted {self._paste_summary(n_ports, n_lines, pasted_constraint_count)}")
         self._update_plot()
 
     def _delete_selected_nodes(self):
-        """Delete selected nodes, edges, and port/line glyphs/attachments"""
-        if (not self.selected_nodes and not self.selected_edges
-                and not self.selected_ports and not self.selected_lines
-                and not self.selected_attachments):
-            print("No nodes or edges selected to delete")
+        """Delete selected nodes, edges, and port/line glyphs/links"""
+        # Taps and pump buses were missing from this guard, so deleting a
+        # selection of only those reported "nothing selected" and did
+        # nothing -- reachable now that a selection window takes links too
+        if not any((self.selected_nodes, self.selected_edges,
+                    self.selected_ports, self.selected_lines,
+                    self.selected_attachments, self.selected_taps,
+                    self.selected_pump_buses)):
+            print("Nothing selected to delete")
             return
 
         self._save_state()
@@ -18082,20 +18289,23 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         panel = self.properties_panel
         n_objects = (n_glyphs + n_wires + n_buses + len(self.selected_nodes)
                      + len(self.selected_edges))
-        # Several objects selected (nodes, edges, port/line glyphs, or any
-        # mix): show the properties they share, editable for all at once.
-        # Wires and pump buses have no shared-property surface of their own,
-        # so they only contribute to the count.
+        # Several objects selected (nodes, edges, port/line glyphs, wires,
+        # or any mix): show the properties they share, editable for all at
+        # once. A pump bus has no shared surface of its own, so it only
+        # contributes to the count; a LONE wire or glyph takes its own
+        # branch below, where the panel is richer.
         if n_objects > 1 and (len(self.selected_nodes) > 1
                               or len(self.selected_edges) > 1
-                              or n_glyphs):
+                              or n_glyphs or n_wires):
             signature = PropertiesPanel.selection_signature(
                 self.selected_nodes, self.selected_edges,
-                self.selected_ports, self.selected_lines)
+                self.selected_ports, self.selected_lines,
+                self.selected_attachments, self.selected_taps)
             if panel.displayed_multi != signature:
                 panel.show_multi_properties(
                     self.selected_nodes, self.selected_edges,
-                    self.selected_ports, self.selected_lines)
+                    self.selected_ports, self.selected_lines,
+                    self.selected_attachments, self.selected_taps)
             self._update_shortcut_overlay()
             return
         panel.displayed_multi = None

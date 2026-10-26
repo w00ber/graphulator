@@ -64,6 +64,7 @@ OPEN schema decision — "H" is reserved for the reactive hub — so do not
 treat the hatched pentagon as permanent.
 """
 
+import copy
 import logging
 
 import numpy as np
@@ -94,6 +95,11 @@ PHASE2_PHASE_TOOLTIP = (
 # cylinder (~10:1) with a closed left cap and an open right mouth.
 PORT_BODY_W = 1.5     # pentagon straight-body width (x node_radius)
 PORT_BODY_H = 1.35    # pentagon height
+# Nose depth and lead length, in units of the node radius. FIXED: neither
+# scales with the port's length multiplier. The nose is the point a wire
+# leaves through, so letting it grow with the body moved the departure
+# point every time a label autosized the glyph -- a port's angle point has
+# to stay put. Both are overridable per port and settable in Settings.
 PORT_APEX_W = 0.55    # tapered nose beyond the body
 PORT_LEAD_LEN = 1.2   # terminal lead at the apex
 LINE_BODY_W = 2.7     # cylinder half-length
@@ -676,12 +682,16 @@ class LineInputDialog(QDialog):
                  ("x = 0 (all-plus signs)", 'x0'),
                  ("None (isolated comb)", None)]
 
-    def __init__(self, line=None, default_label='TL1', parent=None):
+    def __init__(self, line=None, default_label='TL1', parent=None,
+                 defaults=None):
+        """`line` is the glyph being edited; `defaults` pre-fills a
+        PLACEMENT dialog without turning it into an edit (which would hide
+        the "terminate end with port" row and retitle the window)."""
         super().__init__(parent)
         editing = line is not None
         self.setWindowTitle("Edit Transmission Line" if editing
                             else "Place Transmission Line")
-        line = line or {}
+        line = line if line is not None else (dict(defaults or {}))
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
@@ -1375,23 +1385,197 @@ class ExplicitPortsMixin:
         self._attach_pending_line_end = None  # (line, end) awaiting a port
         self._place_loss_hub_next = False  # next port placement is a loss hub
         self._explicit_ports_notice = None  # keeps the non-modal notice alive
-        # glyph drag state (move ports/lines with the mouse in normal mode)
+        # glyph drag state (move ports/lines with the mouse in normal mode);
+        # _drag_duplicate is the Option/Alt "leave the original, drop a copy
+        # where this ends" variant (shared with the node drag, hence the
+        # un-prefixed name)
+        self._drag_duplicate = False
         self._glyph_drag_pending = None    # ('port'|'line', obj) armed on click
         self._glyph_drag_start = None      # (x, y) where the click landed
         self._glyph_dragging = None        # set once motion passes the threshold
         self._glyph_drag_preview = None    # dashed outline artist during drag
+        # Last-used placement appearance, so a run of glyphs comes out
+        # consistent without re-typing it. None means "start from the
+        # configured defaults"; the Settings dialog resets these on Apply
+        # so a changed default actually reaches the next glyph placed.
+        self.last_port_props = None
+        self.last_line_props = None
 
     @property
     def explicit_ports_enabled(self):
         return bool(getattr(self.APP_CONFIG, 'EXPLICIT_PORTS_MODE', False))
+
+    # ---- configured defaults ----
+    #
+    # The module constants above are the glyph GEOMETRY and the fallbacks.
+    # What a NEWLY PLACED object starts from is a user setting, read through
+    # APP_CONFIG so the Settings dialog's "Port & Wire Defaults" tab reaches
+    # it. getattr keeps an older config module (or a test stub) working.
+
+    def _cfg(self, name, fallback):
+        return getattr(self.APP_CONFIG, name, fallback)
+
+    def port_apex_depth(self, port=None):
+        """Nose depth of a port, in units of R.
+
+        Resolved at DRAW time: a per-port 'apex' override wins, else the
+        configured default. Fixed with respect to the port's length, so
+        stretching the body (or letting a long label autosize it) leaves
+        the point of the pentagon, and the lead past it, put.
+        """
+        if port is not None and port.get('apex') is not None:
+            return float(port['apex'])
+        return float(self._cfg('DEFAULT_PORT_APEX_DEPTH', PORT_APEX_W))
+
+    def port_lead_length(self, port=None):
+        """Length of a port's terminal lead, in units of R."""
+        if port is not None and port.get('lead') is not None:
+            return float(port['lead'])
+        return float(self._cfg('DEFAULT_PORT_LEAD_LENGTH', PORT_LEAD_LEN))
+
+    def _port_wire_widths(self, port):
+        """Drawn width of every wire that meets this port's lead tip.
+
+        Both kinds reach it: the port's own attachments, and a line end
+        terminated ON this port.
+        """
+        widths = [self.wire_style(att,
+                                  self.wire_default_color('port',
+                                                          att.get('sign', 1)))[1]
+                  for att in port.get('attachments', [])]
+        port_id = port.get('port_id')
+        for line in self.line_resonators:
+            for end in ('x0', 'xL'):
+                for conn in self._end_conns(line, end):
+                    if (conn.get('kind') == 'port'
+                            and conn.get('port_id') == port_id):
+                        widths.append(self.wire_style(conn)[1])
+        return widths
+
+    def port_lead_width(self, port):
+        """Stroke width of a port's lead, before the zoom factor.
+
+        The lead is the first stretch of whatever is wired to it, so it
+        takes the WIDEST attached wire's width rather than the port's own
+        stroke: a thin lead meeting a fat wire shows a step at the tip, and
+        matching the two by hand -- through the port's stroke width, which
+        also controls the pentagon -- is exactly the fiddling this removes.
+        With nothing attached there is no seam to match, so it falls back
+        to the port's own stroke.
+        """
+        widths = self._port_wire_widths(port)
+        if widths:
+            return max(widths)
+        return float(port.get('linewidth', PORT_LINEWIDTH))
+
+    def _port_defaults(self):
+        """Appearance a brand-new port starts from."""
+        return {
+            'linewidth': float(self._cfg('DEFAULT_PORT_LINEWIDTH',
+                                         PORT_LINEWIDTH)),
+            'color': self._cfg('DEFAULT_PORT_COLOR', 'black'),
+            'fill': self._cfg('DEFAULT_PORT_FILL', 'white'),
+            'angle_pinned': not bool(
+                self._cfg('DEFAULT_PORT_AUTO_ORIENT', True)),
+        }
+
+    def _line_defaults(self):
+        """Appearance a brand-new line resonator starts from."""
+        return {
+            'linewidth': float(self._cfg('DEFAULT_LINE_LINEWIDTH',
+                                         LINE_LINEWIDTH)),
+            'color': self._cfg('DEFAULT_LINE_COLOR', 'black'),
+            'fill': self._cfg('DEFAULT_LINE_FILL', '#cccccc'),
+        }
+
+    def _glyph_rotation_step(self):
+        return float(self._cfg('GLYPH_ROTATION_INCREMENT', 15))
+
+    # ---- hooks the shared group drag reaches into ----
+
+    def _selected_glyphs(self):
+        """Ports and lines in the current selection."""
+        return list(self.selected_ports) + list(self.selected_lines)
+
+    def _selected_wire_conns(self):
+        """The style dicts behind every selected link (attachment or tap)."""
+        return ([att for _port, att in self.selected_attachments]
+                + [conn for _line, _end, conn in self.selected_taps])
+
+    def _glyph_drag_extent(self, glyph):
+        """Half-size of a glyph's drag ghost, in data units.
+
+        Shared with the group-drag preview in common_window, so one glyph
+        dragged alone and the same glyph dragged inside a selection ghost
+        identically.
+        """
+        r = self.node_radius
+        if 'port_id' in glyph:
+            # the nose and lead are fixed, the body is not
+            half_w = (PORT_BODY_W / 2 * r * glyph.get('w_mult', 1.0)
+                      + (self.port_apex_depth(glyph)
+                         + self.port_lead_length(glyph)) * r)
+            half_h = PORT_BODY_H / 2 * r
+        else:
+            half_w = (LINE_BODY_W + LINE_LEAD_LEN) * r
+            half_h = LINE_BODY_H * r
+        return max(half_w, half_h)
+
+    def _wired_node_ids(self, glyph):
+        """node_ids this glyph's wiring reaches.
+
+        A moved glyph changes the direction its wires arrive from, so the
+        unpinned self-loops on those modes re-orient with it.
+        """
+        if 'port_id' in glyph:
+            return {a['node_id'] for a in glyph.get('attachments', [])}
+        ids = set()
+        for end in ('x0', 'xL'):
+            for conn in self._end_conns(glyph, end):
+                if conn.get('kind') == 'node':
+                    ids.add(conn['node_id'])
+                else:
+                    port = self._port_by_id(conn.get('port_id'))
+                    if port is not None:
+                        ids.update(a['node_id']
+                                   for a in port.get('attachments', []))
+        return ids
+
+    def wire_capstyle(self):
+        """Cap style for a wire's ends and for each of its dashes.
+
+        Read at DRAW time, so the setting restyles the whole drawing at
+        once. matplotlib's default leaves a dotted line as a row of tiny
+        rectangles; 'round' is what makes dots read as dots.
+        """
+        return ('round' if self._cfg('DEFAULT_WIRE_ROUND_CAPS', True)
+                else 'butt')
+
+    def wire_default_color(self, kind='port', sign=1):
+        """The color a wire with no override of its own is drawn in.
+
+        `kind` is 'port' (dissipative attachment, signed) or 'tap'
+        (conservative line tap).
+        """
+        if kind == 'tap':
+            return self._cfg('DEFAULT_WIRE_COLOR_TAP', WIRE_COLOR_TAP)
+        if sign < 0:
+            return self._cfg('DEFAULT_WIRE_COLOR_INVERTED',
+                             WIRE_COLOR_INVERTED)
+        return self._cfg('DEFAULT_WIRE_COLOR', WIRE_COLOR)
 
     def _has_explicit_port_objects(self):
         return bool(self.ports or self.line_resonators)
 
     # ---- programmatic scene API (used by placement modes and tests) ----
 
-    def add_port(self, label=None, pos=(0.0, 0.0), monitored=True, angle=0.0):
-        """Create a port (monitored) or loss hub (unmonitored) glyph."""
+    def add_port(self, label=None, pos=(0.0, 0.0), monitored=None, angle=0.0):
+        """Create a port (monitored) or loss hub (unmonitored) glyph.
+
+        `monitored=None` takes the configured default.
+        """
+        if monitored is None:
+            monitored = bool(self._cfg('DEFAULT_PORT_MONITORED', True))
         if label is None:
             prefix = 'P' if monitored else 'LH'
             label = f"{prefix}{self.port_id_counter + 1}"
@@ -1403,11 +1587,9 @@ class ExplicitPortsMixin:
             'monitored': bool(monitored),
             'w_mult': 1.0,
             'h_mult': 1.0,
-            'linewidth': PORT_LINEWIDTH,
-            'color': 'black',
-            'fill': 'white',
             'attachments': [],
         }
+        port.update(self._port_defaults())
         self.ports.append(port)
         self.port_id_counter += 1
         self._invalidate_scattering_data()
@@ -1417,12 +1599,19 @@ class ExplicitPortsMixin:
                            Ztx=65.0, f_max=10.0, port_end='xL',
                            Z0_port=50.0, alpha_uniform=0.0, angle=0.0,
                            end_coupling=None, w_mult=1.0, h_mult=1.0,
-                           linewidth=None, color='black', fill='#cccccc',
+                           linewidth=None, color=None, fill=None,
                            conj=False, twin_of=None, load=None, sections=None,
                            f_ref=None):
         """Create a transmission-line macro glyph."""
         if label is None:
             label = f"TL{self.line_id_counter + 1}"
+        appearance = self._line_defaults()
+        if linewidth is None:
+            linewidth = appearance['linewidth']
+        if color is None:
+            color = appearance['color']
+        if fill is None:
+            fill = appearance['fill']
         line = {
             'line_id': self.line_id_counter,
             'label': label,
@@ -1437,8 +1626,7 @@ class ExplicitPortsMixin:
             'angle': float(angle),
             'w_mult': float(w_mult),
             'h_mult': float(h_mult),
-            'linewidth': float(linewidth if linewidth is not None
-                               else LINE_LINEWIDTH),
+            'linewidth': float(linewidth),
             'color': color,
             'fill': fill,
             # Explicit end connections: each end holds a LIST, so several
@@ -1502,7 +1690,10 @@ class ExplicitPortsMixin:
         """
         node_id = node['node_id'] if isinstance(node, dict) else node
         if rate is None:
-            rate = self.APP_CONFIG.DEFAULT_NODE_B_EXT / 1000.0
+            rate = float(self._cfg(
+                'DEFAULT_ATTACHMENT_RATE',
+                getattr(self.APP_CONFIG, 'DEFAULT_NODE_B_EXT', 100.0))
+            ) / 1000.0
         for att in port['attachments']:
             if att['node_id'] == node_id:
                 att['rate'] = float(rate)
@@ -1545,10 +1736,27 @@ class ExplicitPortsMixin:
         self._invalidate_scattering_data()
 
     def _drop_attachments_for_node(self, node_id):
-        """Called when a node is deleted."""
+        """Drop every link that pointed at a node being removed.
+
+        Both kinds: a port attachment and a line tap. A tap left behind
+        draws as nothing (its node lookup fails) but still reaches the
+        extractor, so deleting or cutting a tapped mode has to clear it.
+        """
         for port in self.ports:
             port['attachments'] = [a for a in port['attachments']
                                    if a['node_id'] != node_id]
+        for line in self.line_resonators:
+            for end in ('x0', 'xL'):
+                conns = [c for c in self._end_conns(line, end)
+                         if not (c.get('kind') == 'node'
+                                 and c.get('node_id') == node_id)]
+                line.setdefault('ends', {'x0': [], 'xL': []})[end] = conns
+        self.selected_attachments = [
+            (p, a) for p, a in self.selected_attachments
+            if a.get('node_id') != node_id]
+        self.selected_taps = [
+            (ln, e, c) for ln, e, c in self.selected_taps
+            if c.get('node_id') != node_id]
 
     def explode_line_resonator(self, line):
         """One-way: materialize a line macro as real nodes + a port glyph.
@@ -1774,17 +1982,25 @@ class ExplicitPortsMixin:
 
     def _on_click_port_placement(self, event):
         snap_x, snap_y = self._snap_to_grid(event.xdata, event.ydata)
-        monitored = not self._place_loss_hub_next
+        # the explicit "place a loss hub" action wins over the default
+        monitored = (False if self._place_loss_hub_next
+                     else bool(self._cfg('DEFAULT_PORT_MONITORED', True)))
         prefix = 'P' if monitored else 'LH'
         default_label = f"{prefix}{self.port_id_counter + 1}"
         dialog = PortInputDialog(default_label=default_label,
-                                 monitored=monitored, parent=self)
+                                 monitored=monitored, parent=self,
+                                 port=(self.last_port_props
+                                       or self._port_defaults()))
         if dialog.exec() == QDialog.Accepted:
             result = dialog.get_result()
             self._save_state()
             port = self.add_port(label=result['label'], pos=(snap_x, snap_y),
                                  monitored=result['monitored'])
             self._apply_port_style(port, result)
+            # remember the appearance, not the label or the port/hub choice:
+            # the label auto-increments and the hub choice has its own action
+            self.last_port_props = {k: v for k, v in result.items()
+                                    if k not in ('label', 'monitored')}
             kind = "Port" if port['monitored'] else "Loss hub"
             print(f"✓ {kind} '{port['label']}' placed at "
                   f"({snap_x:.3f}, {snap_y:.3f}). Use edge mode (E) to "
@@ -1797,7 +2013,8 @@ class ExplicitPortsMixin:
     def _on_click_line_placement(self, event):
         snap_x, snap_y = self._snap_to_grid(event.xdata, event.ydata)
         dialog = LineInputDialog(
-            default_label=f"TL{self.line_id_counter + 1}", parent=self)
+            default_label=f"TL{self.line_id_counter + 1}", parent=self,
+            defaults=self.last_line_props)
         if dialog.exec() == QDialog.Accepted:
             result = dialog.get_result()
             self._save_state()
@@ -1810,6 +2027,8 @@ class ExplicitPortsMixin:
                     self.undo_stack.pop()
                 QMessageBox.warning(self, "Invalid line parameters", str(exc))
             else:
+                self.last_line_props = {k: v for k, v in result.items()
+                                        if k != 'label'}
                 n_modes = 2 * LineResonator(**line_payload(line)).N + 1
                 print(f"✓ Line '{line['label']}' placed "
                       f"({n_modes} comb modes at extraction)")
@@ -1988,7 +2207,7 @@ class ExplicitPortsMixin:
     # ---- normal-mode interaction (select / edit / delete) ----
 
     def _maybe_handle_ports_normal_click(self, event, shift_pressed,
-                                         is_double):
+                                         is_double, alt_pressed=False):
         """Called from the normal-mode click handler before node handling.
 
         Returns True when the click landed on a port/line/attachment link.
@@ -2005,6 +2224,11 @@ class ExplicitPortsMixin:
                     self.selected_ports.remove(port)
                 else:
                     self.selected_ports.append(port)
+            elif self._arm_group_drag_from(port, event.xdata, event.ydata,
+                                           alt_pressed):
+                # already part of a multi-object selection: drag it all,
+                # rather than reducing the selection to this one port
+                pass
             else:
                 self.selected_ports = [port]
                 self.selected_lines = []
@@ -2013,6 +2237,7 @@ class ExplicitPortsMixin:
                 # arm drag-to-move (activates once motion passes threshold)
                 self._glyph_drag_pending = ('port', port)
                 self._glyph_drag_start = (event.xdata, event.ydata)
+                self._drag_duplicate = bool(alt_pressed)
                 self._status_message(
                     f"Selected {'port' if port['monitored'] else 'loss hub'} "
                     f"'{port['label']}' — drag to move, Ctrl+U/Ctrl+I to "
@@ -2031,6 +2256,9 @@ class ExplicitPortsMixin:
                     self.selected_lines.remove(line)
                 else:
                     self.selected_lines.append(line)
+            elif self._arm_group_drag_from(line, event.xdata, event.ydata,
+                                           alt_pressed):
+                pass
             else:
                 self.selected_lines = [line]
                 self.selected_ports = []
@@ -2038,6 +2266,7 @@ class ExplicitPortsMixin:
                 self.selected_edges.clear()
                 self._glyph_drag_pending = ('line', line)
                 self._glyph_drag_start = (event.xdata, event.ydata)
+                self._drag_duplicate = bool(alt_pressed)
                 self._status_message(
                     f"Selected line '{line['label']}' — drag to move, "
                     "Ctrl+U/Ctrl+I to rotate, double-click to edit, D to "
@@ -2151,15 +2380,16 @@ class ExplicitPortsMixin:
         from PySide6.QtWidgets import QMenu
         from PySide6.QtGui import QCursor
 
+        step = self._glyph_rotation_step()
         port = self._find_port_at_position(event.xdata, event.ydata)
         if port is not None:
             menu = QMenu(self)
             menu.addAction("Edit\N{HORIZONTAL ELLIPSIS}",
                            lambda: self._edit_port(port))
-            menu.addAction("Rotate 15\N{DEGREE SIGN} CCW  (Ctrl+U)",
-                           lambda: self._rotate_selected_glyph(port, 15))
-            menu.addAction("Rotate 15\N{DEGREE SIGN} CW  (Ctrl+I)",
-                           lambda: self._rotate_selected_glyph(port, -15))
+            menu.addAction(f"Rotate {step:g}\N{DEGREE SIGN} CCW  (Ctrl+U)",
+                           lambda: self._rotate_selected_glyph(port, step))
+            menu.addAction(f"Rotate {step:g}\N{DEGREE SIGN} CW  (Ctrl+I)",
+                           lambda: self._rotate_selected_glyph(port, -step))
             menu.addSeparator()
             auto = menu.addAction("Auto-orient")
             auto.setCheckable(True)
@@ -2185,10 +2415,10 @@ class ExplicitPortsMixin:
             menu = QMenu(self)
             menu.addAction("Edit\N{HORIZONTAL ELLIPSIS}",
                            lambda: self._edit_line(line))
-            menu.addAction("Rotate 15\N{DEGREE SIGN} CCW  (Ctrl+U)",
-                           lambda: self._rotate_selected_glyph(line, 15))
-            menu.addAction("Rotate 15\N{DEGREE SIGN} CW  (Ctrl+I)",
-                           lambda: self._rotate_selected_glyph(line, -15))
+            menu.addAction(f"Rotate {step:g}\N{DEGREE SIGN} CCW  (Ctrl+U)",
+                           lambda: self._rotate_selected_glyph(line, step))
+            menu.addAction(f"Rotate {step:g}\N{DEGREE SIGN} CW  (Ctrl+I)",
+                           lambda: self._rotate_selected_glyph(line, -step))
             menu.addSeparator()
             if line.get('twin_of') is None:
                 menu.addAction(
@@ -2322,6 +2552,8 @@ class ExplicitPortsMixin:
             port['label'] = result['label']
             port['monitored'] = result['monitored']
             self._apply_port_style(port, result)
+            self.last_port_props = {k: v for k, v in result.items()
+                                    if k not in ('label', 'monitored')}
             self._invalidate_scattering_data()
             if hasattr(self, 'properties_panel'):
                 self.properties_panel._update_scattering_ports_table()
@@ -2539,14 +2771,7 @@ class ExplicitPortsMixin:
                 self._glyph_drag_preview.remove()
             except Exception:
                 pass
-        r = self.node_radius
-        if kind == 'port':
-            half_w = (PORT_BODY_W / 2 + PORT_APEX_W + PORT_LEAD_LEN) * r
-            half_h = PORT_BODY_H / 2 * r
-        else:
-            half_w = (LINE_BODY_W + LINE_LEAD_LEN) * r
-            half_h = LINE_BODY_H * r
-        extent = max(half_w, half_h)
+        extent = self._glyph_drag_extent(obj)
         self._glyph_drag_preview = mpatches.Rectangle(
             (snap_x - extent, snap_y - extent), 2 * extent, 2 * extent,
             fill=False, edgecolor='darkorange', linestyle=':',
@@ -2570,15 +2795,30 @@ class ExplicitPortsMixin:
             if event.xdata is not None and event.ydata is not None:
                 snap_x, snap_y = self._snap_to_grid(event.xdata, event.ydata)
                 if (snap_x, snap_y) != tuple(obj['pos']):
+                    if getattr(self, '_drag_duplicate', False):
+                        # Option-drag: the original stays put and a copy
+                        # lands where the drag ended
+                        landed = self._duplicate_selection_offset(
+                            snap_x - obj['pos'][0], snap_y - obj['pos'][1])
+                        self._drag_duplicate = False
+                        self._status_message(
+                            f"Copied {landed}" if landed
+                            else "Nothing to copy in this selection")
+                        self._update_plot()
+                        return True
                     self._save_state()
                     obj['pos'] = (snap_x, snap_y)
+                    self._recompute_unpinned_selfloop_angles(
+                        self._wired_node_ids(obj))
                     print(f"Moved {kind} '{obj['label']}' to "
                           f"({snap_x:.3f}, {snap_y:.3f})")
+            self._drag_duplicate = False
             self._update_plot()
             return True
         if self._glyph_drag_pending is not None:
             self._glyph_drag_pending = None
             self._glyph_drag_start = None
+            self._drag_duplicate = False
             return True
         return False
 
@@ -2711,6 +2951,185 @@ class ExplicitPortsMixin:
             count += 1
         return count
 
+    # ---- clipboard ----
+    #
+    # Ports, lines and their links ride along with the ordinary node/edge
+    # clipboard rather than having one of their own, so Ctrl+C / Ctrl+V on a
+    # sub-circuit copies the WHOLE sub-circuit. The host window calls these
+    # from _copy_nodes / _cut_nodes / _paste_nodes.
+
+    def _twin_derived_port_ids(self):
+        """port_ids that exist only because some line is pumped.
+
+        A pump's conjugate twin and the twin's mirror ports are REGENERATED
+        by set_line_pump, so carrying them in the clipboard would duplicate
+        them on paste.
+        """
+        ids = set()
+        for line in self.line_resonators:
+            if line.get('twin_of') is None:
+                continue
+            for end in ('x0', 'xL'):
+                for conn in self._end_conns(line, end):
+                    if conn.get('kind') == 'port':
+                        ids.add(conn.get('port_id'))
+        return ids
+
+    def _copy_ports_lines_to_clipboard(self, clipboard):
+        """Add the selected ports / lines to `clipboard`.
+
+        A LINK (port attachment or line tap) is carried only when BOTH of
+        its ends are in the copied set, exactly as an edge is: a pasted link
+        must have something of its own to land on, and silently re-pointing
+        it at the original's target would make one copy quietly share the
+        other's wiring.
+
+        Conjugate twins and their mirror ports are left out. They are
+        derived objects that set_line_pump rebuilds, so the pump config
+        travels on the PRIMARY line and the twin is regenerated at paste.
+        """
+        node_ids = {n['node_id'] for n in self.selected_nodes}
+        twin_ports = self._twin_derived_port_ids()
+        ports = [p for p in self.selected_ports
+                 if p['port_id'] not in twin_ports]
+        lines = [ln for ln in self.selected_lines
+                 if ln.get('twin_of') is None]
+        port_ids = {p['port_id'] for p in ports}
+
+        def keep(conn):
+            if conn.get('kind') == 'port':
+                return conn.get('port_id') in port_ids
+            return conn.get('node_id') in node_ids
+
+        clipboard['ports'] = []
+        for port in ports:
+            clip = copy.deepcopy(port)
+            clip['attachments'] = [copy.deepcopy(a)
+                                   for a in port.get('attachments', [])
+                                   if a['node_id'] in node_ids]
+            clipboard['ports'].append(clip)
+
+        clipboard['lines'] = []
+        for line in lines:
+            clip = copy.deepcopy(line)
+            clip['ends'] = {
+                end: [copy.deepcopy(c) for c in self._end_conns(line, end)
+                      if keep(c)]
+                for end in ('x0', 'xL')}
+            clipboard['lines'].append(clip)
+
+        return len(clipboard['ports']), len(clipboard['lines'])
+
+    @staticmethod
+    def _clipboard_ports_lines_positions(clipboard):
+        """Positions of the clipboard's glyphs, for the paste centroid.
+
+        Without these a glyph-only copy has no centroid at all and the paste
+        lands exactly on top of the original.
+        """
+        return ([tuple(p['pos']) for p in clipboard.get('ports', [])]
+                + [tuple(ln['pos']) for ln in clipboard.get('lines', [])])
+
+    def _paste_ports_lines(self, clipboard, offset, old_id_to_new_node,
+                           port_labels=None, line_labels=None):
+        """Paste the clipboard's ports / lines and select them.
+
+        `old_id_to_new_node` maps the clipboard's node ids to the nodes just
+        pasted, so a copied link follows the copy rather than reattaching to
+        the original. Ports are created before lines because a line end may
+        be terminated on one. `port_labels` / `line_labels` map old label ->
+        new label (smart paste); empty keeps the originals (raw paste).
+
+        Returns (n_ports, n_lines).
+        """
+        dx, dy = offset
+        port_labels = port_labels or {}
+        line_labels = line_labels or {}
+        old_to_new_port = {}
+        pasted_ports, pasted_lines = [], []
+
+        for clip in clipboard.get('ports', []):
+            port = copy.deepcopy(clip)
+            old_id = port['port_id']
+            port['port_id'] = self.port_id_counter
+            self.port_id_counter += 1
+            port['label'] = port_labels.get(clip['label'], clip['label'])
+            port['pos'] = (clip['pos'][0] + dx, clip['pos'][1] + dy)
+            # relinked below, once every pasted node is known
+            port['attachments'] = []
+            self.ports.append(port)
+            old_to_new_port[old_id] = port
+            pasted_ports.append(port)
+
+        for clip, port in zip(clipboard.get('ports', []), pasted_ports):
+            for att in clip.get('attachments', []):
+                node = old_id_to_new_node.get(att['node_id'])
+                if node is None:
+                    continue              # its mode did not travel
+                new_att = copy.deepcopy(att)
+                new_att['node_id'] = node['node_id']
+                port['attachments'].append(new_att)
+
+        def remap(conn):
+            """The link's new target, or None when it did not travel."""
+            conn = copy.deepcopy(conn)
+            if conn.get('kind') == 'port':
+                target = old_to_new_port.get(conn.get('port_id'))
+                if target is None:
+                    return None
+                conn['port_id'] = target['port_id']
+                return conn
+            node = old_id_to_new_node.get(conn.get('node_id'))
+            if node is None:
+                return None
+            conn['node_id'] = node['node_id']
+            return conn
+
+        pumps = []
+        for clip in clipboard.get('lines', []):
+            line = copy.deepcopy(clip)
+            line['line_id'] = self.line_id_counter
+            self.line_id_counter += 1
+            line['label'] = line_labels.get(clip['label'], clip['label'])
+            line['pos'] = (clip['pos'][0] + dx, clip['pos'][1] + dy)
+            line['ends'] = {
+                end: [c for c in map(remap, clip.get('ends', {}).get(end, []))
+                      if c is not None]
+                for end in ('x0', 'xL')}
+            # the twin is DERIVED; re-created below from the pump config so
+            # the copy gets its own rather than sharing the original's
+            pump = line.pop('pump', None)
+            line['pump'] = None
+            line['conj'] = False
+            line['twin_of'] = None
+            self.line_resonators.append(line)
+            pasted_lines.append(line)
+            if pump:
+                pumps.append((line, pump))
+
+        for line, pump in pumps:
+            try:
+                self.set_line_pump(
+                    line, pump['end'], pump['f_p'], pump['rate'],
+                    phase=pump.get('phase', 0.0), n_ref=pump.get('n_ref'),
+                    coupling=pump.get('coupling', 'inductive'))
+            except ValueError as exc:
+                # e.g. the copy also carried node taps, which a pumped line
+                # cannot hold yet -- paste the line unpumped and say so
+                logger.info("Pasted line '%s' kept no pump: %s",
+                            line['label'], exc)
+                self._status_message(
+                    f"'{line['label']}' pasted without its pump: {exc}", 8000)
+
+        self.selected_ports = list(pasted_ports)
+        self.selected_lines = list(pasted_lines)
+        self.selected_attachments = []
+        self.selected_taps = []
+        self.selected_pump_buses = []
+        if pasted_ports or pasted_lines:
+            self._invalidate_scattering_data()
+        return len(pasted_ports), len(pasted_lines)
+
     # ---- hit testing ----
 
     def _port_geometry(self, port):
@@ -2727,8 +3146,10 @@ class ExplicitPortsMixin:
             w_mult = max(w_mult, self._port_label_w_mult(port))
         w = PORT_BODY_W * r * w_mult
         h = PORT_BODY_H * r * port.get('h_mult', 1.0)
-        apex_x = x + w / 2 + PORT_APEX_W * r * w_mult
-        lead_tip_x = apex_x + PORT_LEAD_LEN * r
+        # the nose and the lead are FIXED: stretching the body must not
+        # move the point a wire leaves through
+        apex_x = x + w / 2 + self.port_apex_depth(port) * r
+        lead_tip_x = apex_x + self.port_lead_length(port) * r
         return x, y, w, h, apex_x, lead_tip_x
 
     def _port_label_font_data(self, port):
@@ -3010,8 +3431,10 @@ class ExplicitPortsMixin:
             n_ref = (resonator.nearest_harmonic(freq) if freq is not None
                      else 1)
         if rate is None:
-            rate = self.APP_CONFIG.DEFAULT_EDGE_RATE / 1000.0 \
-                if hasattr(self.APP_CONFIG, 'DEFAULT_EDGE_RATE') else 0.1
+            rate = float(self._cfg(
+                'DEFAULT_TAP_RATE',
+                getattr(self.APP_CONFIG, 'DEFAULT_EDGE_RATE', 100.0))
+            ) / 1000.0
         for conn in line['ends'][end]:
             if conn.get('kind') == 'node' and conn['node_id'] == node_id:
                 conn.update({'rate': float(rate), 'sign': 1 if sign >= 0 else -1,
@@ -3713,6 +4136,38 @@ class ExplicitPortsMixin:
                        if c.get('kind') == 'node')
         return ids
 
+    def _links_in_rect(self, x0, y0, x1, y1):
+        """(attachments, taps) the rectangle encloses.
+
+        Same rule an EDGE uses: the drawn midpoint has to be inside. A
+        both-ends-in rule reads better on paper but is useless in practice
+        -- a band drawn across a bundle of wires, which is how you reach
+        for "these wires", encloses no endpoints at all.
+        """
+        def inside(pts):
+            mx, my = pts[len(pts) // 2]
+            return x0 <= mx <= x1 and y0 <= my <= y1
+
+        node_by_id = {n['node_id']: n for n in self.nodes}
+
+        attachments = []
+        for port in self.ports:
+            for att in port.get('attachments', []):
+                pts = self._attachment_wire(port, att, node_by_id)
+                if pts is not None and inside(pts):
+                    attachments.append((port, att))
+
+        taps = []
+        for line in self.line_resonators:
+            for end in ('x0', 'xL'):
+                for conn in self._end_conns(line, end):
+                    if conn.get('kind') != 'node':
+                        continue
+                    pts = self._tap_wire(line, end, conn, node_by_id)
+                    if pts is not None and inside(pts):
+                        taps.append((line, end, conn))
+        return attachments, taps
+
     def _find_tap_at_position(self, x, y, tol=None):
         """Return (line, end, conn) whose tap link passes near (x, y)."""
         if x is None or y is None:
@@ -3765,7 +4220,8 @@ class ExplicitPortsMixin:
         r = self.node_radius
         _, _, w, _, rx = self._line_geometry(line)
         return (w + rx + LINE_LEAD_LEN * r
-                + (PORT_LEAD_LEN + PORT_APEX_W + PORT_BODY_W / 2 + 0.4) * r)
+                + (self.port_lead_length() + self.port_apex_depth()
+                   + PORT_BODY_W / 2 + 0.4) * r)
 
     def _port_lead_tip(self, port):
         """Rotated position of the lead tip (attachment links start here)."""
@@ -3908,28 +4364,43 @@ class ExplicitPortsMixin:
         proj = a + t[:, None] * seg
         return float(np.min(np.hypot(*(p - proj).T)))
 
-    @staticmethod
-    def wire_style(conn, default_color=WIRE_COLOR):
-        """(color, linewidth) of one wire, honoring per-wire overrides."""
+    def wire_style(self, conn, default_color=None):
+        """(color, linewidth) of one wire, honoring per-wire overrides.
+
+        An unset override falls back to `default_color` when the caller
+        names one, else to the configured wire default -- so changing that
+        default restyles every wire that has no color of its own.
+        """
+        if default_color is None:
+            default_color = self.wire_default_color(
+                'port', conn.get('sign', 1))
         color = conn.get('color') or default_color
-        mult = float(conn.get('linewidth_mult', 1.25))
-        return color, WIRE_LINEWIDTH * mult
+        mult = conn.get('linewidth_mult')
+        if mult is None:
+            mult = self._cfg('DEFAULT_WIRE_LINEWIDTH_MULT', 1.25)
+        return color, WIRE_LINEWIDTH * float(mult)
 
     def _draw_wire(self, ax, pts, color, linewidth, linestyle='-',
-                   selected=False, zorder=4, alpha=0.9):
-        """Draw one routed wire (with the salmon selection underlay)."""
+                   selected=False, zorder=4, alpha=0.9, lw_scale=1.0):
+        """Draw one routed wire (with the salmon selection underlay).
+
+        `linewidth` is already in points; `lw_scale` is the zoom factor it
+        was scaled by, so the halo around a selected wire grows with it
+        instead of pinching to a hairline when zoomed in.
+        """
         if selected:
             ax.add_line(mlines.Line2D(
                 pts[:, 0], pts[:, 1], color='salmon',
-                linewidth=max(4.0, linewidth + 2.6),
+                linewidth=max(4.0 * lw_scale, linewidth + 2.6 * lw_scale),
                 zorder=zorder - 0.5, alpha=0.9, solid_capstyle='round'))
+        capstyle = self.wire_capstyle()
         ax.add_line(mlines.Line2D(
             pts[:, 0], pts[:, 1], color=color, linewidth=linewidth,
             linestyle=linestyle, zorder=zorder, alpha=alpha,
-            solid_capstyle='round'))
+            solid_capstyle=capstyle, dash_capstyle=capstyle))
 
     def _draw_multi_wire(self, ax, pts, n_strokes, color, linewidth,
-                         selected=False, zorder=4):
+                         selected=False, zorder=4, lw_scale=1.0):
         """Draw a wire as `n_strokes` parallel strokes.
 
         The PRXQ visual language reserves a single line for conversion
@@ -3941,7 +4412,7 @@ class ExplicitPortsMixin:
         """
         if n_strokes <= 1:
             self._draw_wire(ax, pts, color, linewidth, selected=selected,
-                            zorder=zorder)
+                            zorder=zorder, lw_scale=lw_scale)
             return
         tang = np.gradient(pts, axis=0)
         norm = np.stack([-tang[:, 1], tang[:, 0]], axis=1)
@@ -3952,9 +4423,9 @@ class ExplicitPortsMixin:
         offsets = (np.arange(n_strokes) - (n_strokes - 1) / 2.0) * gap
         if selected:                      # one halo around the whole bundle
             self._draw_wire(ax, pts + norm * offsets[0], color, linewidth,
-                            selected=True, zorder=zorder)
+                            selected=True, zorder=zorder, lw_scale=lw_scale)
             self._draw_wire(ax, pts + norm * offsets[-1], color, linewidth,
-                            selected=True, zorder=zorder)
+                            selected=True, zorder=zorder, lw_scale=lw_scale)
         for off in offsets:
             ax.add_line(mlines.Line2D(
                 (pts + norm * off)[:, 0], (pts + norm * off)[:, 1],
@@ -4075,6 +4546,12 @@ class ExplicitPortsMixin:
         r = self.node_radius
         node_by_id = {n['node_id']: n for n in self.nodes}
         ppdu = self._glyph_points_per_data_unit(ax)
+        # matplotlib line widths are POINTS, so a stored width keeps a fixed
+        # on-screen thickness while the drawing grows. Edges have always
+        # been scaled by the zoom; the glyphs and their wires were drawing
+        # in raw points, which is why they looked like hairlines zoomed in
+        # and like slabs zoomed out.
+        lw_scale = self._zoom_lw_scale(ax)
         config = self.APP_CONFIG
         label_font_scale = getattr(config, 'PLOT_NODE_LABEL_FONT_SCALE', 0.35)
 
@@ -4084,7 +4561,7 @@ class ExplicitPortsMixin:
             selected = port in self.selected_ports
             pending = port is self._attach_pending_port
             stroke = 'dodgerblue' if pending else port.get('color', 'black')
-            lw = float(port.get('linewidth', PORT_LINEWIDTH))
+            lw = float(port.get('linewidth', PORT_LINEWIDTH)) * lw_scale
 
             def rot(px, py):
                 return _rotate_point(px, py, x, y, angle)
@@ -4103,7 +4580,7 @@ class ExplicitPortsMixin:
             if selected:
                 halo = mpatches.Polygon(
                     verts, closed=True, fill=False, edgecolor='salmon',
-                    linewidth=6.0, zorder=10.5)
+                    linewidth=6.0 * lw_scale, zorder=10.5)
                 ax.add_patch(halo)
             body = mpatches.Polygon(
                 verts, closed=True,
@@ -4115,11 +4592,15 @@ class ExplicitPortsMixin:
                 hatch=None if port['monitored'] else '///')
             ax.add_patch(body)
 
-            # terminal lead at the apex — same stroke as the body
+            # terminal lead at the apex. Its width follows the WIDEST
+            # wire attached here, so the lead and that wire read as one
+            # continuous line instead of stepping at the tip; with nothing
+            # attached it falls back to the body's own stroke.
             (ax0, ay0), (ax1, ay1) = rot(apex_x, y), rot(lead_tip_x, y)
             ax.add_line(mlines.Line2D(
                 [ax0, ax1], [ay0, ay1], color=stroke,
-                linewidth=lw, solid_capstyle='butt', zorder=11))
+                linewidth=self.port_lead_width(port) * lw_scale,
+                solid_capstyle='butt', zorder=11))
 
             # attachment wires: every wire leaves the lead tip colinear
             # with the lead (a multi-wire fan collimates through it) and
@@ -4129,16 +4610,11 @@ class ExplicitPortsMixin:
                 if pts is None:
                     continue
                 att_selected = (port, att) in self.selected_attachments
-                default = (WIRE_COLOR if att['sign'] >= 0
-                           else WIRE_COLOR_INVERTED)
+                default = self.wire_default_color('port', att['sign'])
                 link_color, lw = self.wire_style(att, default)
-                self._draw_wire(ax, pts, link_color, lw,
+                self._draw_wire(ax, pts, link_color, lw * lw_scale,
+                                lw_scale=lw_scale,
                                 selected=att_selected, zorder=4)
-                mx, my = pts[len(pts) // 2]
-                if att_selected:
-                    ax.add_patch(mpatches.Circle(
-                        (mx, my), 0.3, facecolor='lightcoral',
-                        edgecolor='red', linewidth=2, zorder=20))
                 # an inverted-sign wire is marked at the midpoint unless the
                 # user gave the wire a label of its own
                 self._draw_wire_label(
@@ -4164,7 +4640,7 @@ class ExplicitPortsMixin:
             selected = line in self.selected_lines
             stroke = line.get('color', 'black')
             fill = line.get('fill', '#cccccc')
-            lw = float(line.get('linewidth', LINE_LINEWIDTH))
+            lw = float(line.get('linewidth', LINE_LINEWIDTH)) * lw_scale
 
             # glyph rotation: draw axis-aligned, then rotate every artist
             # about the glyph center
@@ -4178,7 +4654,7 @@ class ExplicitPortsMixin:
                 halo = mpatches.Rectangle(
                     (lx - w - rx - LINE_LEAD_LEN * r, ly - hh),
                     2 * (w + rx + LINE_LEAD_LEN * r), 2 * hh, fill=False,
-                    edgecolor='salmon', linewidth=5.0, zorder=9.5,
+                    edgecolor='salmon', linewidth=5.0 * lw_scale, zorder=9.5,
                     transform=glyph_tf)
                 ax.add_patch(halo)
 
@@ -4255,7 +4731,8 @@ class ExplicitPortsMixin:
                          if c.get('kind') == 'port'
                          and c.get('port_id') == conn_port['port_id']), {})
                     wire_color, lw = self.wire_style(conn)
-                    self._draw_wire(ax, pts, wire_color, lw, zorder=4)
+                    self._draw_wire(ax, pts, wire_color, lw * lw_scale,
+                                    zorder=4, lw_scale=lw_scale)
                     self._draw_wire_label(ax, pts, conn, ppdu, wire_color)
                 # node taps at this end: thin solid wires with an n_ref tag
                 tap_conns = [cn for cn in self._end_conns(line, end_name)
@@ -4266,8 +4743,10 @@ class ExplicitPortsMixin:
                         continue
                     tap_selected = ((line, end_name, conn)
                                     in self.selected_taps)
-                    tap_color, lw = self.wire_style(conn, WIRE_COLOR_TAP)
-                    self._draw_wire(ax, pts, tap_color, lw,
+                    tap_color, lw = self.wire_style(
+                        conn, self.wire_default_color('tap'))
+                    self._draw_wire(ax, pts, tap_color, lw * lw_scale,
+                                    lw_scale=lw_scale,
                                     selected=tap_selected, zorder=4)
                     self._draw_wire_label(
                         ax, pts, conn, ppdu, tap_color,
@@ -4280,7 +4759,7 @@ class ExplicitPortsMixin:
                 ax.add_patch(mpatches.Circle(
                     (ex, ey), 0.12 * r,
                     facecolor=(mark if connected or is_pending else 'white'),
-                    edgecolor=mark, linewidth=1.6, zorder=11.5))
+                    edgecolor=mark, linewidth=1.6 * lw_scale, zorder=11.5))
 
             # label: inside the body when it is tall enough, else floated
             # above; node-style bold sans-serif either way
@@ -4325,7 +4804,8 @@ class ExplicitPortsMixin:
             pump = line['pump']
             selected = line in getattr(self, 'selected_pump_buses', [])
             color, lw = self.wire_style(pump, PUMP_BUS_COLOR)
-            self._draw_multi_wire(ax, pts, PUMP_BUS_STROKES, color, lw,
+            self._draw_multi_wire(ax, pts, PUMP_BUS_STROKES, color,
+                                  lw * lw_scale, lw_scale=lw_scale,
                                   selected=selected, zorder=4)
             n_ref, m_ref = self._pump_reference_pair(line)
             self._draw_wire_label(

@@ -301,7 +301,10 @@ class GlyphMixin:
         self.selected_txlines = []
         self.selected_wires = []      # [(owner, conn)], owner = port|txline
 
-        # drag-to-move
+        # drag-to-move; _drag_duplicate is the Option/Alt "leave the
+        # original, drop a copy where this ends" variant (shared with the
+        # node drag, hence the un-prefixed name)
+        self._drag_duplicate = False
         self._glyph_drag_pending = None    # (kind, obj)
         self._glyph_dragging = None
         self._glyph_drag_start = None
@@ -323,6 +326,72 @@ class GlyphMixin:
     def _has_glyphs(self):
         return bool(self.ports or self.txlines)
 
+    # ---- configured defaults ----
+    #
+    # The geometry constants live in graph_primitives (next to the drawing
+    # code, so a script and the canvas cannot disagree); what a NEW glyph
+    # starts from is a user setting, read through APP_CONFIG so the Settings
+    # dialog's "Port & Wire Defaults" tab reaches it. getattr keeps an older
+    # config module, or a stub in a test, working.
+
+    def _cfg(self, name, fallback):
+        return getattr(self.APP_CONFIG, name, fallback)
+
+    def port_apex_depth(self, port=None):
+        """Nose depth of a port, in units of R.
+
+        Resolved at DRAW time: a per-port 'apex' override wins, else the
+        configured default. Fixed with respect to the port's length, so
+        stretching the body (or letting a long label autosize it) leaves
+        the point of the pentagon, and the wires leaving through it, put.
+        """
+        if port is not None and port.get('apex') is not None:
+            return float(port['apex'])
+        return float(self._cfg('DEFAULT_PORT_APEX_DEPTH', PORT_APEX_W))
+
+    def port_lead_length(self, port=None):
+        """Straight run a wire keeps past the nose, in units of R."""
+        if port is not None and port.get('lead') is not None:
+            return float(port['lead'])
+        return float(self._cfg('DEFAULT_PORT_LEAD_LENGTH', gp.PORT_WIRE_LEAD))
+
+    def _port_defaults(self):
+        """Appearance a brand-new port starts from."""
+        return {
+            'linewidth': float(self._cfg('DEFAULT_PORT_LINEWIDTH', PORT_LW)),
+            'color': self._cfg('DEFAULT_PORT_COLOR', 'black'),
+            'fill': self._cfg('DEFAULT_PORT_FILL', 'white'),
+            'label_color': self._cfg('DEFAULT_PORT_LABEL_COLOR', 'black'),
+            'angle_pinned': not bool(
+                self._cfg('DEFAULT_PORT_AUTO_ORIENT', True)),
+        }
+
+    def _txline_defaults(self):
+        """Appearance a brand-new txline starts from."""
+        return {
+            'linewidth': float(self._cfg('DEFAULT_TXLINE_LINEWIDTH',
+                                         TXLINE_LW)),
+            'color': self._cfg('DEFAULT_TXLINE_COLOR', 'black'),
+            'fill': self._cfg('DEFAULT_TXLINE_FILL', '#cccccc'),
+            'label_color': self._cfg('DEFAULT_TXLINE_LABEL_COLOR', 'black'),
+        }
+
+    def wire_capstyle(self):
+        """Cap style for a wire's ends and for each of its dashes.
+
+        Read at DRAW time, so the setting restyles the whole drawing at
+        once. matplotlib's default leaves a dotted line as a row of tiny
+        rectangles; 'round' is what makes dots read as dots.
+        """
+        return ('round' if self._cfg('DEFAULT_WIRE_ROUND_CAPS', True)
+                else 'butt')
+
+    def wire_defaults(self):
+        """(color, linewidth_mult, linestyle) a wire falls back to."""
+        return (self._cfg('DEFAULT_WIRE_COLOR', WIRE_COLOR),
+                float(self._cfg('DEFAULT_WIRE_LINEWIDTH_MULT', 1.25)),
+                self._cfg('DEFAULT_WIRE_LINESTYLE', '-'))
+
     # ---- creation / removal ----
 
     def _next_glyph_label(self, prefix, counter_attr):
@@ -341,14 +410,11 @@ class GlyphMixin:
             'angle_pinned': False,
             'w_mult': 1.0,
             'h_mult': 1.0,
-            'linewidth': PORT_LW,
-            'color': 'black',
-            'fill': 'white',
-            'label_color': 'black',
             'label_size_mult': 1.0,
             'labelnudge': (0.0, 0.0),
             'connections': [],
         }
+        term.update(self._port_defaults())
         term.update(props)
         self.port_id_counter += 1
         self.ports.append(term)
@@ -365,22 +431,27 @@ class GlyphMixin:
             'angle': float(angle),
             'w_mult': 1.0,
             'h_mult': 1.0,
-            'linewidth': TXLINE_LW,
-            'color': 'black',
-            'fill': '#cccccc',
-            'label_color': 'black',
             'label_size_mult': 1.0,
             'labelnudge': (0.0, 0.0),
             'ends': {'x0': [], 'xL': []},
         }
+        cx.update(self._txline_defaults())
         cx.update(props)
         self.txline_id_counter += 1
         self.txlines.append(cx)
         return cx
 
-    @staticmethod
-    def _default_wire_conn(**kw):
-        conn = {'color': None, 'linewidth_mult': 1.25, 'linestyle': '-',
+    def _default_wire_conn(self, **kw):
+        """A fresh wire, styled from the Port & Wire defaults.
+
+        `color` is left None on purpose: an unset color is resolved against
+        the configured default at DRAW time, so changing it restyles every
+        wire that has no override of its own. Width and style are stamped in
+        at creation, since those are per-wire controls in the panel and a
+        live default would fight with an explicit edit.
+        """
+        _, mult, style = self.wire_defaults()
+        conn = {'color': None, 'linewidth_mult': mult, 'linestyle': style,
                 'label': '', 'label_size_mult': 1.0}
         conn.update(kw)
         return conn
@@ -455,7 +526,8 @@ class GlyphMixin:
         """(x, y, w, h, apex_x) in UNROTATED data units."""
         return gp.portgeometry(port['pos'], self.node_radius,
                                    port.get('w_mult', 1.0),
-                                   port.get('h_mult', 1.0))
+                                   port.get('h_mult', 1.0),
+                                   self.port_apex_depth(port))
 
     def _port_effective_angle(self, port):
         """Drawing/hit-test angle of a port.
@@ -511,6 +583,17 @@ class GlyphMixin:
             self._port_effective_angle(port),
             port.get('w_mult', 1.0), port.get('h_mult', 1.0))
         return np.asarray(pt, dtype=float), np.asarray(tan, dtype=float)
+
+    def _port_wire_lead(self, port):
+        """Straight run a wire keeps out of `port` before it curves.
+
+        Every wire on this port gets the same one, so a fan overlaps along
+        it and reads as a single stub that splits at the offset rather than
+        as N strokes diverging from the point of the pentagon.
+        """
+        return gp.portwirelead(self.node_radius, port.get('w_mult', 1.0),
+                               self.port_apex_depth(port),
+                               self.port_lead_length(port))
 
     def _txline_geometry(self, txline):
         """(x, y, w, h, rx) in UNROTATED data units."""
@@ -579,9 +662,10 @@ class GlyphMixin:
 
     # ---- wire routing ----
 
-    def _glyph_wire_points(self, p0, t0, p1, t1, samples=33):
+    def _glyph_wire_points(self, p0, t0, p1, t1, samples=33, lead0=0.0,
+                           lead1=0.0):
         return gp.wirepoints(p0, t0, p1, t1, R=self.node_radius,
-                             samples=samples)
+                             samples=samples, lead0=lead0, lead1=lead1)
 
     def _wire_for(self, owner, conn, end=None, node_by_id=None):
         """Sampled points of one wire, or None when its target is gone.
@@ -593,9 +677,12 @@ class GlyphMixin:
                  else {n['node_id']: n for n in self.nodes})
         if end is None:
             p0, t0 = self._port_wire_start(owner)
+            lead0 = self._port_wire_lead(owner)
         else:
             p0, t0 = self._txline_end_wire_start(owner, end)
+            lead0 = 0.0       # a txline already draws its own stub
 
+        lead1 = 0.0
         if conn['kind'] == 'node':
             node = nodes.get(conn.get('node_id'))
             if node is None:
@@ -607,7 +694,9 @@ class GlyphMixin:
                 return None
             p1, t_out = self._port_wire_start(term)
             t1 = -t_out       # arrive travelling INTO the lead
-        return self._glyph_wire_points(p0, t0, p1, t1)
+            lead1 = self._port_wire_lead(term)
+        return self._glyph_wire_points(p0, t0, p1, t1, lead0=lead0,
+                                       lead1=lead1)
 
     def _port_by_id(self, port_id):
         for term in self.ports:
@@ -631,14 +720,18 @@ class GlyphMixin:
                     if pts is not None:
                         yield cx, end, conn, pts
 
-    @staticmethod
-    def wire_style(conn, default_color=WIRE_COLOR):
+    def wire_style(self, conn, default_color=None):
         """(color, linewidth, linestyle) of one wire, honoring the
-        per-wire overrides."""
-        color = conn.get('color') or default_color
-        return (color,
-                WIRE_LW * float(conn.get('linewidth_mult', 1.25)),
-                conn.get('linestyle') or '-')
+        per-wire overrides.
+
+        An override left unset falls back to `default_color` when the caller
+        names one, else to the configured wire default.
+        """
+        cfg_color, cfg_mult, cfg_style = self.wire_defaults()
+        mult = conn.get('linewidth_mult')
+        return (conn.get('color') or default_color or cfg_color,
+                WIRE_LW * (cfg_mult if mult is None else float(mult)),
+                conn.get('linestyle') or cfg_style)
 
     # ---- hit testing ----
 
@@ -705,6 +798,21 @@ class GlyphMixin:
                                                y - ends[e][1]))
         return cx, end
 
+    def _glyph_wires_in_rect(self, x0, y0, x1, y1):
+        """(owner, conn) of every wire the rectangle encloses.
+
+        Same rule an EDGE uses: the drawn midpoint has to be inside. A
+        both-ends-in rule reads better on paper but is useless in practice
+        -- a band drawn across a bundle of wires, which is how you reach
+        for "these wires", encloses no endpoints at all.
+        """
+        hits = []
+        for owner, _end, conn, pts in self._iter_glyph_wires():
+            mx, my = pts[len(pts) // 2]
+            if x0 <= mx <= x1 and y0 <= my <= y1:
+                hits.append((owner, conn))
+        return hits
+
     def _find_glyph_wire_at_position(self, x, y, tol=None):
         """(owner, end, conn) of the wire near (x, y), else None."""
         if x is None or y is None:
@@ -726,6 +834,10 @@ class GlyphMixin:
 
     def _selected_glyphs(self):
         return list(self.selected_ports) + list(self.selected_txlines)
+
+    def _selected_wire_conns(self):
+        """The style dicts behind every selected wire."""
+        return [conn for _owner, conn in self.selected_wires]
 
     def _select_all(self):
         """Select everything, glyphs included.
@@ -972,7 +1084,7 @@ class GlyphMixin:
         else:
             dialog = PortInputDialog(
                 default_label=f"P{self.port_counter + 1}", parent=self,
-                port=self.last_port_props or {})
+                port=self.last_port_props or self._port_defaults())
             if dialog.exec() != QDialog.Accepted:
                 return
             result = dialog.get_result()
@@ -993,7 +1105,8 @@ class GlyphMixin:
         snap_x, snap_y = self._snap_to_grid(event.xdata, event.ydata)
         dialog = TxLineInputDialog(default_label=f"TL{self.txline_counter + 1}",
                                  parent=self,
-                                 txline=self.last_txline_props or {})
+                                 txline=(self.last_txline_props
+                                         or self._txline_defaults()))
         if dialog.exec() != QDialog.Accepted:
             return
         result = dialog.get_result()
@@ -1118,7 +1231,8 @@ class GlyphMixin:
 
     # ---- mouse: selection, drag, context menu ----
 
-    def _maybe_handle_glyph_click(self, event, shift_pressed, is_double):
+    def _maybe_handle_glyph_click(self, event, shift_pressed, is_double,
+                                  alt_pressed=False):
         """Normal-mode click on a glyph or wire. True when it consumed it."""
         if not self._has_glyphs:
             return False
@@ -1133,6 +1247,10 @@ class GlyphMixin:
                     self.selected_ports.remove(term)
                 else:
                     self.selected_ports.append(term)
+            elif self._arm_group_drag_from(term, x, y, alt_pressed):
+                # already part of a multi-object selection: drag it all,
+                # rather than reducing the selection to this one port
+                pass
             else:
                 self._clear_glyph_selection()
                 self.selected_ports = [term]
@@ -1140,6 +1258,7 @@ class GlyphMixin:
                 self.selected_edges.clear()
                 self._glyph_drag_pending = ('port', term)
                 self._glyph_drag_start = (x, y)
+                self._drag_duplicate = bool(alt_pressed)
             self._update_plot()
             return True
 
@@ -1148,6 +1267,11 @@ class GlyphMixin:
         end_hit = self._find_txline_end_at_position(x, y)
         if end_hit is not None and not is_double and not shift_pressed:
             cx, end = end_hit
+            # inside a group selection the whole group moves; stretching one
+            # end is a single-glyph gesture
+            if self._arm_group_drag_from(cx, x, y, alt_pressed):
+                self._update_plot()
+                return True
             self._clear_glyph_selection()
             self.selected_txlines = [cx]
             self.selected_nodes.clear()
@@ -1169,6 +1293,8 @@ class GlyphMixin:
                     self.selected_txlines.remove(cx)
                 else:
                     self.selected_txlines.append(cx)
+            elif self._arm_group_drag_from(cx, x, y, alt_pressed):
+                pass
             else:
                 self._clear_glyph_selection()
                 self.selected_txlines = [cx]
@@ -1176,6 +1302,7 @@ class GlyphMixin:
                 self.selected_edges.clear()
                 self._glyph_drag_pending = ('txline', cx)
                 self._glyph_drag_start = (x, y)
+                self._drag_duplicate = bool(alt_pressed)
             self._update_plot()
             return True
 
@@ -1362,6 +1489,25 @@ class GlyphMixin:
             return True
         return False
 
+    def _glyph_drag_extent(self, glyph):
+        """Half-size of a glyph's drag ghost, in data units.
+
+        Shared with the group-drag preview in common_window, so one glyph
+        dragged alone and the same glyph dragged inside a selection ghost
+        identically.
+        """
+        r = self.node_radius
+        if 'port_id' in glyph:
+            # the nose is fixed, the body is not
+            half_w = (PORT_BODY_W / 2 * r * glyph.get('w_mult', 1.0)
+                      + self.port_apex_depth(glyph) * r)
+            half_h = PORT_BODY_H / 2 * r * glyph.get('h_mult', 1.0)
+        else:
+            half_w = (TXLINE_BODY_W * glyph.get('w_mult', 1.0)
+                      + TXLINE_LEAD_LEN) * r
+            half_h = TXLINE_BODY_H * r * glyph.get('h_mult', 1.0)
+        return max(half_w, half_h)
+
     def _maybe_handle_glyph_motion(self, event):
         """True while a glyph drag is pending or active (dashed preview)."""
         if self._maybe_handle_txline_end_motion(event):
@@ -1389,15 +1535,7 @@ class GlyphMixin:
                 self._glyph_drag_preview.remove()
             except Exception:
                 pass
-        r = self.node_radius
-        if kind == 'port':
-            half_w = (PORT_BODY_W / 2 + PORT_APEX_W) * r * obj.get('w_mult', 1.0)
-            half_h = PORT_BODY_H / 2 * r * obj.get('h_mult', 1.0)
-        else:
-            half_w = (TXLINE_BODY_W * obj.get('w_mult', 1.0)
-                      + TXLINE_LEAD_LEN) * r
-            half_h = TXLINE_BODY_H * r * obj.get('h_mult', 1.0)
-        extent = max(half_w, half_h)
+        extent = self._glyph_drag_extent(obj)
         self._glyph_drag_preview = mpatches.Rectangle(
             (snap_x - extent, snap_y - extent), 2 * extent, 2 * extent,
             fill=False, edgecolor='darkorange', linestyle=':',
@@ -1422,6 +1560,17 @@ class GlyphMixin:
             if event.xdata is not None and event.ydata is not None:
                 snap_x, snap_y = self._snap_to_grid(event.xdata, event.ydata)
                 if (snap_x, snap_y) != tuple(obj['pos']):
+                    if getattr(self, '_drag_duplicate', False):
+                        # Option-drag: the original stays put and a copy
+                        # lands where the drag ended
+                        landed = self._duplicate_selection_offset(
+                            snap_x - obj['pos'][0], snap_y - obj['pos'][1])
+                        self._drag_duplicate = False
+                        self._status_message(
+                            f"Copied {landed}" if landed
+                            else "Nothing to copy in this selection")
+                        self._update_plot()
+                        return True
                     self._save_state()
                     obj['pos'] = (snap_x, snap_y)
                     logger.debug("Moved %s '%s' to (%.3f, %.3f)", kind,
@@ -1430,11 +1579,13 @@ class GlyphMixin:
                     # direction, so unpinned self-loops there re-orient too
                     self._recompute_unpinned_selfloop_angles(
                         self._wired_node_ids(obj))
+            self._drag_duplicate = False
             self._update_plot()
             return True
         if self._glyph_drag_pending is not None:
             self._glyph_drag_pending = None
             self._glyph_drag_start = None
+            self._drag_duplicate = False
             return True
         return False
 
@@ -1619,23 +1770,32 @@ class GlyphMixin:
         r = self.node_radius
         node_by_id = {n['node_id']: n for n in self.nodes}
         ppdu = self._glyph_points_per_data_unit(ax)
+        # matplotlib line widths are POINTS, so a stored width keeps a fixed
+        # on-screen thickness while the drawing grows. Edges have always
+        # been scaled by the zoom; the glyphs and their wires were drawing
+        # in raw points, which is why they looked like hairlines zoomed in
+        # and like slabs zoomed out.
+        lw_scale = self._zoom_lw_scale(ax)
+        capstyle = self.wire_capstyle()
 
         # wires first, so the glyph bodies cover their stubs
         selected_conns = {id(c) for _, c in self.selected_wires}
         for owner, end, conn, pts in self._iter_glyph_wires(node_by_id):
             color, lw, style = self.wire_style(conn)
+            lw *= lw_scale
             selected = id(conn) in selected_conns
             if selected:
                 # the halo stays solid whatever the wire's style, so a
                 # dotted wire still reads as selected
                 ax.add_line(mlines.Line2D(
                     pts[:, 0], pts[:, 1], color='salmon',
-                    linewidth=max(4.0, lw + 2.6), zorder=3.5, alpha=0.9,
+                    linewidth=max(4.0 * lw_scale, lw + 2.6 * lw_scale),
+                    zorder=3.5, alpha=0.9,
                     solid_capstyle='round'))
             ax.add_line(mlines.Line2D(
                 pts[:, 0], pts[:, 1], color=color, linewidth=lw,
                 linestyle=style, zorder=4, alpha=0.9,
-                solid_capstyle='round'))
+                solid_capstyle=capstyle, dash_capstyle=capstyle))
             if conn.get('label'):
                 mx, my = pts[len(pts) // 2]
                 font_pts = (0.55 * r * ppdu * GLYPH_LABEL_FONT_SCALE * 1.45
@@ -1646,9 +1806,9 @@ class GlyphMixin:
                                   ec=color, lw=0.6))
 
         for cx in self.txlines:
-            self._draw_one_txline(ax, cx, ppdu)
+            self._draw_one_txline(ax, cx, ppdu, lw_scale)
         for term in self.ports:
-            self._draw_one_port(ax, term, ppdu)
+            self._draw_one_port(ax, term, ppdu, lw_scale)
 
         # the lead a pending wire will leave from
         if self._wire_pending is not None:
@@ -1661,14 +1821,14 @@ class GlyphMixin:
                 pt, 0.35 * r, fill=False, edgecolor='firebrick',
                 linewidth=2, linestyle=':', zorder=15))
 
-    def _draw_one_port(self, ax, term, ppdu):
+    def _draw_one_port(self, ax, term, ppdu, lw_scale=1.0):
         x, y, w, h, apex_x = self._port_geometry(term)
         angle = self._port_effective_angle(term)
         pending = (self._wire_pending is not None
                    and self._wire_pending[0] == 'port'
                    and self._wire_pending[1] is term)
         stroke = 'dodgerblue' if pending else term.get('color', 'black')
-        lw = float(term.get('linewidth', PORT_LW))
+        lw = float(term.get('linewidth', PORT_LW)) * lw_scale
 
         def rot(px, py):
             return rotatepoint(px, py, x, y, angle)
@@ -1681,7 +1841,7 @@ class GlyphMixin:
         if term in self.selected_ports:
             ax.add_patch(mpatches.Polygon(
                 verts, closed=True, fill=False, edgecolor='lightcoral',
-                linewidth=6.0, zorder=10.5))
+                linewidth=6.0 * lw_scale, zorder=10.5))
         ax.add_patch(mpatches.Polygon(
             verts, closed=True, facecolor=term.get('fill', 'white'),
             edgecolor=stroke, linewidth=lw, zorder=11, joinstyle='miter',
@@ -1699,13 +1859,13 @@ class GlyphMixin:
                                    color=term.get('label_color', 'black'),
                                    rotation=gp.readableangle(angle))
 
-    def _draw_one_txline(self, ax, cx, ppdu):
+    def _draw_one_txline(self, ax, cx, ppdu, lw_scale=1.0):
         r = self.node_radius
         lx, ly, w, h, rx = self._txline_geometry(cx)
         angle = cx.get('angle', 0.0)
         stroke = cx.get('color', 'black')
         fill = cx.get('fill', '#cccccc')
-        lw = float(cx.get('linewidth', TXLINE_LW))
+        lw = float(cx.get('linewidth', TXLINE_LW)) * lw_scale
         glyph_tf = (mtransforms.Affine2D().rotate_deg_around(lx, ly, angle)
                     + ax.transData)
 
@@ -1714,7 +1874,7 @@ class GlyphMixin:
             ax.add_patch(mpatches.Rectangle(
                 (lx - w - rx - TXLINE_LEAD_LEN * r, ly - hh),
                 2 * (w + rx + TXLINE_LEAD_LEN * r), 2 * hh, fill=False,
-                edgecolor='lightcoral', linewidth=5.0, zorder=9.5,
+                edgecolor='lightcoral', linewidth=5.0 * lw_scale, zorder=9.5,
                 transform=glyph_tf))
 
         ax.add_patch(mpatches.Rectangle(
@@ -1757,7 +1917,7 @@ class GlyphMixin:
             ax.add_patch(mpatches.Circle(
                 (ex, ey), 0.12 * r,
                 facecolor=(mark if wired or is_pending else 'white'),
-                edgecolor=mark, linewidth=1.6, zorder=11.5))
+                edgecolor=mark, linewidth=1.6 * lw_scale, zorder=11.5))
 
         label = cx.get('label', '')
         if label:
@@ -1948,6 +2108,7 @@ class GlyphMixin:
             else:
                 extra.append(('autoorient', 'True'))
             style, per_glyph = self._glyph_style_args(term, PORT_LW, 'white')
+            style += self._port_geometry_args(term)
             calls.append(Call('addport', ident=ident,
                               style=tuple([('R', f"{r:.3f}")] + style),
                               extra=extra + per_glyph, inline=True,
@@ -1985,12 +2146,28 @@ class GlyphMixin:
                         end_spec, conn))
         return calls
 
-    @classmethod
-    def _wire_call(cls, start_spec, end_spec, conn):
-        style, per_wire = cls._export_wire_style_args(conn)
+    def _wire_call(self, start_spec, end_spec, conn):
+        style, per_wire = self._export_wire_style_args(conn)
         return Call('addwire', ident=[('start', start_spec),
                                       ('end', end_spec)],
                     style=tuple(style), extra=per_wire, inline=True)
+
+    def _port_geometry_args(self, port):
+        """Export keywords for a port's FIXED geometry.
+
+        The generated script calls the primitives directly and knows
+        nothing about this session's settings, so a nose depth or lead
+        length that differs from the primitive default has to be written
+        out explicitly.
+        """
+        args = []
+        apex = self.port_apex_depth(port)
+        if abs(apex - PORT_APEX_W) > 1e-6:
+            args.append(('apex', f"{apex:.3f}"))
+        lead = self.port_lead_length(port)
+        if abs(lead - gp.PORT_WIRE_LEAD) > 1e-6:
+            args.append(('lead', f"{lead:.3f}"))
+        return args
 
     @staticmethod
     def _glyph_style_args(glyph, default_lw, default_fill):
@@ -2027,18 +2204,26 @@ class GlyphMixin:
             return f"('node', {conn['node_id']})"
         return f"('port', {conn['port_id']})"
 
-    @staticmethod
-    def _export_wire_style_args(conn):
-        """(appearance, per-wire) keywords for one wire."""
+    def _export_wire_style_args(self, conn):
+        """(appearance, per-wire) keywords for one wire.
+
+        Compared against the PRIMITIVE defaults, not the configured ones:
+        the generated script calls graph_primitives directly and knows
+        nothing about this session's settings, so a wire riding on a
+        configured default still has to be written out explicitly.
+        """
+        color, lw, style = self.wire_style(conn)
         args = []
-        if conn.get('color'):
-            args.append(('color', repr(conn['color'])))
-        mult = float(conn.get('linewidth_mult', 1.25))
+        if color != WIRE_COLOR:
+            args.append(('color', repr(color)))
+        mult = lw / WIRE_LW
         if abs(mult - 1.25) > 1e-6:
-            args.append(('lw', f"{WIRE_LW * mult:.2f}"))
-        style = conn.get('linestyle') or '-'
+            args.append(('lw', f"{lw:.2f}"))
         if style != '-':
             args.append(('linestyle', repr(style)))
+        capstyle = self.wire_capstyle()
+        if capstyle != gp.WIRE_CAPSTYLE:
+            args.append(('capstyle', repr(capstyle)))
         scale = float(conn.get('label_size_mult', 1.0))
         if abs(scale - 1.0) > 1e-6:
             args.append(('labelscale', f"{scale:.3f}"))

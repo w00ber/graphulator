@@ -290,3 +290,171 @@ def test_para_exports_both_shapes_of_drawing_code(para):
         assert "nodecolor='#aab6a8'" in code
         assert "nodecolor='#929ec0'" in code
         assert "MYCOLORS['RED']" not in code
+
+
+# ---------------------------------------------------------------------------
+# several wires at once (port attachments and line taps)
+# ---------------------------------------------------------------------------
+
+def two_attached_modes(para):
+    """Two ports, each attached to its own mode; all four within ±12."""
+    a = add_node(para, 'A', (6.0, 0.0))
+    b = add_node(para, 'B', (6.0, -6.0))
+    para.scattering_assignments[a['node_id']] = {'freq': 5.0, 'B_int': 0.0}
+    para.scattering_assignments[b['node_id']] = {'freq': 5.0, 'B_int': 0.0}
+    p1 = para.add_port(label='P1', pos=(-6.0, 0.0))
+    p2 = para.add_port(label='P2', pos=(-6.0, -6.0))
+    return ((p1, para.add_port_attachment(p1, a, rate=0.1)),
+            (p2, para.add_port_attachment(p2, b, rate=0.3)))
+
+
+def test_several_wires_get_an_editable_panel(para):
+    w1, w2 = two_attached_modes(para)
+    para.selected_attachments = [w1, w2]
+    para._update_properties_panel()
+
+    panel = para.properties_panel
+    assert panel.displayed_multi is not None
+    assert "2 wire(s)" in panel.title_label.text()
+
+
+def test_editing_writes_to_every_selected_wire(para):
+    w1, w2 = two_attached_modes(para)
+    para.selected_attachments = [w1, w2]
+    para._update_properties_panel()
+
+    para.properties_panel._apply_to_wires('rate', 0.5)
+    assert w1[1]['rate'] == pytest.approx(0.5)
+    assert w2[1]['rate'] == pytest.approx(0.5)
+
+
+def test_one_multi_wire_edit_is_one_undo_step(para):
+    w1, w2 = two_attached_modes(para)
+    para.selected_attachments = [w1, w2]
+    before = len(para.undo_stack)
+    para.properties_panel._apply_to_wires('sign', -1)
+    assert len(para.undo_stack) == before + 1
+    assert w1[1]['sign'] == w2[1]['sign'] == -1
+
+
+def test_a_differing_wire_rate_is_shown_gray(para):
+    from PySide6.QtWidgets import QDoubleSpinBox
+    w1, w2 = two_attached_modes(para)          # 0.1 vs 0.3
+    para.selected_attachments = [w1, w2]
+    para._update_properties_panel()
+
+    boxes = [b for b in para.properties_panel.findChildren(QDoubleSpinBox)
+             if getattr(b, '_indeterminate', False)]
+    assert boxes, "no indeterminate marker for the differing rates"
+
+
+def test_attachments_and_taps_edit_together(para):
+    w1, _w2 = two_attached_modes(para)
+    line = para.add_line_resonator(label='TL1', pos=(0.0, -12.0),
+                                   port_end=None, FSR=1.0, f_max=8.0)
+    conn = para.connect_line_end_to_node(line, 'xL', para.nodes[0],
+                                         rate=0.2)
+    para.selected_attachments = [w1]
+    para.selected_taps = [(line, 'xL', conn)]
+    para._update_properties_panel()
+
+    assert "1 wire(s)" in para.properties_panel.title_label.text()
+    assert "1 tap(s)" in para.properties_panel.title_label.text()
+    para.properties_panel._apply_to_wires('rate', 0.4)
+    assert w1[1]['rate'] == pytest.approx(0.4)
+    assert conn['rate'] == pytest.approx(0.4)
+
+
+def test_a_single_wire_still_gets_its_own_panel(para):
+    w1, _w2 = two_attached_modes(para)
+    para.selected_attachments = [w1]
+    para._update_properties_panel()
+    assert para.properties_panel.current_type == 'attachment'
+    assert para.properties_panel.displayed_multi is None
+
+
+def test_a_wire_alongside_a_node_offers_the_shared_panel(para):
+    w1, _w2 = two_attached_modes(para)
+    para.selected_attachments = [w1]
+    para.selected_nodes[:] = [para.nodes[0]]
+    para._update_properties_panel()
+    assert para.properties_panel.displayed_multi is not None
+
+
+def test_resetting_the_multi_wire_color_restores_the_default(para):
+    w1, w2 = two_attached_modes(para)
+    w1[1]['color'] = w2[1]['color'] = 'teal'
+    para.selected_attachments = [w1, w2]
+    para.properties_panel._apply_to_wires('color', None)
+    assert para.wire_style(w1[1])[0] == para.wire_default_color('port', 1)
+
+
+# ---------------------------------------------------------------------------
+# the rubber band takes the links too
+# ---------------------------------------------------------------------------
+
+def test_the_band_takes_a_link_with_both_ends_inside(para):
+    w1, w2 = two_attached_modes(para)
+    atts, taps = para._links_in_rect(-12.0, -12.0, 12.0, 12.0)
+    assert {id(a) for _p, a in atts} == {id(w1[1]), id(w2[1])}
+    assert taps == []
+
+
+def test_the_band_takes_a_link_by_its_midpoint(para):
+    """Same rule an edge uses. A band drawn ACROSS a bundle of wires -- how
+    you actually reach for "these wires" -- encloses no endpoints at all,
+    so a both-ends-in rule would select nothing."""
+    w1, w2 = two_attached_modes(para)
+    atts, _taps = para._links_in_rect(-1.0, -12.0, 1.0, 12.0)
+    assert {id(a) for _p, a in atts} == {id(w1[1]), id(w2[1])}
+
+
+def test_the_band_leaves_a_link_it_does_not_cross_alone(para):
+    w1, _w2 = two_attached_modes(para)
+    atts, _taps = para._links_in_rect(-1.0, -2.0, 1.0, 2.0)
+    assert {id(a) for _p, a in atts} == {id(w1[1])}
+
+
+def test_a_band_release_selects_the_links_it_encloses(para):
+    import types
+    w1, w2 = two_attached_modes(para)
+    para.selection_window_start = (-12.0, -12.0)
+    para.selection_window = True
+    para.selection_window_rect = None
+    para._on_release_selection_window(
+        types.SimpleNamespace(xdata=12.0, ydata=12.0, button=1,
+                              inaxes=para.canvas.ax))
+
+    assert len(para.selected_ports) == 2
+    assert {id(a) for _p, a in para.selected_attachments} == \
+        {id(w1[1]), id(w2[1])}
+
+
+def test_a_band_release_does_not_duplicate_an_already_selected_link(para):
+    import types
+    w1, _w2 = two_attached_modes(para)
+    para.selected_attachments = [w1]
+    para.selection_window_start = (-12.0, -12.0)
+    para.selection_window = True
+    para.selection_window_rect = None
+    para._on_release_selection_window(
+        types.SimpleNamespace(xdata=12.0, ydata=12.0, button=1,
+                              inaxes=para.canvas.ax))
+    ids = [id(a) for _p, a in para.selected_attachments]
+    assert len(ids) == len(set(ids)) == 2
+
+
+def test_deleting_a_selection_of_only_links_works(para):
+    """The delete guard listed nodes, edges, glyphs and attachments but not
+    taps or pump buses, so a tap-only selection reported "nothing selected"
+    and did nothing."""
+    a = add_node(para, 'A', (0.0, 0.0))
+    para.scattering_assignments[a['node_id']] = {'freq': 5.0, 'B_int': 0.0}
+    line = para.add_line_resonator(label='TL1', pos=(0.0, -8.0),
+                                   port_end=None, FSR=1.0, f_max=8.0)
+    conn = para.connect_line_end_to_node(line, 'xL', a, rate=0.2)
+    para.selected_taps = [(line, 'xL', conn)]
+
+    para._delete_selected_nodes()
+    assert para._end_conns(line, 'xL') == []
+    assert para.nodes == [a] and para.line_resonators == [line]

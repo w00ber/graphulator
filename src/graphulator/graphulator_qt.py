@@ -506,6 +506,11 @@ def sync_dialog_defaults_from_config(window=None):
         window.last_node_props = None
         window.last_edge_props = None
         window.last_selfloop_props = None
+        # Glyph placement works the same way: drop the remembered port /
+        # txline appearance so the next one placed starts from the changed
+        # Port & Wire defaults rather than from the last glyph.
+        window.last_port_props = None
+        window.last_txline_props = None
 
 
 class PropertiesPanel(QWidget):
@@ -1387,12 +1392,17 @@ class PropertiesPanel(QWidget):
     # ---- Multi-selection editing -------------------------------------------------
 
     @staticmethod
-    def selection_signature(nodes, edges, ports=(), txlines=()):
-        """A hashable signature identifying the current multi-selection by object identity."""
+    def selection_signature(nodes, edges, ports=(), txlines=(), wires=()):
+        """A hashable signature identifying the current multi-selection by object identity.
+
+        A wire is a (owner, conn) pair; the conn is what carries its style,
+        so that is what identifies it.
+        """
         return (frozenset(id(n) for n in nodes),
                 frozenset(id(e) for e in edges),
                 frozenset(id(t) for t in ports),
-                frozenset(id(c) for c in txlines))
+                frozenset(id(c) for c in txlines),
+                frozenset(id(conn) for _owner, conn in wires))
 
     def _make_multi_int_spinbox(self, values, apply_fn, minimum, maximum, suffix=""):
         """Spinbox for a common integer property across a multi-selection.
@@ -1476,18 +1486,21 @@ class PropertiesPanel(QWidget):
         cb.clicked.connect(on_click)
         return cb
 
-    def show_multi_properties(self, nodes, edges, ports=(), txlines=()):
+    def show_multi_properties(self, nodes, edges, ports=(), txlines=(),
+                              wires=()):
         """Show editable common properties for a multi-selection of nodes,
-        edges and/or glyphs."""
+        edges, glyphs and/or wires."""
         self.clear_properties()
         self.current_object = None
         self.current_type = None
         self.displayed_single = None
-        self.displayed_multi = self.selection_signature(nodes, edges,
-                                                        ports, txlines)
+        self.displayed_multi = self.selection_signature(nodes, edges, ports,
+                                                        txlines, wires)
         ports = list(ports)
         txlines = list(txlines)
         glyphs = ports + txlines
+        wires = list(wires)
+        wire_conns = [conn for _owner, conn in wires]
 
         count_text = []
         if nodes:
@@ -1498,6 +1511,8 @@ class PropertiesPanel(QWidget):
             count_text.append(f"{len(ports)} port(s)")
         if txlines:
             count_text.append(f"{len(txlines)} txline(es)")
+        if wires:
+            count_text.append(f"{len(wires)} wire(s)")
         self.title_label.setText(f"Multiple Selection ({' + '.join(count_text)})")
 
         form = QFormLayout()
@@ -1633,6 +1648,38 @@ class PropertiesPanel(QWidget):
                     [not t.get('angle_pinned', False) for t in ports],
                     self._apply_multi_auto_orient))
 
+        # Wire properties (only when port/txline wires are selected)
+        if wire_conns:
+            cfg_color, cfg_mult, cfg_style = (
+                self.graphulator.wire_defaults())
+            form.addRow(QLabel("<b>Wires</b>"))
+            form.addRow("Width \u00d7:", self._make_multi_double_spinbox(
+                [float(c.get('linewidth_mult') or cfg_mult)
+                 for c in wire_conns],
+                lambda val: self._apply_to_wires('linewidth_mult', val),
+                0.2, 5.0, 0.05))
+            form.addRow("Label size \u00d7:", self._make_multi_double_spinbox(
+                [c.get('label_size_mult', 1.0) for c in wire_conns],
+                lambda val: self._apply_to_wires('label_size_mult', val),
+                GLYPH_LABEL_SIZE_MIN, GLYPH_LABEL_SIZE_MAX, 0.1))
+            style_names = {v: k for k, v in WIRE_LINESTYLES.items()}
+            form.addRow("Style:", self._make_multi_combo(
+                list(WIRE_LINESTYLES.keys()),
+                [style_names.get(c.get('linestyle') or cfg_style)
+                 for c in wire_conns],
+                lambda name: self._apply_to_wires('linestyle',
+                                                  WIRE_LINESTYLES[name])))
+            wire_color_btn = QPushButton("Choose Color (all wires)")
+            wire_color_btn.clicked.connect(self._choose_multi_wire_color)
+            form.addRow("Color:", wire_color_btn)
+            wire_reset = QPushButton(f"Reset color (default {cfg_color})")
+            wire_reset.setToolTip(
+                "Drop the per-wire color override, so these wires follow "
+                "the configured default again.")
+            wire_reset.clicked.connect(
+                lambda: self._apply_to_wires('color', None))
+            form.addRow("", wire_reset)
+
         self.properties_layout.addLayout(form)
 
         hint = QLabel("Gray values differ across the selection; edit a field to apply it to all.")
@@ -1671,6 +1718,28 @@ class PropertiesPanel(QWidget):
         for glyph in glyphs:
             glyph[key] = value
         g._update_plot()
+
+    def _apply_to_wires(self, key, value):
+        """Write a property to every selected wire (single undo step)."""
+        g = self.graphulator
+        if not g.selected_wires:
+            return
+        g._save_state()
+        for _owner, conn in g.selected_wires:
+            conn[key] = value
+        g._update_plot()
+
+    def _choose_multi_wire_color(self):
+        """Choose one color and apply it to every selected wire."""
+        g = self.graphulator
+        if not g.selected_wires:
+            return
+        first = g.selected_wires[0][1]
+        start = QColor(first.get('color') or g.wire_defaults()[0])
+        color = QColorDialog.getColor(start, g, "Wire color (all selected)")
+        if not color.isValid():
+            return
+        self._apply_to_wires('color', color.name())
 
     def _apply_multi_auto_orient(self, value):
         """Toggle auto-orient across every selected port."""
@@ -2181,6 +2250,7 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
         self.drag_pending_node = None  # Node clicked but not yet dragging (waiting for motion)
         self.drag_pending_group = False  # Group clicked but not yet dragging
         self.drag_start_pos = None  # Starting position for group drag
+        self._drag_duplicate = False  # Option/Alt-drag: copy, don't move
         self.drag_threshold = 0.1  # Minimum distance to move before starting drag (data units)
         self.drag_preview_patches = []  # List of preview patches for group drag
         self.drag_preview_texts = []  # List of preview texts for group drag
@@ -2443,9 +2513,9 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
         logger.debug("  Shift+Up/Down   : Nudge node label / Adjust edge label offset")
         logger.debug("  Shift+Left/Right: Nudge node label horizontally")
         logger.debug("  Ctrl+A          : Select all nodes and edges")
-        logger.debug("  Ctrl+C          : Copy selected nodes and edges")
-        logger.info("  Ctrl+X          : Cut selected nodes and edges")
-        logger.debug("  Ctrl+V          : Paste nodes and edges at view center")
+        logger.debug("  Ctrl+C          : Copy the selection (nodes, edges, ports, txlines)")
+        logger.info("  Ctrl+X          : Cut the selection")
+        logger.debug("  Ctrl+V          : Paste at view center")
         logger.info("  Ctrl+Z          : Undo last action")
         logger.info("  Ctrl+Shift+Z/Y  : Redo last undone action")
         logger.debug("  Ctrl+R          : Rotate selected nodes 15° CCW")
@@ -3393,6 +3463,11 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
             self._adjust_glyph_size(direction)
             return
 
+        # Wires take the arrow keys the way edges do: Up/Down width,
+        # Left/Right label size
+        if self._adjust_wire_properties(direction):
+            return
+
         # If in edge rotation mode, adjust label rotation
         if self.edge_rotation_mode and self.selected_edges and direction in ['left', 'right']:
             self._adjust_edge_rotation(direction)
@@ -4020,6 +4095,9 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
         # Base values calibrated for reference view (figsize=12, span~20 units)
         # This gives points_per_data_unit ≈ 43 for that reference
         reference_points_per_data_unit = 43.0
+        # the halo under a selected edge widens with the zoom, like the
+        # edge it sits under
+        zoom_lw_scale = points_per_data_unit / reference_points_per_data_unit
 
         for edge_index, edge in enumerate(self.edges):
             from_node = edge['from_node']
@@ -4047,6 +4125,23 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
                 arrowlength = from_radius / 2 * 2.25 / 4 * arrowlengthsc
 
                 # Draw the self-loop arc
+                if edge in self.selected_edges:
+                    # The halo goes down FIRST, so the edge draws over it
+                    gp.selfloop(
+                        ax=self.canvas.ax,
+                        nodecent=from_pos,
+                        R=from_radius * 1.2,
+                        baseangle=selfloopangle,
+                        dtheta=-34,
+                        loopR=loopR,
+                        arrowlength=arrowlength,
+                        lw=self._selection_halo_lw(scaled_lw, zoom_lw_scale),
+                        color=self.SELECTION_HALO_COLOR,
+                        flip=edge.get('flip', False),
+                        arrowstyle=edge.get('arrowstyle', 'open'),
+                        arrowscale=edge.get('arrowscale', 1.0),
+                        arrowopenang=config.ARROWHEAD_OPEN_ANGLE,
+                    )
                 gp.selfloop(
                     ax=self.canvas.ax,
                     nodecent=from_pos,
@@ -4132,23 +4227,6 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
                          3*(1-t)*t**2 * bz_end[1] +
                          t**3 * v_end[1])
 
-                # Draw selection indicator for selected self-loops
-                if edge in self.selected_edges:
-                    # Place indicator at 75% along the bezier curve from node center
-                    apex_dist_from_center = np.sqrt((apex_x - from_pos[0])**2 + (apex_y - from_pos[1])**2)
-                    indicator_distance = apex_dist_from_center * 0.75
-                    apex_angle = np.arctan2(apex_y - from_pos[1], apex_x - from_pos[0])
-                    indicator_x = from_pos[0] + indicator_distance * np.cos(apex_angle)
-                    indicator_y = from_pos[1] + indicator_distance * np.sin(apex_angle)
-
-                    selection_circle = patches.Circle(
-                        (indicator_x, indicator_y), from_radius * 0.3,
-                        facecolor='lightcoral',
-                        edgecolor='red',
-                        linewidth=2,
-                        zorder=25
-                    )
-                    self.canvas.ax.add_patch(selection_circle)
             else:
                 # Draw edge using graph_primitives edge function
                 from_pos = from_node['pos']
@@ -4210,6 +4288,27 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
                 else:  # loopy
                     final_lw = scaled_lw
 
+                if edge in self.selected_edges:
+                    # The halo goes down FIRST, so the edge draws over it.
+                    # No labels on it: they would double-draw and fringe.
+                    halo_kwargs = dict(
+                        lw=self._selection_halo_lw(final_lw, zoom_lw_scale),
+                        arrowlength=0.4,
+                        arrowstyle=edge.get('arrowstyle', 'open'),
+                        arrowscale=edge.get('arrowscale', 1.0),
+                        arrowopenang=config.ARROWHEAD_OPEN_ANGLE,
+                        color=self.SELECTION_HALO_COLOR)
+                    gp.edge(
+                        ax=self.canvas.ax,
+                        nodexy=[from_pos, to_pos],
+                        nodeR=[from_radius, to_radius],
+                        label=[None, None],
+                        labeltheta=labeltheta,
+                        style=style,
+                        whichedges=edge['direction'],
+                        theta=edge.get('looptheta', 30),
+                        loopkwargs=halo_kwargs,
+                    )
                 gp.edge(
                     ax=self.canvas.ax,
                     nodexy=[from_pos, to_pos],
@@ -4231,19 +4330,6 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
                     usetex=self.use_latex,
                 )
 
-                # Draw selection indicator for selected edges
-                if edge in self.selected_edges:
-                    mid_x = (from_pos[0] + to_pos[0]) / 2
-                    mid_y = (from_pos[1] + to_pos[1]) / 2
-                    # Draw a small circle at the edge midpoint
-                    selection_circle = patches.Circle(
-                        (mid_x, mid_y), 0.3,
-                        facecolor='lightcoral',
-                        edgecolor='red',
-                        linewidth=2,
-                        zorder=20
-                    )
-                    self.canvas.ax.add_patch(selection_circle)
 
     def _on_motion(self, event):
         """Handle mouse motion"""
@@ -4338,60 +4424,11 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
             self.canvas.draw_idle()
             return
 
-        # Handle group dragging
+        # Handle group dragging (nodes and glyphs together)
         if self.dragging_group and self.drag_start_pos is not None:
-            # Calculate offset from drag start
-            dx = event.xdata - self.drag_start_pos[0]
-            dy = event.ydata - self.drag_start_pos[1]
-
-            # Remove old previews
-            for patch in self.drag_preview_patches:
-                try:
-                    patch.remove()
-                except:
-                    pass
-            for text in self.drag_preview_texts:
-                try:
-                    text.remove()
-                except:
-                    pass
-            self.drag_preview_patches.clear()
-            self.drag_preview_texts.clear()
-
-            # Draw preview for each selected node
-            any_occupied = False
-            for node in self.selected_nodes:
-                new_x = node['pos'][0] + dx
-                new_y = node['pos'][1] + dy
-                snap_x, snap_y = self._snap_to_grid(new_x, new_y)
-
-                # Check if occupied by non-selected node
-                occupied = any(
-                    other_node not in self.selected_nodes and
-                    np.isclose(other_node['pos'][0], snap_x, atol=0.01) and
-                    np.isclose(other_node['pos'][1], snap_y, atol=0.01)
-                    for other_node in self.nodes
-                )
-                any_occupied = any_occupied or occupied
-
-                # Ghost appearance: use semi-transparent fill
-                color = 'red' if occupied else 'lightblue'
-                node_size_mult = node.get('node_size_mult', 1.0)
-
-                preview_patch = patches.Circle(
-                    (snap_x, snap_y), self.node_radius * node_size_mult,
-                    fill=True, facecolor=color, edgecolor='gray',
-                    linestyle=':', linewidth=1.5, alpha=0.5, zorder=15
-                )
-                self.canvas.ax.add_patch(preview_patch)
-                self.drag_preview_patches.append(preview_patch)
-
-                preview_text = self.canvas.ax.text(
-                    snap_x, snap_y, node['label'],
-                    ha='center', va='center', fontsize=14, color='gray', alpha=0.7, zorder=16
-                )
-                self.drag_preview_texts.append(preview_text)
-
+            self._draw_group_drag_previews(
+                event.xdata - self.drag_start_pos[0],
+                event.ydata - self.drag_start_pos[1])
             self.canvas.draw_idle()
             return
 
@@ -4527,6 +4564,9 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
             modifiers = QApplication.keyboardModifiers()
             shift_pressed = modifiers & Qt.ShiftModifier
             ctrl_pressed = modifiers & Qt.ControlModifier
+            # Option on macOS is Qt's AltModifier: hold it while dragging to
+            # leave the selection where it is and drop a copy at the offset
+            alt_pressed = bool(modifiers & Qt.AltModifier)
 
             # Conjugation mode - toggle conjugation on clicked nodes (handle before other modes)
             if self.placement_mode == 'conjugation':
@@ -4677,7 +4717,7 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
                     is_double = (time_diff < self.double_click_threshold
                                  and pos_diff < 0.5)
                 if self._maybe_handle_glyph_click(event, shift_pressed,
-                                                  is_double):
+                                                  is_double, alt_pressed):
                     if is_double:
                         self.last_click_time = 0
                         self.last_click_pos = None
@@ -4726,11 +4766,13 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
 
                 # Single click on node - select and prepare for potential dragging
                 if clicked_node:
-                    # If clicking on an already selected node, prepare to drag the whole group
-                    if clicked_node in self.selected_nodes and len(self.selected_nodes) > 1:
-                        self.drag_pending_group = True
-                        self.drag_start_pos = (event.xdata, event.ydata)
+                    # Clicking an already-selected node drags the whole
+                    # selection -- glyphs included, which is what makes a
+                    # port + edge + node group movable as one
+                    if self._arm_group_drag_from(clicked_node, event.xdata,
+                                                 event.ydata, alt_pressed):
                         # Don't print yet - wait until actual drag starts
+                        pass
                     else:
                         # Select only this node and prepare to drag it
                         if clicked_node not in self.selected_nodes:
@@ -4740,6 +4782,7 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
                             self._update_plot()
                         self.drag_pending_node = clicked_node
                         self.drag_start_pos = (event.xdata, event.ydata)
+                        self._drag_duplicate = alt_pressed
                         # Don't print yet - wait until actual drag starts
                     return
 
@@ -4966,6 +5009,16 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
                                 and cx not in self.selected_txlines):
                             self.selected_txlines.append(cx)
 
+                    # Wires come too, so a window over a sub-circuit can
+                    # restyle its wiring in one go. Compared by identity:
+                    # two wires with the same overrides are equal dicts but
+                    # are not the same wire.
+                    have = {id(c) for _o, c in self.selected_wires}
+                    for owner, conn in self._glyph_wires_in_rect(x0, y0,
+                                                                 x1, y1):
+                        if id(conn) not in have:
+                            self.selected_wires.append((owner, conn))
+
                     msg = []
                     if self.selected_nodes:
                         msg.append(f"{len(self.selected_nodes)} node(s)")
@@ -4975,6 +5028,8 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
                         msg.append(f"{len(self.selected_ports)} port(s)")
                     if self.selected_txlines:
                         msg.append(f"{len(self.selected_txlines)} txline(es)")
+                    if self.selected_wires:
+                        msg.append(f"{len(self.selected_wires)} wire(s)")
                     if msg:
                         logger.debug(f"Selected {' and '.join(msg)}")
 
@@ -5027,61 +5082,22 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
 
         # Left button - complete group or single node dragging
         if event.button == 1:
-            # Complete group dragging
+            # Complete group dragging (nodes and glyphs together)
             if self.dragging_group and self.drag_start_pos is not None:
                 if event.inaxes == self.canvas.ax:
-                    dx = event.xdata - self.drag_start_pos[0]
-                    dy = event.ydata - self.drag_start_pos[1]
-
-                    # Check if all new positions are valid
-                    new_positions = []
-                    all_valid = True
-                    for node in self.selected_nodes:
-                        new_x = node['pos'][0] + dx
-                        new_y = node['pos'][1] + dy
-                        snap_x, snap_y = self._snap_to_grid(new_x, new_y)
-
-                        # Check if occupied by non-selected node
-                        occupied = any(
-                            other_node not in self.selected_nodes and
-                            np.isclose(other_node['pos'][0], snap_x, atol=0.01) and
-                            np.isclose(other_node['pos'][1], snap_y, atol=0.01)
-                            for other_node in self.nodes
-                        )
-
-                        if occupied:
-                            all_valid = False
-                            break
-
-                        new_positions.append((node, snap_x, snap_y))
-
-                    # If all positions valid, move all nodes
-                    if all_valid:
-                        self._save_state()
-                        for node, snap_x, snap_y in new_positions:
-                            node['pos'] = (snap_x, snap_y)
-                        logger.info(f"✓ Moved {len(self.selected_nodes)} node(s)")
-                        self._recompute_unpinned_selfloop_angles(
-                            {node['node_id'] for node in self.selected_nodes})
-                    else:
-                        logger.info(f"✗ Cannot move group - some positions occupied")
+                    message = self._commit_group_drag(
+                        event.xdata - self.drag_start_pos[0],
+                        event.ydata - self.drag_start_pos[1])
+                    if message:
+                        logger.info(message)
+                        self._status_message(message)
 
                 # Clean up
                 self.dragging_group = False
                 self.drag_pending_group = False
                 self.drag_start_pos = None
-                for patch in self.drag_preview_patches:
-                    try:
-                        patch.remove()
-                    except:
-                        pass
-                for text in self.drag_preview_texts:
-                    try:
-                        text.remove()
-                    except:
-                        pass
-                self.drag_preview_patches.clear()
-                self.drag_preview_texts.clear()
+                self._drag_duplicate = False
+                self._clear_group_drag_previews()
 
                 self._update_plot()
                 return
@@ -5099,19 +5115,30 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
                         for node in self.nodes
                     )
 
-                    if not occupied:
+                    if occupied:
+                        logger.info(f"✗ Cannot move node '{self.dragging_node['label']}' - position occupied")
+                    elif getattr(self, '_drag_duplicate', False):
+                        # Option-drag: the original stays and a copy lands
+                        # where the drag ended
+                        old_pos = self.dragging_node['pos']
+                        landed = self._duplicate_selection_offset(
+                            snap_x - old_pos[0], snap_y - old_pos[1])
+                        message = (f"Copied {landed}" if landed
+                                   else "Nothing to copy in this selection")
+                        logger.info(message)
+                        self._status_message(message)
+                    else:
                         self._save_state()
                         old_pos = self.dragging_node['pos']
                         self.dragging_node['pos'] = (snap_x, snap_y)
                         logger.info(f"✓ Moved node '{self.dragging_node['label']}' from ({old_pos[0]:.3f}, {old_pos[1]:.3f}) to ({snap_x:.3f}, {snap_y:.3f})")
                         self._recompute_unpinned_selfloop_angles({self.dragging_node['node_id']})
-                    else:
-                        logger.info(f"✗ Cannot move node '{self.dragging_node['label']}' - position occupied")
 
                 # Clean up
                 self.dragging_node = None
                 self.drag_pending_node = None
                 self.drag_start_pos = None
+                self._drag_duplicate = False
                 for patch in self.drag_preview_patches:
                     try:
                         patch.remove()
@@ -5132,6 +5159,7 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
             if self.drag_pending_node or self.drag_pending_group:
                 self.drag_pending_node = None
                 self.drag_pending_group = False
+                self._drag_duplicate = False
                 self.drag_start_pos = None
                 return
 
@@ -5337,8 +5365,34 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
         self._clear_glyph_selection()
         self._update_plot()
 
-    def _paste_nodes(self):
-        """Paste nodes, edges and glyphs from the clipboard"""
+    def _duplicate_selection_offset(self, dx, dy):
+        """Copy the selection `(dx, dy)` away and select the copies.
+
+        This is what Option/Alt-drag commits: the originals stay put and
+        the copy lands where the drag ended. It borrows the clipboard
+        machinery (so wiring is relinked to the copy exactly as a paste
+        does) but puts the real clipboard back afterwards -- a duplicate
+        must not clobber what the user had copied.
+        """
+        saved = self.clipboard
+        try:
+            self.clipboard = {}
+            self._copy_nodes()
+            if not any(self.clipboard.get(key) for key in
+                       ('nodes', 'edges', 'ports', 'txlines')):
+                return None
+            summary = self._clipboard_summary(self.clipboard)
+            self._paste_nodes(offset=(dx, dy))
+        finally:
+            self.clipboard = saved
+        return summary
+
+    def _paste_nodes(self, *, offset=None):
+        """Paste nodes, edges and glyphs from the clipboard.
+
+        `offset` places the copy a given (dx, dy) from where it was copied
+        instead of at the view center -- the Option-drag duplicate path.
+        """
         if not self.clipboard or not any(
                 self.clipboard.get(key) for key in
                 ('nodes', 'edges', 'ports', 'txlines')):
@@ -5347,6 +5401,11 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
 
         self._save_state()
 
+        if offset is not None:
+            offset_x, offset_y = offset
+            clip_positions = None
+        else:
+            clip_positions = True
         # Calculate offset to paste nodes relative to the center of the view
         xlim = self._get_xlim()
         ylim = self._get_ylim()
@@ -5356,8 +5415,10 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
         # Centroid of everything on the clipboard. Glyph positions count
         # too, or a glyph-only copy has no centroid at all and pastes
         # exactly on top of the original.
-        clip_positions = ([tuple(n['pos']) for n in self.clipboard.get('nodes', [])]
-                          + self._clipboard_glyph_positions(self.clipboard))
+        if clip_positions is not None:
+            clip_positions = ([tuple(n['pos'])
+                               for n in self.clipboard.get('nodes', [])]
+                              + self._clipboard_glyph_positions(self.clipboard))
         if clip_positions:
             clip_x = sum(p[0] for p in clip_positions) / len(clip_positions)
             clip_y = sum(p[1] for p in clip_positions) / len(clip_positions)
@@ -5368,7 +5429,7 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
             # Calculate offset based on snapped centroid
             offset_x = snap_center_x - clip_x
             offset_y = snap_center_y - clip_y
-        else:
+        elif offset is None:
             offset_x, offset_y = 0, 0
 
         # Clear selection and paste nodes
@@ -5579,15 +5640,20 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
                     panel.show_txline_properties(glyph)
             self._update_shortcut_overlay()
             return
-        # Several glyphs (possibly alongside nodes/edges): shared properties
-        if n_glyphs > 1 or (n_glyphs and not no_graph_selection):
+        # Several glyphs and/or wires (possibly alongside nodes/edges):
+        # the properties they share, editable for all at once. A lone wire
+        # or glyph took its own branch above, where the panel is richer.
+        if (n_glyphs or n_wires) and (n_glyphs + n_wires > 1
+                                      or not no_graph_selection):
             signature = PropertiesPanel.selection_signature(
                 self.selected_nodes, self.selected_edges,
-                self.selected_ports, self.selected_txlines)
+                self.selected_ports, self.selected_txlines,
+                self.selected_wires)
             if panel.displayed_multi != signature:
                 panel.show_multi_properties(
                     self.selected_nodes, self.selected_edges,
-                    self.selected_ports, self.selected_txlines)
+                    self.selected_ports, self.selected_txlines,
+                    self.selected_wires)
             self._update_shortcut_overlay()
             return
 

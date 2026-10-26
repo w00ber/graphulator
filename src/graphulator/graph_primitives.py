@@ -58,7 +58,8 @@ import matplotlib.path as mpath
 import matplotlib.pyplot as plt
 import matplotlib.transforms as mtransforms
 from matplotlib import rcParams
-from numpy import abs, angle, arctan2, asarray, cos, diff, linspace, pi, real, sin, sqrt
+from numpy import (abs, angle, arctan2, asarray, concatenate, cos, diff,
+                   linspace, pi, real, sin, sqrt)
 
 logger = logging.getLogger(__name__)
 
@@ -892,7 +893,12 @@ The edges are defined as a list of dictionaries, each with the following keys:
 
 PORT_BODY_W = 1.5      # pentagon straight-body width (x R)
 PORT_BODY_H = 1.35     # pentagon height
-PORT_APEX_W = 0.55     # tapered nose beyond the body
+#: Depth of the tapered nose beyond the straight body (x R). FIXED: it
+#: does NOT scale with the port's length multiplier. The nose is the point
+#: a wire leaves through, so letting it grow with the body moved the
+#: departure point every time a label stretched the glyph -- a port's angle
+#: point has to stay put.
+PORT_APEX_W = 0.55
 PORT_LW = 2.0          # default stroke
 
 #: Where a wire anchors INSIDE the port body, as a fraction of the
@@ -904,6 +910,15 @@ PORT_LW = 2.0          # default stroke
 #: reads as a stray nub against the background.
 PORT_WIRE_INSET = 1.0
 
+#: How far a wire runs STRAIGHT out of a port before it begins to curve
+#: (x R, measured from the apex). Every wire leaving one port shares its
+#: start, its tangent and this run exactly, so they overlap along it and a
+#: fan reads as ONE stub that splits at the offset -- the Paragraphulator
+#: look -- instead of N strokes diverging from the point of the pentagon.
+#: The port still draws no lead of its own: this is the WIRES' straight
+#: run, so an unwired port is unchanged.
+PORT_WIRE_LEAD = 1.2          # matches Paragraphulator's PORT_LEAD_LEN
+
 TXLINE_BODY_W = 2.7          # cylinder half-length
 TXLINE_BODY_H = 0.28         # cylinder half-height
 TXLINE_LEAD_LEN = 0.55       # stub at each end
@@ -914,6 +929,11 @@ TXLINE_LW = 1.6
 # 'secondary'. Per-wire color / width / style overrides are in the panel.
 WIRE_COLOR = 'black'
 WIRE_LW = 1.4
+
+#: Cap style for a wire's ends AND for every dash of a dashed/dotted one.
+#: 'round' keeps a dotted wire reading as a row of dots rather than a row
+#: of little rectangles; 'butt' is matplotlib's own default.
+WIRE_CAPSTYLE = 'round'
 
 GLYPH_LABEL_FILL = 0.90    # fraction of the body width a label may occupy
 GLYPH_LABEL_ADVANCE = 0.60 # mean glyph advance / font size (bold sans)
@@ -968,24 +988,30 @@ def _glyphlabel(ax, text, x, y, fontsize, color='black', rotation=0.0,
                    zorder=zorder)
 
 
-def portgeometry(xy=(0, 0), R=2.0, length=1.0, height=1.0):
+def portgeometry(xy=(0, 0), R=2.0, length=1.0, height=1.0, apex=None):
     """(x, y, w, h, apex_x) of a port, UNROTATED.
 
     `w`/`h` are the full width/height of the straight part of the body and
     `apex_x` is the nose tip. A caller rotates these about (x, y) by the
     glyph angle.
+
+    `apex` is the nose depth in units of R (default PORT_APEX_W). It is
+    deliberately independent of `length`: stretching the body must not move
+    the point a wire leaves through.
     """
     x, y = xy
+    apex = PORT_APEX_W if apex is None else apex
     w = PORT_BODY_W * R * length
     h = PORT_BODY_H * R * height
-    apex_x = x + w / 2 + PORT_APEX_W * R * length
+    apex_x = x + w / 2 + apex * R
     return x, y, w, h, apex_x
 
 
-def portapex(xy=(0, 0), R=2.0, angle=0.0, length=1.0, height=1.0):
+def portapex(xy=(0, 0), R=2.0, angle=0.0, length=1.0, height=1.0,
+             apex=None):
     """((x, y), (tx, ty)): the point of the pentagon and the outward unit
     tangent there -- where a wire VISIBLY leaves the port."""
-    x, y, _, _, apex_x = portgeometry(xy, R, length, height)
+    x, y, _, _, apex_x = portgeometry(xy, R, length, height, apex)
     th = angle * pi / 180.0
     return (rotatepoint(apex_x, y, x, y, angle), (cos(th), sin(th)))
 
@@ -1002,6 +1028,20 @@ def portwirestart(xy=(0, 0), R=2.0, angle=0.0, length=1.0, height=1.0):
     th = angle * pi / 180.0
     anchor_x = x + PORT_WIRE_INSET * w / 2
     return (rotatepoint(anchor_x, y, x, y, angle), (cos(th), sin(th)))
+
+
+def portwirelead(R=2.0, length=1.0, apex=None, lead=None):
+    """Straight run from a port's wire anchor to where the wire may curve.
+
+    The anchor is buried in the body, so the run covers the hidden stretch
+    out through the nose and then `lead` (x R, default PORT_WIRE_LEAD)
+    beyond the apex. Neither part scales with `length`.
+    """
+    apex = PORT_APEX_W if apex is None else apex
+    lead = PORT_WIRE_LEAD if lead is None else lead
+    w = PORT_BODY_W * R * length
+    anchor_to_apex = w / 2 + apex * R - PORT_WIRE_INSET * w / 2
+    return anchor_to_apex + lead * R
 
 
 def txlinegeometry(xy=(0, 0), R=2.0, length=1.0, height=1.0):
@@ -1042,7 +1082,7 @@ def nodewireend(nodecent, R, toward):
     return ((cx + R * ux, cy + R * uy), (-ux, -uy))
 
 
-def wirepoints(p0, t0, p1, t1, R=2.0, samples=33):
+def wirepoints(p0, t0, p1, t1, R=2.0, samples=33, lead0=0.0, lead1=0.0):
     """Sampled cubic-bezier wire from p0 (leaving along unit tangent t0) to
     p1 (arriving travelling along unit tangent t1).
 
@@ -1050,32 +1090,51 @@ def wirepoints(p0, t0, p1, t1, R=2.0, samples=33):
     jogs, colinear with each port's lead at the ends. The control-point
     reach is a fraction of the span, clamped so very short wires do not loop
     and very long ones do not balloon.
+
+    `lead0` / `lead1` hold the wire STRAIGHT along its tangent for that
+    distance before the curve starts (and after it ends). Wires leaving one
+    port share a start, a tangent and a lead, so their leads coincide and
+    the fan reads as a single stub that splits at the offset.
     """
     p0 = asarray(p0, dtype=float)
     p1 = asarray(p1, dtype=float)
     t0 = asarray(t0, dtype=float)
     t1 = asarray(t1, dtype=float)
+    tail0 = p0 if lead0 > 0 else None
+    tail1 = p1 if lead1 > 0 else None
+    if lead0 > 0:
+        p0 = p0 + lead0 * t0
+    if lead1 > 0:
+        p1 = p1 - lead1 * t1
     d = float(sqrt(((p1 - p0) ** 2).sum()))
     c = min(max(0.45 * d, 0.9 * R), 4.0 * R)
     c0 = p0 + c * t0
     c1 = p1 - c * t1
     ts = linspace(0.0, 1.0, samples)[:, None]
-    return ((1 - ts) ** 3 * p0 + 3 * (1 - ts) ** 2 * ts * c0
-            + 3 * (1 - ts) * ts ** 2 * c1 + ts ** 3 * p1)
+    pts = ((1 - ts) ** 3 * p0 + 3 * (1 - ts) ** 2 * ts * c0
+           + 3 * (1 - ts) * ts ** 2 * c1 + ts ** 3 * p1)
+    if tail0 is not None:
+        pts = concatenate([tail0[None, :], pts])
+    if tail1 is not None:
+        pts = concatenate([pts, tail1[None, :]])
+    return pts
 
 
 def wire(ax=None, p0=(0, 0), t0=(1, 0), p1=(1, 0), t1=(1, 0), R=2.0,
          color=WIRE_COLOR, lw=None, linestyle='-', alpha=0.9,
          label=None, labelscale=1.0, labelcolor=None, use_latex=False,
-         zorder=4, samples=33):
+         zorder=4, samples=33, lead0=0.0, lead1=0.0,
+         capstyle=WIRE_CAPSTYLE):
     """Draw one routed wire; returns its sampled points."""
     if ax is None:
         _, ax = plt.subplots()
     lw = WIRE_LW if lw is None else lw
-    pts = wirepoints(p0, t0, p1, t1, R=R, samples=samples)
+    pts = wirepoints(p0, t0, p1, t1, R=R, samples=samples,
+                     lead0=lead0, lead1=lead1)
     ax.add_line(mlines.Line2D(pts[:, 0], pts[:, 1], color=color, linewidth=lw,
                               linestyle=linestyle, alpha=alpha, zorder=zorder,
-                              solid_capstyle='round'))
+                              solid_capstyle=capstyle,
+                              dash_capstyle=capstyle))
     if label:
         ppdu = pointsperdataunit(ax)
         mx, my = pts[len(pts) // 2]
@@ -1093,7 +1152,7 @@ def port(ax=None, xy=(0, 0), angle=0.0, R=2.0, length=1.0, height=1.0,
              label='', color='black', fill='white', labelcolor='black',
              lw=None, hatch=None, linestyle='-', labelscale=1.0,
              labelnudge=(0, 0), drawlabel=True, use_latex=False,
-             use_zorder=11, debug=False):
+             use_zorder=11, apex=None, debug=False):
     """Draw a port glyph: a home-plate pentagon, and nothing else.
 
     The port has no lead of its own. A wire drawn to it anchors inside the
@@ -1107,7 +1166,7 @@ def port(ax=None, xy=(0, 0), angle=0.0, R=2.0, length=1.0, height=1.0,
     if ax is None:
         _, ax = plt.subplots()
     lw = PORT_LW if lw is None else lw
-    x, y, w, h, apex_x = portgeometry(xy, R, length, height)
+    x, y, w, h, apex_x = portgeometry(xy, R, length, height, apex)
 
     def rot(px, py):
         return rotatepoint(px, py, x, y, angle)
@@ -1135,11 +1194,11 @@ def port(ax=None, xy=(0, 0), angle=0.0, R=2.0, length=1.0, height=1.0,
                     rotation=readableangle(angle), use_latex=use_latex,
                     zorder=use_zorder + 1)
 
-    apex, tangent = portapex(xy, R, angle, length, height)
+    apex_pt, tangent = portapex(xy, R, angle, length, height, apex)
     if debug:
-        ax.plot([apex[0]], [apex[1]], 'r.')
+        ax.plot([apex_pt[0]], [apex_pt[1]], 'r.')
 
-    return {'apex': apex, 'tangent': tangent, 'angle': angle}
+    return {'apex': apex_pt, 'tangent': tangent, 'angle': angle}
 
 
 def txline(ax=None, xy=(0, 0), angle=0.0, R=2.0, length=1.0, height=1.0,
@@ -1487,7 +1546,10 @@ class GraphCircuit:
             port by id or by label.
         **kwargs
             `R`, `length`, `height`, `color`, `fill`, `labelcolor`, `lw`,
-            `hatch`, `labelscale`, `labelnudge`, `drawlabel`.
+            `hatch`, `labelscale`, `labelnudge`, `drawlabel`, and the two
+            fixed geometry knobs `apex` (nose depth x R) and `lead` (how
+            far a wire runs straight out of the nose before it curves,
+            x R). Neither scales with `length`.
 
         Example
         -------
@@ -1642,6 +1704,18 @@ class GraphCircuit:
                                  cx['length'], cx['height'])[end]
         raise ValueError(f"Unknown wire anchor kind {kind!r}")
 
+    def _wirelead(self, spec):
+        """Straight run a wire keeps at this anchor before curving.
+
+        Only ports have one: it is what makes a fan out of one port read as
+        a single stub that splits at an offset.
+        """
+        if spec[0] != 'port':
+            return 0.0
+        term = self._findport(spec[1])
+        return portwirelead(term['R'], term['length'],
+                            term.get('apex'), term.get('lead'))
+
     def _terminatedtxlineends(self, cx):
         """The end names of `cx` that a wire actually lands on -- drawn as
         filled dots, the rest hollow."""
@@ -1681,6 +1755,7 @@ class GraphCircuit:
                      labelscale=term['labelscale'],
                      labelnudge=term['labelnudge'],
                      drawlabel=term.get('drawlabel', True),
+                     apex=term.get('apex'),
                      use_latex=self.use_latex, debug=debug)
 
         for w in self.wires:
@@ -1692,7 +1767,11 @@ class GraphCircuit:
             if w['end'][0] in ('port', 'txline'):
                 # arrive travelling INTO the lead, not out of it
                 t1 = (-t1[0], -t1[1])
+            lead0 = self._wirelead(w['start'])
+            lead1 = self._wirelead(w['end'])
             wire(ax=self.ax, p0=p0, t0=t0, p1=p1, t1=t1,
+                 lead0=lead0, lead1=lead1,
+                 capstyle=w.get('capstyle', WIRE_CAPSTYLE),
                  R=self._glyphR(), color=w.get('color', WIRE_COLOR),
                  lw=w.get('lw'), linestyle=w.get('linestyle', '-'),
                  alpha=w.get('alpha', 0.9), label=w.get('label'),
@@ -1706,7 +1785,8 @@ class GraphCircuit:
         pts = []
         for term in self.ports:
             x, y, w, h, apex_x = portgeometry(
-                term['xy'], term['R'], term['length'], term['height'])
+                term['xy'], term['R'], term['length'], term['height'],
+                term.get('apex'))
             angle = self._portangle(term)
             for px, py in ((x - w / 2, y - h / 2), (x - w / 2, y + h / 2),
                            (apex_x, y - h / 2), (apex_x, y + h / 2)):

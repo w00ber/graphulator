@@ -30,7 +30,7 @@ It's important to note that, despite the author's affiliation with NIST, this pr
 - **Self-loop support** with customizable angles and labels
 - **Node customization**: colors, sizes, labels, and conjugation markers
 - **Edge label positioning** with rotation and offset controls
-- **Schematic glyphs**: ports (where a signal enters or leaves the drawing) and transmission lines, joined by smooth routed wiring, with user-toggled auto-orientation. A port owns no lead — connections emerge from the point of the pentagon in their own stroke — and a line's open mouth is drawn as a bore, with its conductor coming out of the center
+- **Schematic glyphs**: ports (where a signal enters or leaves the drawing) and transmission lines, joined by smooth routed wiring, with user-toggled auto-orientation. A fan of wires out of one port shares a straight stub and splits past the apex, and every stroke's width follows the zoom. The port's nose depth and lead length are fixed geometry (they do not stretch with the body) and both are settable. A port owns no lead — connections emerge from the point of the pentagon in their own stroke — and a line's open mouth is drawn as a bore, with its conductor coming out of the center
 - **Zoom and pan** with mouse wheel and arrow keys
 - **Export to PDF/SVG** with scaling presets
 - **Save/load graphs** in JSON format
@@ -49,12 +49,12 @@ It's important to note that, despite the author's affiliation with NIST, this pr
 
 - **Node placement**: `G` (single), `Shift+G` (continuous), `Ctrl+G` (auto-increment)
 - **Edge creation**: `E` (single), `Ctrl+E` (continuous)
-- **Glyphs** (Graphulator): `P` (place port), `Shift+P` (continuous), `L` (place transmission line); wire them with the edge tool `E` — click a port or anywhere on a txline (the nearer end wins), then a node, port or txline. Drag a txline's end handle to stretch and aim it, snapping to the grid, with the other end held fixed; drag its body to move the whole glyph. Wires are black and solid by default, with per-wire color, width and dashed/dotted style in the Properties panel. Glyphs copy, cut and paste with `Ctrl+C`/`Ctrl+X`/`Ctrl+V` like nodes and edges, and a pasted copy is wired to itself. With a glyph selected: `←`/`→` length, `↑`/`↓` height, `Ctrl+←`/`Ctrl+→` rotate (which also pins a port's angle), `Ctrl+↑`/`Ctrl+↓` label size, `Shift+arrows` nudge the label; right-click for auto-orient and delete
+- **Glyphs** (Graphulator): `P` (place port), `Shift+P` (continuous), `L` (place transmission line); wire them with the edge tool `E` — click a port or anywhere on a txline (the nearer end wins), then a node, port or txline. Drag a txline's end handle to stretch and aim it, snapping to the grid, with the other end held fixed; drag its body to move the whole glyph. Wires are black and solid by default, with per-wire color, width and dashed/dotted style in the Properties panel; select several (shift-click, or a selection window enclosing both ends) to edit what they share at once. The defaults for ports, txlines and wires live under Settings → *Port & Wire Defaults*. Glyphs copy, cut and paste with `Ctrl+C`/`Ctrl+X`/`Ctrl+V` like nodes and edges, and a pasted copy is wired to itself. Select a sub-circuit (shift-click, or a selection window) and drag any member to move the whole thing rigidly; hold Option/Alt while dragging to leave the original and drop a copy where the drag ends. With a glyph selected: `←`/`→` length, `↑`/`↓` height, `Ctrl+←`/`Ctrl+→` rotate (which also pins a port's angle), `Ctrl+↑`/`Ctrl+↓` label size, `Shift+arrows` nudge the label; right-click for auto-orient and delete
 - **Selection**: Click to select, `Shift+Click` for multi-select, `Ctrl+A` for select all
 - **Editing**: Arrow keys for pan, `Shift+Arrow` for label nudge, `Ctrl+Arrow` for parameter adjustment
 - **File operations**: `Ctrl+N` (new), `Ctrl+O` (open), `Ctrl+S` (save)
 - **View**: `A` (auto-fit), `+/-` (zoom), `R` (rotate grid)
-- **Ports & lines** (Paragraphulator, with *Explicit Ports & Lines* enabled under Settings → Experimental): `P` (place port), `Shift+P` (continuous), `L` (place transmission line); connect with the edge tool `E` — port → node attaches, line end lead → port terminates, line end lead → node taps; right-click a line for its pumped termination; `Ctrl+U`/`Ctrl+I` rotate a glyph (or a whole multi-object selection rigidly); `?` toggles the on-screen hints, `Help → Help` has the full guide
+- **Ports & lines** (Paragraphulator, with *Explicit Ports & Lines* enabled under Settings → Experimental): `P` (place port), `Shift+P` (continuous), `L` (place transmission line); connect with the edge tool `E` — port → node attaches, line end lead → port terminates, line end lead → node taps; right-click a line for its pumped termination; `Ctrl+U`/`Ctrl+I` rotate a glyph (or a whole multi-object selection rigidly). Glyphs and their wiring copy, cut and paste with `Ctrl+C`/`Ctrl+X`/`Ctrl+V` like nodes and edges, and a pasted copy is relinked to itself; each placement dialog is pre-filled from the last glyph placed. Dragging any member of a selection moves the whole sub-circuit rigidly, and Option/Alt-drag drops a copy instead. `?` toggles the on-screen hints, `Help → Help` has the full guide
 
 ---
 
@@ -149,11 +149,23 @@ results to machine precision (pinned by a golden-file regression suite).
 **Wires** carry the same per-wire controls as ordinary graph edges — line
 width, color, label text and label size — editable in the Properties panel
 when a wire is selected, alongside its physics (rate, sign, and a tap's
-reference harmonic). Wires are drawn solid: reaching a port glyph is
-already what marks a coupling as dissipative. Defaults still encode the
-role at a glance — gray for a port attachment, firebrick with a `−` mark
-when its sign is inverted, teal for a conservative node tap (labelled with
-its `n=…` reference harmonic until you give it a label of your own).
+reference harmonic) — or with the arrow keys, as for an edge (↑/↓ width,
+←/→ label size). A port's lead is drawn at the width of the widest wire
+attached to it, so the two meet seamlessly instead of stepping at the tip.
+**Select several** (shift-click, or drag a selection
+window around the sub-circuit) and the panel offers what they share — rate,
+sign, width, label size, color — writing each edit to all of them in one
+undo step; attachments and taps edit together. A wire joins a window
+selection by its midpoint, the rule an edge already used -- so a band drawn
+across a bundle picks the bundle up. A selected wire, edge or self-loop all
+glow the same way, with a salmon halo along the path. Wires are drawn solid:
+reaching a port glyph is already what marks a coupling as dissipative.
+Defaults encode the role at a glance — gray for a port attachment,
+firebrick with a `−` mark when its sign is inverted, teal for a
+conservative node tap (labelled with its `n=…` reference harmonic until
+you give it a label of your own) — and all three are settable under
+Settings → *Port & Wire Defaults*, along with the rate a new attachment or
+tap is created with.
 - **Loss hub** (Insert menu): hatched port variant, same attachments, no
   scattering channel. Enables a per-channel energy audit
   (`GraphScatteringMatrix.absorption`, `.S_full`).
@@ -257,7 +269,7 @@ frequency-dependent hub weights / connector embedding.
 
 ### Settings & Customization
 
-- **Settings dialog** (`Ctrl+,`) with tabs for node defaults, edge defaults, self-loops, S-parameter plot styling, and export scaling
+- **Settings dialog** (`Ctrl+,`) with tabs for node defaults, edge defaults, self-loops, **port/line & wire defaults**, S-parameter plot styling, and export scaling. Wire colors and dash caps are read at draw time, so changing a default restyles every wire that has no override of its own
 - **Customizable keyboard shortcuts** with full rebinding support
 - **Persistent settings** stored in `~/.graphulator/settings.json`
 

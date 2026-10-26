@@ -26,6 +26,14 @@ from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox
 
 logger = logging.getLogger(__name__)
 
+#: points_per_data_unit that every stored line width and label size is
+#: quoted at. Anything drawn in POINTS (matplotlib's linewidth is) has to be
+#: scaled by ppdu / this, or it keeps a fixed ON-SCREEN width while the
+#: drawing around it grows -- a zoomed-in graph then shows hairline strokes
+#: on huge nodes. The edge renderers have used this number since the start;
+#: the glyphs and their wires were the ones still drawing in raw points.
+REFERENCE_POINTS_PER_DATA_UNIT = 43.0
+
 
 # ---------------------------------------------------------------------------
 # Label auto-increment (shared by both apps)
@@ -912,6 +920,77 @@ class GraphWindowCommonMixin:
         return min(fig.get_figwidth() * 72 / data_width,
                    fig.get_figheight() * 72 / data_height)
 
+    #: Color and extra width of the halo drawn under a selected object.
+    #: One look for every selection: a port-node wire already glowed this
+    #: way, while edges and self-loops got a coral DOT at their midpoint --
+    #: which said "something here is selected" without saying WHICH edge,
+    #: and vanished under a dense fan.
+    SELECTION_HALO_COLOR = 'salmon'
+    SELECTION_HALO_EXTRA_LW = 2.6
+    SELECTION_HALO_MIN_LW = 4.0
+
+    def _selection_halo_lw(self, linewidth, lw_scale=1.0):
+        """Width of the halo under a line of width `linewidth` (points)."""
+        return max(self.SELECTION_HALO_MIN_LW * lw_scale,
+                   linewidth + self.SELECTION_HALO_EXTRA_LW * lw_scale)
+
+    #: Arrow-key step and limits for a wire's width and label size. The
+    #: width step matches an ordinary edge's, so the two feel the same.
+    WIRE_LW_STEP = 0.1
+    WIRE_LW_RANGE = (0.2, 5.0)
+    WIRE_LABEL_STEP = 0.1
+    WIRE_LABEL_RANGE = (0.2, 5.0)
+
+    def _selected_wire_conns(self):
+        """The style dicts behind every selected wire; [] without glyphs."""
+        return []
+
+    def _adjust_wire_properties(self, direction):
+        """Arrow keys on a selected wire: Up/Down width, Left/Right label.
+
+        Edge parity -- a port-node wire is as much a line you style as an
+        edge is, and it was the one selectable thing the arrow keys fell
+        through to a view pan on.
+        """
+        conns = self._selected_wire_conns()
+        if not conns:
+            return False
+        lo, hi = self.WIRE_LW_RANGE
+        label_lo, label_hi = self.WIRE_LABEL_RANGE
+        default_mult = float(getattr(self.APP_CONFIG,
+                                     'DEFAULT_WIRE_LINEWIDTH_MULT', 1.25))
+        self._save_state()
+        for conn in conns:
+            if direction in ('up', 'down'):
+                step = self.WIRE_LW_STEP * (1 if direction == 'up' else -1)
+                current = conn.get('linewidth_mult')
+                current = default_mult if current is None else float(current)
+                conn['linewidth_mult'] = min(max(current + step, lo), hi)
+            else:
+                step = (self.WIRE_LABEL_STEP
+                        * (1 if direction == 'right' else -1))
+                current = float(conn.get('label_size_mult', 1.0))
+                conn['label_size_mult'] = min(
+                    max(current + step, label_lo), label_hi)
+        self._update_plot()
+        return True
+
+    def _zoom_lw_scale(self, ax=None):
+        """Factor turning a stored line width into points at this zoom.
+
+        1.0 at the reference zoom. Falls back to 1.0 for a degenerate view,
+        so a drawing never vanishes because the limits were mid-update.
+        """
+        ax = ax if ax is not None else self.canvas.ax
+        xlim, ylim = ax.get_xlim(), ax.get_ylim()
+        fig = ax.figure
+        width, height = xlim[1] - xlim[0], ylim[1] - ylim[0]
+        if width <= 0 or height <= 0:
+            return 1.0
+        ppdu = min(fig.get_figwidth() * 72 / width,
+                   fig.get_figheight() * 72 / height)
+        return ppdu / REFERENCE_POINTS_PER_DATA_UNIT
+
     def _rebuild_grid_only(self):
         """Remove just the grid line artists and redraw the grid for the current view."""
         for artist in [a for a in self.canvas.ax.lines if a.get_gid() == 'grid']:
@@ -979,6 +1058,199 @@ class GraphWindowCommonMixin:
 
         # Mark as modified
         self._set_modified(True)
+
+    # ---- group drag: nodes and glyphs move together -----------------------
+    #
+    # Two drag machineries grew side by side: the node drag (delta-based,
+    # NODES ONLY) and the glyph drag (one glyph, straight to the pointer).
+    # Clicking a port therefore shrank the selection to that port and
+    # dragged it alone, so a selected port + edge + node could not be moved
+    # as one group. These helpers are the shared half of the fix; the glyph
+    # mixins supply _selected_glyphs / _glyph_drag_extent / _wired_node_ids,
+    # and each app supplies _duplicate_selection_offset (its clipboard code
+    # differs).
+
+    def _selected_glyphs(self):
+        """Glyphs in the current selection; empty without a glyph mixin."""
+        return []
+
+    def _glyph_drag_extent(self, glyph):
+        """Half-size of a glyph's drag ghost, in data units."""
+        return self.node_radius
+
+    def _wired_node_ids(self, glyph):
+        """node_ids this glyph's wiring reaches."""
+        return set()
+
+    def _duplicate_selection_offset(self, dx, dy):
+        """Copy the selection `(dx, dy)` away and select the copies.
+
+        Returns a short description of what landed, or None when the app
+        has no duplicate path.
+        """
+        return None
+
+    def _group_drag_scene(self, nodes=None):
+        """(nodes, include_glyphs) for a drag over `nodes`.
+
+        Paragraphulator drags on a second canvas (the Kron reduction) whose
+        node list is not self.nodes and which has no glyphs at all, so the
+        glyphs only join a drag over the main scene.
+        """
+        if nodes is None:
+            return self.nodes, True
+        return nodes, nodes is self.nodes
+
+    def _group_drag_members(self, nodes=None):
+        """Everything a group drag moves: the selected nodes, then glyphs.
+
+        Edges are not listed -- they follow their endpoints -- and neither
+        are wires, which follow the glyph and node they join.
+        """
+        _nodes, include_glyphs = self._group_drag_scene(nodes)
+        members = list(self.selected_nodes)
+        if include_glyphs:
+            members += list(self._selected_glyphs())
+        return members
+
+    def _arm_group_drag_from(self, obj, x, y, duplicate=False):
+        """Arm a GROUP drag when `obj` belongs to a multi-object selection.
+
+        Clicking an already-selected object has to move the whole selection
+        rather than quietly reduce it to that one object. True when the
+        group drag was armed and the caller should stop.
+        """
+        members = self._group_drag_members()
+        if len(members) < 2 or not any(m is obj for m in members):
+            return False
+        self.drag_pending_group = True
+        self.drag_start_pos = (x, y)
+        self._drag_duplicate = bool(duplicate)
+        return True
+
+    def _snapped_group_delta(self, dx, dy, anchor=None, nodes=None):
+        """One snapped (dx, dy) for the whole group.
+
+        Snapping each member's destination on its own shears a group whose
+        members do not share a grid phase; snapping ONE anchor and reusing
+        its delta keeps the group rigid, which is what dragging a
+        sub-circuit has to do.
+        """
+        members = self._group_drag_members(nodes)
+        if anchor is None:
+            anchor = members[0] if members else None
+        if anchor is None:
+            return 0.0, 0.0
+        ax, ay = anchor['pos']
+        snap_x, snap_y = self._snap_to_grid(ax + dx, ay + dy)
+        return snap_x - ax, snap_y - ay
+
+    def _group_drag_placements(self, dx, dy, nodes=None):
+        """[(obj, x, y, occupied)] for every group member at this delta.
+
+        `occupied` only ever applies to a node landing on an unselected
+        node: glyphs are free to overlap, and a port sitting on top of the
+        mode it feeds is a legitimate drawing.
+        """
+        scene_nodes, _glyphs = self._group_drag_scene(nodes)
+        members = self._group_drag_members(nodes)
+        snap_dx, snap_dy = self._snapped_group_delta(dx, dy, nodes=nodes)
+        moving = {id(m) for m in members}
+        placements = []
+        for obj in members:
+            new_x = obj['pos'][0] + snap_dx
+            new_y = obj['pos'][1] + snap_dy
+            occupied = 'node_id' in obj and any(
+                id(other) not in moving
+                and np.isclose(other['pos'][0], new_x, atol=0.01)
+                and np.isclose(other['pos'][1], new_y, atol=0.01)
+                for other in scene_nodes)
+            placements.append((obj, new_x, new_y, occupied))
+        return placements
+
+    def _draw_group_drag_previews(self, dx, dy, nodes=None, ax=None):
+        """Ghost every group member at its offset position.
+
+        Nodes ghost as translucent circles (as they always have); glyphs
+        ghost as the same dashed orange box a single-glyph drag draws, so
+        the two drags look like one feature.
+        """
+        import matplotlib.patches as mpatches
+
+        ax = ax if ax is not None else self.canvas.ax
+        self._clear_group_drag_previews()
+        for obj, new_x, new_y, occupied in self._group_drag_placements(
+                dx, dy, nodes):
+            if 'node_id' in obj:
+                patch = mpatches.Circle(
+                    (new_x, new_y),
+                    self.node_radius * obj.get('node_size_mult', 1.0),
+                    fill=True, facecolor=('red' if occupied else 'lightblue'),
+                    edgecolor='gray', linestyle=':', linewidth=1.5,
+                    alpha=0.5, zorder=15)
+                ax.add_patch(patch)
+                self.drag_preview_patches.append(patch)
+                self.drag_preview_texts.append(ax.text(
+                    new_x, new_y, obj['label'], ha='center', va='center',
+                    fontsize=14, color='gray', alpha=0.7, zorder=16))
+            else:
+                extent = self._glyph_drag_extent(obj)
+                patch = mpatches.Rectangle(
+                    (new_x - extent, new_y - extent), 2 * extent, 2 * extent,
+                    fill=False, edgecolor='darkorange', linestyle=':',
+                    linewidth=1.5, zorder=15)
+                ax.add_patch(patch)
+                self.drag_preview_patches.append(patch)
+
+    def _clear_group_drag_previews(self):
+        lists = [self.drag_preview_patches, self.drag_preview_texts,
+                 getattr(self, 'drag_preview_outlines', None)]
+        for artists in lists:
+            if artists is None:
+                continue
+            for artist in artists:
+                try:
+                    artist.remove()
+                except Exception:
+                    pass
+            artists.clear()
+
+    def _commit_group_drag(self, dx, dy, nodes=None):
+        """Move the group -- or, with Option/Alt held, leave it where it is
+        and drop a copy at the offset. Returns a status line."""
+        members = self._group_drag_members(nodes)
+        if not members:
+            return None
+        snap_dx, snap_dy = self._snapped_group_delta(dx, dy, nodes=nodes)
+
+        if getattr(self, '_drag_duplicate', False):
+            if (abs(snap_dx), abs(snap_dy)) == (0.0, 0.0):
+                return "Nothing copied - the drag ended on the original"
+            landed = self._duplicate_selection_offset(snap_dx, snap_dy)
+            return (f"Copied {landed}" if landed
+                    else "Nothing to copy in this selection")
+
+        placements = self._group_drag_placements(dx, dy, nodes)
+        if any(occupied for *_rest, occupied in placements):
+            return "Cannot move the group - some positions are occupied"
+        if (abs(snap_dx), abs(snap_dy)) == (0.0, 0.0):
+            return None                      # ended where it started
+        self._save_state()
+        moved_ids = set()
+        for obj, new_x, new_y, _occupied in placements:
+            obj['pos'] = (new_x, new_y)
+            if 'node_id' in obj:
+                moved_ids.add(obj['node_id'])
+            else:
+                # a moved glyph changes the direction its wires arrive from
+                moved_ids |= self._wired_node_ids(obj)
+        self._recompute_unpinned_selfloop_angles(moved_ids)
+        n_nodes = sum(1 for o, *_r in placements if 'node_id' in o)
+        n_glyphs = len(placements) - n_nodes
+        what = [f"{n_nodes} node(s)"] if n_nodes else []
+        if n_glyphs:
+            what.append(f"{n_glyphs} glyph(s)")
+        return f"Moved {' and '.join(what)}"
 
     def _select_all(self):
         """Select all nodes and edges"""

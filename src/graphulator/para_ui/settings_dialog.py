@@ -425,6 +425,11 @@ class SettingsDialog(SettingsDialogBase):
         self._sync_dialog_defaults_from_config()
         # Reset last_node_props so continuous duplicate mode uses new defaults
         self.graphulator._reset_last_node_props_to_defaults()
+        # Same for the glyph placement memory: drop it so the next port or
+        # line placed starts from the changed Port & Wire defaults rather
+        # than from whatever was placed last.
+        self.graphulator.last_port_props = None
+        self.graphulator.last_line_props = None
         # Reconfigure the GUI surface for the Explicit Ports toggle
         if hasattr(self.graphulator, '_apply_explicit_ports_mode'):
             self.graphulator._apply_explicit_ports_mode()

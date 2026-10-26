@@ -61,9 +61,35 @@
 | {{shortcut:edge.place_single}} then click | **Connect**: port → node attaches a mode to that port; a line's **end lead** → port terminates that end; a line's end lead → node **taps** the mode onto the whole comb |
 | {{shortcut:rotate.ccw}} / {{shortcut:rotate.cw}} | Rotate the selected glyph in place; two or more selected objects rotate rigidly about their centroid |
 | `←/→`, `↑/↓` | Stretch a selected glyph's length / height |
+| `↑/↓`, `←/→` on a selected **wire** | Line width / label size, as for an edge |
 | `Double-click` | Edit a port, line, attachment, tap or pump bus |
 | `Right-click` a line | Add / edit / remove its **pumped termination** (creates the conjugate twin and the triple-line pump bus), rotate, auto-orient, delete |
 | `Ctrl+A` | Selects glyphs too, so a whole amplifier drawing moves and rotates as one |
+| `Click+drag` on empty canvas | Selection window: takes the nodes, edges, glyphs **and wires** it encloses (a wire joins by its midpoint, as an edge does) |
+| `Click+drag` a selected object | Moves the WHOLE selection rigidly — glyphs included |
+| `Option`/`Alt`+drag | Leaves the selection where it is and drops a copy, wired to itself, where the drag ends |
+| {{shortcut:clipboard.copy}} / {{shortcut:clipboard.cut}} / {{shortcut:clipboard.paste}} | Copy, cut and paste the selection — ports, lines, attachments and taps included. A link travels only when both of its ends do, and the pasted copy is relinked to itself, never to the original. A pumped line's conjugate twin is rebuilt from the pump rather than copied |
+
+**Editing several at once.** Shift-click (or drag a selection window) to
+collect any mix of nodes, edges, glyphs and wires; the **Properties** panel
+then shows what they share, with a gray or blank marker where the selection
+disagrees, and one edit writes to all of them in a single undo step. For
+wires that is rate, sign, line width, label size and color — attachments and
+taps together. A lone wire still gets its own fuller panel, which is where a
+tap's reference harmonic lives (it is indexed per line, so it has no shared
+range).
+
+**Defaults.** What a newly placed port, line or wire starts from lives under
+**Settings → Port & Wire Defaults**: the port/loss-hub choice, auto-orient,
+the rotation step, stroke widths and colors, fills, the nose depth and lead length (both
+FIXED — autosizing a port's body for a long label no longer drags its
+point and lead out with it), the three wire colors
+(sign +, sign −, tap), the wire width, rounded dash caps, and the coupling
+rate a new attachment or tap is created with. Each placement dialog is also pre-filled
+from the last glyph placed, so a run of them comes out consistent; applying
+Settings clears that memory so a changed default takes effect immediately.
+Wire colors are read when the canvas draws, so changing one restyles every
+wire that has no color of its own.
 
 **What the glyphs mean.** A **port** (pentagon) is one physical resistor; every mode attached to it shares that dissipation channel, which is what makes ports *shared* (cross-damping between the attached modes falls out of the same column). A **transmission line** (cylinder) is a standing-wave mode comb parameterized by FSR, Ztx and f_max; its comb never appears on the canvas — terminating an end on a port couples all of it through that port's single channel, and tapping a node onto an end couples the node to every comb mode with the verified capacitive or inductive profile. A **pumped termination** (right-click the line) models a modulated inductor at one end as one rank-one block to a **conjugate twin** of the line; the **triple-line bus** is always three strokes because one pump drives amplification *and* conversion pairs together on a harmonic comb.
 

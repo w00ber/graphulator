@@ -310,14 +310,14 @@ SHORTCUT_DEFINITIONS: List[ShortcutDefinition] = [
         action_id="clipboard.copy",
         display_name="Copy",
         category="Selection & Clipboard",
-        description="Copy selected nodes and edges",
+        description="Copy the selection (nodes, edges, ports, lines)",
         default_keys={"default": "Ctrl+C"},
     ),
     ShortcutDefinition(
         action_id="clipboard.cut",
         display_name="Cut",
         category="Selection & Clipboard",
-        description="Cut selected nodes and edges",
+        description="Cut the selection (nodes, edges, ports, lines)",
         default_keys={"default": "Ctrl+X"},
     ),
     ShortcutDefinition(

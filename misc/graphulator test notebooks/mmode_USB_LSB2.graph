@@ -1,20 +1,20 @@
 {
   "version": "1.1",
   "metadata": {
-    "created": "2026-09-24T11:57:01.063958",
-    "modified": "2026-09-24T11:57:01.063966"
+    "created": "2026-10-21T14:28:07.447900",
+    "modified": "2026-10-21T14:28:07.447910"
   },
   "view": {
     "grid_type": "triangular",
     "grid_rotation": 120,
-    "zoom_level": 1.0,
+    "zoom_level": 2.313060765624999,
     "xlim": [
-      -17.15745466958431,
-      29.839822298500785
+      -17.521368837775015,
+      23.41981166291002
     ],
     "ylim": [
-      -17.93592980834766,
-      22.076291455272447
+      -15.442463250673356,
+      19.413759889651388
     ],
     "use_latex": false
   },
@@ -321,6 +321,111 @@
         -1.5000000000000009
       ],
       "color": "#cd726c",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color": "black",
+      "outline_width": 2.5,
+      "outline_alpha": 1.0
+    },
+    {
+      "node_id": 46,
+      "label": "A_-2",
+      "pos": [
+        -19.845299461620748,
+        -2.267949192431118
+      ],
+      "color": "#aab6a8",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color": "black",
+      "outline_width": 2.5,
+      "outline_alpha": 1.0
+    },
+    {
+      "node_id": 47,
+      "label": "A_{-1}",
+      "pos": [
+        -19.845299461620748,
+        -0.26794919243111825
+      ],
+      "color": "#aab6a8",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color": "black",
+      "outline_width": 2.5,
+      "outline_alpha": 1.0
+    },
+    {
+      "node_id": 48,
+      "label": "A_0",
+      "pos": [
+        -19.845299461620748,
+        1.7320508075688816
+      ],
+      "color": "#aab6a8",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color": "black",
+      "outline_width": 2.5,
+      "outline_alpha": 1.0
+    },
+    {
+      "node_id": 49,
+      "label": "A_1",
+      "pos": [
+        -19.845299461620748,
+        3.732050807568882
+      ],
+      "color": "#aab6a8",
+      "color_key": "RED",
+      "node_size_mult": 1.0,
+      "label_size_mult": 1.4,
+      "conj": false,
+      "nodelabelnudge": [
+        0.0,
+        0.0
+      ],
+      "outline_enabled": false,
+      "outline_color": "black",
+      "outline_width": 2.5,
+      "outline_alpha": 1.0
+    },
+    {
+      "node_id": 50,
+      "label": "A_2",
+      "pos": [
+        -19.845299461620748,
+        5.732050807568882
+      ],
+      "color": "#aab6a8",
       "color_key": "RED",
       "node_size_mult": 1.0,
       "label_size_mult": 1.4,
@@ -1470,6 +1575,74 @@
           "label_size_mult": 1.0,
           "kind": "node",
           "node_id": 11
+        }
+      ]
+    },
+    {
+      "port_id": 11,
+      "label": "P1",
+      "pos": [
+        -26.773502691896255,
+        1.7320508075688819
+      ],
+      "angle": 0.0,
+      "angle_pinned": false,
+      "w_mult": 1.0,
+      "h_mult": 1.0,
+      "linewidth": 2.0,
+      "color": "black",
+      "fill": "#aab6a8",
+      "label_color": "#ffffff",
+      "label_size_mult": 1.0,
+      "labelnudge": [
+        0.0,
+        0.0
+      ],
+      "connections": [
+        {
+          "color": null,
+          "linewidth_mult": 1.25,
+          "linestyle": "-",
+          "label": "",
+          "label_size_mult": 1.0,
+          "kind": "node",
+          "node_id": 50
+        },
+        {
+          "color": null,
+          "linewidth_mult": 1.25,
+          "linestyle": "-",
+          "label": "",
+          "label_size_mult": 1.0,
+          "kind": "node",
+          "node_id": 49
+        },
+        {
+          "color": null,
+          "linewidth_mult": 1.25,
+          "linestyle": "-",
+          "label": "",
+          "label_size_mult": 1.0,
+          "kind": "node",
+          "node_id": 48
+        },
+        {
+          "color": null,
+          "linewidth_mult": 1.25,
+          "linestyle": "-",
+          "label": "",
+          "label_size_mult": 1.0,
+          "kind": "node",
+          "node_id": 47
+        },
+        {
+          "color": null,
+          "linewidth_mult": 1.25,
+          "linestyle": "-",
+          "label": "",
+          "label_size_mult": 1.0,
+          "kind": "node",
+          "node_id": 46
         }
       ]
     }

@@ -97,6 +97,36 @@ DYNAMIC_ADJUST_SELFLOOP_ANGLE = True  # When True, unpinned self-loops reorient 
 GLYPH_ROTATION_INCREMENT = 15  # degrees per Ctrl+Left/Right on a selected glyph
 DEFAULT_PORT_AUTO_ORIENT = True  # new ports aim their lead at what they are wired to
 
+# Appearance a newly placed glyph starts from. The placement dialog is
+# pre-filled from these (and thereafter from the last glyph placed, so a run
+# of glyphs stays consistent without re-typing); the geometry constants they
+# scale live in graph_primitives, next to the drawing code.
+DEFAULT_PORT_LINEWIDTH = 2.0      # pentagon stroke width
+DEFAULT_PORT_COLOR = 'black'      # pentagon stroke color
+DEFAULT_PORT_FILL = 'white'       # pentagon fill
+DEFAULT_PORT_LABEL_COLOR = 'black'
+# Fixed port geometry, in units of the node radius. Neither scales with the
+# port's length, so stretching a port (or letting its label autosize it)
+# leaves the point of the pentagon -- and therefore where its wires leave --
+# exactly where it was. Read at draw time, so a change restyles every port
+# that has no override of its own.
+DEFAULT_PORT_APEX_DEPTH = 0.55    # how far the nose juts past the body
+DEFAULT_PORT_LEAD_LENGTH = 1.2    # straight run of a wire past the nose
+DEFAULT_TXLINE_LINEWIDTH = 1.6    # cylinder stroke width
+DEFAULT_TXLINE_COLOR = 'black'
+DEFAULT_TXLINE_FILL = '#cccccc'
+DEFAULT_TXLINE_LABEL_COLOR = 'black'
+
+# Wires (the port/txline-to-node links). A wire stores its overrides as None
+# until something sets them, so these are read at DRAW time: changing one
+# restyles every wire that has no override of its own.
+DEFAULT_WIRE_COLOR = 'black'
+DEFAULT_WIRE_LINEWIDTH_MULT = 1.25
+DEFAULT_WIRE_LINESTYLE = '-'      # one of WIRE_LINESTYLES' values
+# Round caps on every dash of a dashed/dotted wire (and on its two ends).
+# Off gives matplotlib's square-ended dashes.
+DEFAULT_WIRE_ROUND_CAPS = True
+
 # Interface settings
 SHOW_SHORTCUT_OVERLAY = False  # optional on-canvas context-sensitive shortcut hints
 SHORTCUT_OVERLAY_CORNER = 'top-right'  # 'top-left'|'top-right'|'bottom-left'|'bottom-right'
@@ -152,6 +182,27 @@ SETTINGS_PARAMS = {
         ('AUTO_ADJUST_SELFLOOP_ANGLE', 'Auto-Orient New Self-Loops', 'bool', None, None, None),
         ('DYNAMIC_ADJUST_SELFLOOP_ANGLE', 'Re-Orient Unpinned on Drag', 'bool', None, None, None),
     ],
+    'Port & Wire Defaults': [
+        ('DEFAULT_PORT_AUTO_ORIENT', 'Auto-Orient New Ports', 'bool', None, None, None),
+        ('GLYPH_ROTATION_INCREMENT', 'Rotation Step (°)', 'int', 1, 90, 1),
+        ('DEFAULT_PORT_LINEWIDTH', 'Port Stroke Width', 'float', 0.25, 8.0, 0.25),
+        ('DEFAULT_PORT_COLOR', 'Port Stroke Color', 'color', None, None, None),
+        ('DEFAULT_PORT_FILL', 'Port Fill Color', 'color', None, None, None),
+        ('DEFAULT_PORT_LABEL_COLOR', 'Port Label Color', 'color', None, None, None),
+        ('DEFAULT_PORT_APEX_DEPTH', 'Port Nose Depth (×R)', 'float', 0.0, 3.0, 0.05),
+        ('DEFAULT_PORT_LEAD_LENGTH', 'Port Lead Length (×R)', 'float', 0.0, 5.0, 0.1),
+        ('DEFAULT_TXLINE_LINEWIDTH', 'Txline Stroke Width', 'float', 0.25, 8.0, 0.25),
+        ('DEFAULT_TXLINE_COLOR', 'Txline Stroke Color', 'color', None, None, None),
+        ('DEFAULT_TXLINE_FILL', 'Txline Fill Color', 'color', None, None, None),
+        ('DEFAULT_TXLINE_LABEL_COLOR', 'Txline Label Color', 'color', None, None, None),
+        ('DEFAULT_WIRE_COLOR', 'Wire Color', 'color', None, None, None),
+        ('DEFAULT_WIRE_LINEWIDTH_MULT', 'Wire Width (×)', 'float', 0.2, 5.0, 0.05),
+        ('DEFAULT_WIRE_LINESTYLE', 'Wire Style', 'dropdown',
+         [('Solid', '-'), ('Dashed', '--'), ('Dotted', ':'),
+          ('Dash-dot', '-.')], None, None),
+        ('DEFAULT_WIRE_ROUND_CAPS', 'Rounded Wire Dash Caps', 'bool',
+         None, None, None),
+    ],
     'Interface': [
         ('SHOW_SHORTCUT_OVERLAY', 'Show Shortcut Hints', 'bool', None, None, None),
         ('SHORTCUT_OVERLAY_CORNER', 'Hints Corner', 'dropdown',
@@ -174,6 +225,12 @@ LIVE_PARAMS = (
     'ARROWHEAD_OPEN_ANGLE',
     'DEFAULT_NODE_RADIUS',
     'DEFAULT_NODE_LABEL_COLOR',  # read at draw time for nodes without an override
+    'DEFAULT_WIRE_COLOR',        # same for wires without a per-wire override
+    'DEFAULT_WIRE_LINEWIDTH_MULT',
+    'DEFAULT_WIRE_LINESTYLE',
+    'DEFAULT_WIRE_ROUND_CAPS',
+    'DEFAULT_PORT_APEX_DEPTH',   # fixed geometry, read when the port draws
+    'DEFAULT_PORT_LEAD_LENGTH',
     'SHOW_SHORTCUT_OVERLAY',     # toggling/corner/detail apply to the overlay immediately
     'SHORTCUT_OVERLAY_CORNER',
     'SHORTCUT_OVERLAY_SHOW_ALL',

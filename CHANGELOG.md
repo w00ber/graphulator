@@ -125,6 +125,139 @@
   is as much part of a node's local clutter as an edge is). Graphulator
   already had self-loop auto-orientation for edges; the avoid-list is now
   an overridable hook rather than a hard-coded edge scan.
+- **A Paragraphulator port's lead takes the width of the widest wire
+  attached to it.** The lead was drawn at the port's own stroke width, so a
+  thicker wire met a thinner lead and stepped at the tip -- and the only
+  way to match them was to hand-tune the port's stroke, which also controls
+  the pentagon. The lead and that wire now read as one continuous line. An
+  unwired port has no seam to match, so it keeps its body stroke.
+  (Graphulator needed nothing: its port draws no lead, so the straight run
+  a wire keeps past the nose *is* the lead, already at the wire's own
+  width.)
+- **Arrow keys style a selected port-node wire**, in both apps, the way they
+  already did for an edge: Up/Down width, Left/Right label size, one undo
+  step per press. A selected wire was the one thing the arrow keys fell
+  through on, to a view pan.
+- **The coral selection dot on a Paragraphulator attachment is gone.** The
+  salmon halo along the wire already says which one is selected, and says
+  it better -- the dot marked a midpoint that a dense fan buried.
+- **A port's nose and lead are FIXED geometry now**, in both apps, and both
+  are user settings (*Port & Wire Defaults ▸ Port Nose Depth / Port Lead
+  Length*, in units of the node radius, read at draw time). The tapered
+  nose used to scale with the port's length multiplier, so stretching a
+  port -- or just giving it a longer label, which autosizes the body in
+  Paragraphulator -- moved the point of the pentagon, and with it the
+  departure point of every wire. The body still stretches; the nose and
+  the lead no longer do. A port may also carry its own `apex` / `lead`
+  override, and the code export writes either out when it differs from the
+  primitive default, since the generated script knows nothing about the
+  session's settings.
+- **A sub-circuit drags as one**, in both apps. Two drag machineries had
+  grown side by side -- the node drag (delta-based, NODES ONLY) and the
+  glyph drag (one glyph, straight to the pointer) -- and clicking a port
+  shrank the selection to that port and dragged it alone, so a selected
+  port + edge + node could not be moved as a group at all. Clicking any
+  already-selected object now drags the whole selection, glyphs included,
+  through one shared routine in `common_window`.
+  - The group move is also **rigid** now: one snapped delta for every
+    member, instead of snapping each member's destination on its own, which
+    sheared a group whose members did not share a grid phase.
+  - Only NODES keep the "position occupied" rule. Glyphs may overlap -- a
+    port sitting on the mode it feeds is a legitimate drawing.
+- **Option/Alt-drag duplicates**, in both apps: the selection stays where it
+  is and a copy lands where the drag ends, wired to itself. It borrows the
+  clipboard machinery (so links are relinked exactly as a paste does) and
+  puts the real clipboard back afterwards, so duplicating never clobbers
+  what you had copied.
+- **Port, line and wire line widths follow the zoom.** matplotlib line
+  widths are POINTS, so a stored width kept a fixed ON-SCREEN thickness
+  while the drawing grew around it: a zoomed-in graph showed hairline
+  strokes on huge nodes, and a zoomed-out one showed slabs. Edges had been
+  scaled by the zoom since the start; the glyphs and their wires were still
+  drawing in raw points. The reference zoom they are all quoted at now
+  lives in one place, `common_window.REFERENCE_POINTS_PER_DATA_UNIT`.
+- **A fan of wires out of a Graphulator port splits at an offset**, matching
+  Paragraphulator. Every wire leaving a port now keeps a straight run along
+  the port axis before it starts to curve; they share a start, a tangent
+  and that run, so they coincide along it and the bundle reads as ONE stub
+  that splits past the apex, instead of N strokes diverging from the point
+  of the pentagon. The port still draws no lead of its own, so an unwired
+  port is unchanged. `wirepoints` gained `lead0` / `lead1`, so an exported
+  script routes the same way the canvas does.
+- **Rounded dash caps on wires**, with a setting (*Port & Wire Defaults ▸
+  Rounded Wire Dash Caps*, on by default, read at draw time). matplotlib
+  leaves a dotted line as a row of tiny rectangles; round caps are what
+  make dots read as dots. A non-default cap style is carried into the code
+  export, which calls the primitives directly and knows nothing about the
+  session's settings.
+- **One selection look for wires, edges and self-loops**, in both apps. A
+  selected port-node wire already drew a salmon halo along its path, while
+  a selected edge or self-loop got a coral DOT at its midpoint -- which
+  said "something here is selected" without saying *which* edge, and
+  vanished under a dense fan. Edges and self-loops now take the halo too:
+  the same primitive is drawn underneath first, in salmon and wider, with
+  its labels suppressed so they do not double-draw. The color and extra
+  width live on `GraphWindowCommonMixin`, so the two apps cannot drift.
+- A rubber band now takes a wire by its **midpoint**, the rule an edge
+  already used, rather than requiring both of its ends inside. A band drawn
+  across a bundle of wires -- which is how you reach for "these wires" --
+  encloses no endpoints at all, so the stricter rule selected nothing.
+- **A Settings tab for port, line and wire defaults**, in both apps
+  (*Port & Wire Defaults*). "How do I set the default appearance of a port
+  and a port-node wire?" previously had no answer but editing module
+  constants: the dialog had no tab for them and nothing read a config value
+  at creation time. The tab now carries stroke width, stroke / fill color,
+  label color, auto-orient and the rotation step for the glyphs; wire color,
+  width and line style for the wiring; and in Paragraphulator the
+  port/loss-hub choice plus the coupling rate a new attachment or line tap
+  is created with. The glyph *geometry* constants stay in the drawing code,
+  where a generated script and the canvas read the same numbers.
+  - **Wire colors are resolved at draw time.** A wire stores no color until
+    one is picked, so changing the default restyles every wire that has no
+    override of its own — including Paragraphulator's three signed defaults
+    (sign +, sign −, and the conservative tap). Width and style are stamped
+    in at creation instead, since those are per-wire panel controls and a
+    live default would fight an explicit edit. The code export compares
+    against the *primitive* defaults, so a wire riding on a configured
+    default is still written out explicitly: the generated script calls the
+    primitives directly and knows nothing about the session's settings.
+- **Paragraphulator remembers the last port / line placed**, as Graphulator
+  already did for its glyphs: the placement dialog is pre-filled from the
+  previous one so a run of glyphs comes out consistent without re-typing
+  it, falling back to the configured defaults. The label and the
+  port/loss-hub choice are deliberately not remembered (one
+  auto-increments, the other has its own action), and applying Settings
+  drops the memory so a changed default actually reaches the next glyph.
+- **Ports, lines and their wiring now travel on the clipboard** in
+  Paragraphulator. Copy, cut and paste carried only nodes, edges and
+  constraint groups, so selecting a sub-circuit and pasting it gave back
+  bare modes with its ports, lines, attachments and taps silently dropped —
+  worse on *cut*, where the glyphs survived but the selection did not. A
+  link travels only when both of its ends do, exactly as an edge does, and
+  a pasted link is relinked to the pasted mode rather than quietly sharing
+  the original's. Smart paste auto-increments port and line labels against
+  their own namespaces (`P1` → `P2`, not against the node numbering); raw
+  paste keeps them. A pumped line's conjugate twin and the twin's mirror
+  ports are left out of the copy and **regenerated** from the pump config
+  on paste, since they are derived objects.
+  - Cutting a mode now also clears the attachments and taps that pointed at
+    it, which only deletion did. A link left pointing at a cut node drew as
+    nothing but still reached the extractor.
+- **Several port-node wires can be selected and edited at once**, in both
+  apps. Shift-clicking wires already accumulated a selection, but the
+  properties panel had no surface for more than one — Graphulator fell
+  through to "No Selection" and Paragraphulator said so out loud
+  ("nothing they share is editable"). The shared panel now offers width,
+  line style, label size and color for Graphulator's wires, and rate, sign,
+  width, label size and color for Paragraphulator's attachments and taps
+  (which edit together; the label names which kinds are in play, since the
+  two rates are not the same quantity). A lone wire still gets its own
+  richer panel; `n_ref` stays there, being indexed per line.
+  - The **rubber band now picks up wires** as well as glyphs, so a window
+    over a sub-circuit can restyle or retune its whole wiring in one go. A
+    wire joins when *both* of its ends are inside the band — the set a copy
+    carries — rather than on its midpoint as an edge does: a wire whose far
+    end the band missed would otherwise be edited invisibly.
 
 ### Fixed
 - **Node colors exported as the wrong color.** A hand-picked color was drawn

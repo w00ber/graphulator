@@ -1048,3 +1048,118 @@ def test_txline_label_tracks_the_body_and_the_multiplier(win):
 
     bigger = drawn_height(h_mult=4.0, label_size_mult=2.0)
     assert bigger == pytest.approx(2 * tall, rel=0.05)
+
+
+# ---------------------------------------------------------------------------
+# several wires at once: the shared panel and the rubber band
+# ---------------------------------------------------------------------------
+
+def two_wired_ports(win):
+    """Two ports, each wired to its own node, all four inside x in [-12, 12]."""
+    a = add_node(win, 'A', (6.0, 0.0))
+    b = add_node(win, 'B', (6.0, -6.0))
+    p1 = win.add_port(label='P1', pos=(-6.0, 0.0))
+    p2 = win.add_port(label='P2', pos=(-6.0, -6.0))
+    return (p1, win.connect_port_to_node(p1, a)), \
+           (p2, win.connect_port_to_node(p2, b))
+
+
+def test_several_wires_get_an_editable_panel(win):
+    w1, w2 = two_wired_ports(win)
+    win.selected_wires = [w1, w2]
+    win._update_properties_panel()
+
+    panel = win.properties_panel
+    assert panel.displayed_multi is not None
+    assert "2 wire(s)" in panel.title_label.text()
+
+
+def test_editing_writes_to_every_selected_wire(win):
+    w1, w2 = two_wired_ports(win)
+    win.selected_wires = [w1, w2]
+    win._update_properties_panel()
+
+    win.properties_panel._apply_to_wires('linewidth_mult', 3.0)
+    assert w1[1]['linewidth_mult'] == pytest.approx(3.0)
+    assert w2[1]['linewidth_mult'] == pytest.approx(3.0)
+
+
+def test_one_multi_wire_edit_is_one_undo_step(win):
+    w1, w2 = two_wired_ports(win)
+    win.selected_wires = [w1, w2]
+    before = len(win.undo_stack)
+    win.properties_panel._apply_to_wires('linestyle', ':')
+    assert len(win.undo_stack) == before + 1
+
+
+def test_resetting_the_multi_wire_color_restores_the_default(win):
+    w1, w2 = two_wired_ports(win)
+    w1[1]['color'] = 'teal'
+    w2[1]['color'] = 'teal'
+    win.selected_wires = [w1, w2]
+    win.properties_panel._apply_to_wires('color', None)
+    default = win.wire_defaults()[0]
+    assert win.wire_style(w1[1])[0] == default
+    assert win.wire_style(w2[1])[0] == default
+
+
+def test_a_single_wire_still_gets_its_own_panel(win):
+    (port, conn), _other = two_wired_ports(win)
+    win.selected_wires = [(port, conn)]
+    win._update_properties_panel()
+    assert win.properties_panel.displayed_single is conn
+    assert win.properties_panel.displayed_multi is None
+
+
+def test_a_wire_alongside_a_node_offers_the_shared_panel(win):
+    (port, conn), _other = two_wired_ports(win)
+    win.selected_wires = [(port, conn)]
+    win.selected_nodes = [win.nodes[0]]
+    win._update_properties_panel()
+    assert win.properties_panel.displayed_multi is not None
+
+
+def test_the_band_takes_a_wire_with_both_ends_inside(win):
+    w1, w2 = two_wired_ports(win)
+    hits = win._glyph_wires_in_rect(-12.0, -12.0, 12.0, 12.0)
+    assert {id(c) for _o, c in hits} == {id(w1[1]), id(w2[1])}
+
+
+def test_the_band_takes_a_wire_by_its_midpoint(win):
+    """Same rule an edge uses. A band drawn ACROSS a bundle of wires -- how
+    you actually reach for "these wires" -- encloses no endpoints at all,
+    so a both-ends-in rule would select nothing."""
+    w1, w2 = two_wired_ports(win)
+    # a narrow band over the gap between the ports and their nodes, far
+    # from any endpoint
+    hits = win._glyph_wires_in_rect(-1.0, -12.0, 1.0, 12.0)
+    assert {id(c) for _o, c in hits} == {id(w1[1]), id(w2[1])}
+
+
+def test_the_band_leaves_a_wire_it_does_not_cross_alone(win):
+    w1, w2 = two_wired_ports(win)
+    hits = win._glyph_wires_in_rect(-1.0, -2.0, 1.0, 2.0)    # top wire only
+    assert {id(c) for _o, c in hits} == {id(w1[1])}
+
+
+def test_a_band_release_selects_the_wires_it_encloses(win):
+    w1, w2 = two_wired_ports(win)
+    win.selection_window = True
+    win.selection_window_start = (-12.0, -12.0)
+    event = types.SimpleNamespace(xdata=12.0, ydata=12.0, button=1,
+                                  inaxes=win.canvas.ax)
+    win._on_release(event)
+
+    assert len(win.selected_ports) == 2
+    assert {id(c) for _o, c in win.selected_wires} == {id(w1[1]), id(w2[1])}
+
+
+def test_a_band_release_does_not_duplicate_an_already_selected_wire(win):
+    w1, _w2 = two_wired_ports(win)
+    win.selected_wires = [w1]
+    win.selection_window = True
+    win.selection_window_start = (-12.0, -12.0)
+    win._on_release(types.SimpleNamespace(xdata=12.0, ydata=12.0, button=1,
+                                          inaxes=win.canvas.ax))
+    ids = [id(c) for _o, c in win.selected_wires]
+    assert len(ids) == len(set(ids)) == 2
