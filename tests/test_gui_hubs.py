@@ -1398,8 +1398,9 @@ def test_glyph_only_graph_is_exportable(para):
     seen = {}
     original = clipboard_export.copy_figure_to_clipboard
 
-    def spy(fig, include_png=True):
+    def spy(fig, include_png=True, png_dpi=300, bbox=None, **kw):
         seen['called'] = True
+        seen['bbox'] = bbox
         return ('spy', ['pdf', 'svg'])
 
     clipboard_export.copy_figure_to_clipboard = spy
@@ -1408,6 +1409,8 @@ def test_glyph_only_graph_is_exportable(para):
     finally:
         clipboard_export.copy_figure_to_clipboard = original
     assert seen.get('called') is True
+    # and it is handed the crop box measured at the pinned export scale
+    assert seen['bbox'] is not None and seen['bbox'] != 'tight'
 
 
 def test_truly_empty_graph_still_refuses_export(para):

@@ -42,11 +42,13 @@ import matplotlib.patches as patches
 from . import graph_primitives as gp
 from . import graphulator_config as config
 from . import code_export
-from .common_window import GraphWindowCommonMixin, auto_increment_label
+from .common_window import (REFERENCE_POINTS_PER_DATA_UNIT,
+                            GraphWindowCommonMixin, auto_increment_label)
 from .glyphs import (GlyphMixin, GLYPH_SIZE_MIN, GLYPH_SIZE_MAX,
                      GLYPH_LABEL_SIZE_MIN, GLYPH_LABEL_SIZE_MAX,
                      PORT_LW, TXLINE_LW, WIRE_COLOR, WIRE_LINESTYLES)
 from .para_core.graph_state import capture_graph_state
+from .para_core import settings_manager
 from .para_core.settings_manager import get_settings_manager
 from .para_rendering.label_cache import LabelPathCache
 from .settings_dialog import (
@@ -631,14 +633,30 @@ class PropertiesPanel(QWidget):
         scaling_tab.setLayout(scaling_layout)
 
         # Add title
-        title = QLabel("Export Scaling Parameters")
+        title = QLabel("Python Code Export")
         title.setStyleSheet("font-weight: bold; font-size: 11px;")
         scaling_layout.addWidget(title)
 
-        desc = QLabel("Tune these to match GUI and exported code rendering:")
+        # These are calibration constants baked into the NUMBERS the
+        # generated script contains -- they do not touch the canvas (bar
+        # the one GUI_ parameter), which is why the tab reads oddly next to
+        # the drawing defaults. Preview Output is what makes them tunable
+        # without a round trip through a notebook.
+        desc = QLabel(
+            "Scale factors written into the exported script, so its "
+            "matplotlib output matches the canvas. Preview Output renders "
+            "the code here as you tune them.")
         desc.setStyleSheet("font-size: 9px; color: gray;")
         desc.setWordWrap(True)
         scaling_layout.addWidget(desc)
+
+        preview_btn = QPushButton("Preview Output\u2026")
+        preview_btn.setToolTip(
+            "Run the exported code and show its figure beside the script, "
+            "re-rendering as these parameters change")
+        preview_btn.clicked.connect(
+            lambda: self.graphulator._show_code_preview())
+        scaling_layout.addWidget(preview_btn)
 
         # Create scroll area for parameters
         scroll = QScrollArea()
@@ -727,7 +745,7 @@ class PropertiesPanel(QWidget):
 
         scaling_layout.addStretch()
 
-        self.tabs.addTab(scaling_tab, "Export Scaling")
+        self.tabs.addTab(scaling_tab, "Code Export")
 
     def _update_scaling_param(self, key, value):
         """Update a scaling parameter"""
@@ -735,6 +753,9 @@ class PropertiesPanel(QWidget):
         # If it's the GUI parameter, update the plot immediately
         if key == 'GUI_SELFLOOP_LABEL_SCALE':
             self.graphulator._update_plot()
+        # Every other one changes only the generated code, so the preview
+        # is the only place the change is visible at all.
+        self.graphulator._refresh_code_preview()
 
     def _reset_scaling_params(self):
         """Reset all scaling parameters to defaults"""
@@ -2281,8 +2302,10 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
         self.is_modified = False  # Track unsaved changes
         self.recent_files = []  # List of recent file paths
         self.max_recent_files = 10
-        self.recent_files_path = Path.home() / '.graphulator_recent'
-        self.last_graph_path = Path.home() / '.graphulator_last.graph'
+        # Through the module, not `from ... import`: a test redirects
+        # these so a run does not touch the live files (see state_dir).
+        self.recent_files_path = settings_manager.RECENT_FILES_PATH
+        self.last_graph_path = settings_manager.LAST_GRAPH_PATH
 
         # Load recent files list
         self._load_recent_files()
@@ -2389,6 +2412,7 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
 
         # Optional context-sensitive shortcut-hint overlay (over the canvas)
         self._init_shortcut_overlay()
+        self._init_canvas_toast()
 
     def _create_shortcuts(self):
         """Create keyboard shortcuts"""
@@ -2605,8 +2629,10 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
         copy_clipboard_action = QAction("Copy Graph to Clipboard", self)
         copy_clipboard_action.setShortcut("Ctrl+Shift+I")
         copy_clipboard_action.setStatusTip(
-            "Copy the whole graph to the clipboard (vector PDF/SVG + PNG) for "
-            "pasting into Keynote, PowerPoint, Illustrator, etc."
+            "Copy the selection \u2014 or the whole graph when nothing is "
+            "selected \u2014 to the clipboard (vector PDF/SVG + PNG) for "
+            "pasting into Keynote, PowerPoint, Illustrator, etc. Selection "
+            "highlighting is left off."
         )
         copy_clipboard_action.triggered.connect(lambda: self._copy_graph_to_clipboard())
         export_menu.addAction(copy_clipboard_action)
@@ -2614,12 +2640,21 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
         copy_vector_action = QAction("Copy Graph to Clipboard (Vector Only)", self)
         copy_vector_action.setShortcut("Ctrl+Shift+J")
         copy_vector_action.setStatusTip(
-            "Copy the graph as vector PDF/SVG only (no raster fallback) so apps "
-            "like Keynote/PowerPoint paste editable vector art instead of an image."
+            "Copy the selection \u2014 or the whole graph when nothing is "
+            "selected \u2014 as vector PDF/SVG only (no raster fallback) so "
+            "apps like Keynote/PowerPoint paste editable vector art instead of "
+            "an image."
         )
         copy_vector_action.triggered.connect(self._copy_graph_to_clipboard_vector)
         export_menu.addAction(copy_vector_action)
         export_menu.addSeparator()
+
+        preview_code_action = QAction("Preview Code Output...", self)
+        preview_code_action.setStatusTip(
+            "Run the exported Python here and show its figure beside the "
+            "script, instead of round-tripping through a notebook")
+        preview_code_action.triggered.connect(self._show_code_preview)
+        export_menu.addAction(preview_code_action)
 
         export_code_action = QAction("Python Code...", self)
         export_code_action.setShortcut("Ctrl+Shift+E")
@@ -2860,6 +2895,9 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
         self.grid_rotation = view.get("grid_rotation", 0)
         self.zoom_level = view.get("zoom_level", 1.0)
         self.use_latex = view.get("use_latex", False)
+        # Rendering mode is global matplotlib state: setting the flag
+        # alone left a LaTeX graph drawing in serif MathText.
+        self._apply_latex_mode()
 
         # Restore nodes
         node_id_map = {}  # Map from saved node_id to node object
@@ -2996,26 +3034,12 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
             if not filepath.endswith('.png'):
                 filepath += '.png'
             try:
-                # Save current title
-                current_title = self.canvas.ax.get_title()
-
-                # Clear title for export
-                self.canvas.ax.set_title('')
-
-                # Redraw without grid
-                self._update_plot_no_grid()
-
-                # Crop tightly to the graph (labels included), not the full view.
-                from . import clipboard_export
-                bbox = clipboard_export.content_bbox_inches(self.canvas.fig)
-                bbox_arg = bbox if bbox is not None else 'tight'
-
-                # Export
-                self.canvas.fig.savefig(filepath, dpi=300, bbox_inches=bbox_arg, transparent=True)
-
-                # Restore title and redraw with grid
-                self.canvas.ax.set_title(current_title)
-                self._update_plot()
+                # Renders at the absolute export scale, cropped to the
+                # content, and puts the canvas back afterwards.
+                with self._image_export_scope() as bbox:
+                    self.canvas.fig.savefig(
+                        filepath, dpi=self._image_export_dpi(bbox),
+                        bbox_inches=bbox, transparent=True)
 
                 logger.info(f"Exported PNG to {filepath}")
             except Exception as e:
@@ -3023,37 +3047,42 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
 
 
     def _copy_graph_to_clipboard(self, include_png=True):
-        """Copy the whole graph to the clipboard as vector PDF/SVG (+ PNG).
+        """Copy the graph to the clipboard as vector PDF/SVG (+ PNG).
 
         Places several representations on the clipboard so it pastes with full
         vector fidelity into Keynote, PowerPoint, Illustrator, etc. When
         ``include_png`` is False the raster fallback is omitted (see
         :func:`clipboard_export.copy_figure_to_clipboard`).
+
+        With a selection, only the selected sub-graph is drawn and its
+        selection rings and halos are left off, so what lands on the
+        clipboard is the sub-graph as it would look unselected. An empty
+        selection copies everything.
         """
         from . import clipboard_export
 
-        if not self.nodes:
-            logger.info("No nodes to copy")
+        # A graph made only of glyphs (a terminated txline, say) is still
+        # perfectly exportable, so the guard is "nothing drawn", not "no nodes".
+        if not (self.nodes or self.ports or self.txlines):
+            logger.info("Nothing to copy")
             self.statusBar().showMessage("No graph to copy", 3000)
             return
 
         try:
-            # Match the look of the file exports: drop the title and grid.
-            current_title = self.canvas.ax.get_title()
-            self.canvas.ax.set_title('')
-            self._update_plot_no_grid()
+            with self._clipboard_export_scope() as (bbox, selection):
+                backend, formats = clipboard_export.copy_figure_to_clipboard(
+                    self.canvas.fig, include_png=include_png,
+                    png_dpi=self._image_export_dpi(bbox), bbox=bbox
+                )
 
-            backend, formats = clipboard_export.copy_figure_to_clipboard(
-                self.canvas.fig, include_png=include_png
-            )
-
-            self.canvas.ax.set_title(current_title)
-            self._update_plot()
-
-            logger.info("Copied graph to clipboard via %s: %s", backend, formats)
-            msg = "Graph copied to clipboard (vector only)" if not include_png \
-                else "Graph copied to clipboard"
+            what = f"Selection ({selection})" if selection else "Graph"
+            logger.info("Copied %s to clipboard via %s: %s",
+                        what.lower(), backend, formats)
+            msg = f"{what} copied to clipboard"
+            if not include_png:
+                msg += " (vector only)"
             self.statusBar().showMessage(msg, 3000)
+            self._export_toast(bbox, selection, vector_only=not include_png)
         except Exception as e:
             logger.error("Could not copy graph to clipboard: %s", e)
             QMessageBox.critical(
@@ -3074,32 +3103,17 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
             if not filepath.endswith('.svg'):
                 filepath += '.svg'
             try:
-                # Save current title
-                current_title = self.canvas.ax.get_title()
-
-                # Clear title for export
-                self.canvas.ax.set_title('')
-
-                # Redraw without grid
-                self._update_plot_no_grid()
-
-                # Crop tightly to the graph (labels included), not the full view.
-                from . import clipboard_export
-                bbox = clipboard_export.content_bbox_inches(self.canvas.fig)
-                bbox_arg = bbox if bbox is not None else 'tight'
-
                 # Render glyphs as outlined paths (svg.fonttype="path") so the
                 # file is self-contained -- no CM/LaTeX fonts needed to view it.
                 original_svg_fonttype = matplotlib.rcParams.get('svg.fonttype', 'path')
                 matplotlib.rcParams['svg.fonttype'] = 'path'
                 try:
-                    self.canvas.fig.savefig(filepath, format='svg', bbox_inches=bbox_arg, transparent=True)
+                    with self._image_export_scope() as bbox:
+                        self.canvas.fig.savefig(filepath, format='svg',
+                                                bbox_inches=bbox,
+                                                transparent=True)
                 finally:
                     matplotlib.rcParams['svg.fonttype'] = original_svg_fonttype
-
-                # Restore title and redraw with grid
-                self.canvas.ax.set_title(current_title)
-                self._update_plot()
 
                 logger.info(f"Exported SVG to {filepath}")
             except Exception as e:
@@ -3119,19 +3133,7 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
             if not filepath.endswith('.pdf'):
                 filepath += '.pdf'
             try:
-                # Save current title
-                current_title = self.canvas.ax.get_title()
-
-                # Clear title for export
-                self.canvas.ax.set_title('')
-
-                # Redraw without grid
-                self._update_plot_no_grid()
-
-                # Crop tightly to the graph (labels included), not the full view.
                 from . import clipboard_export
-                bbox = clipboard_export.content_bbox_inches(self.canvas.fig)
-                bbox_arg = bbox if bbox is not None else 'tight'
 
                 # Build the PDF from the *outlined* SVG so its text is paths, not
                 # font-referencing glyphs. This is what lets Illustrator (which
@@ -3139,32 +3141,29 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
                 # installed. Falls back to matplotlib's font-embedded PDF if no
                 # SVG->PDF converter is available.
                 import io
-                svg_buffer = io.BytesIO()
-                original_svg_fonttype = matplotlib.rcParams.get('svg.fonttype', 'path')
-                matplotlib.rcParams['svg.fonttype'] = 'path'
-                try:
-                    self.canvas.fig.savefig(svg_buffer, format='svg', bbox_inches=bbox_arg, transparent=True)
-                finally:
-                    matplotlib.rcParams['svg.fonttype'] = original_svg_fonttype
-
-                pdf_bytes = clipboard_export.svg_bytes_to_pdf(svg_buffer.getvalue())
-                if pdf_bytes is not None:
-                    with open(filepath, 'wb') as f:
-                        f.write(pdf_bytes)
-                    logger.info(f"Exported PDF with outlined text to {filepath}")
-                else:
-                    # No SVG->PDF converter available: matplotlib PDF (fonts embedded)
-                    original_fonttype = matplotlib.rcParams.get('pdf.fonttype', 42)
-                    matplotlib.rcParams['pdf.fonttype'] = 42
+                with self._image_export_scope() as bbox:
+                    svg_buffer = io.BytesIO()
+                    original_svg_fonttype = matplotlib.rcParams.get('svg.fonttype', 'path')
+                    matplotlib.rcParams['svg.fonttype'] = 'path'
                     try:
-                        self.canvas.fig.savefig(filepath, format='pdf', bbox_inches=bbox_arg, dpi=300, transparent=True)
+                        self.canvas.fig.savefig(svg_buffer, format='svg', bbox_inches=bbox, transparent=True)
                     finally:
-                        matplotlib.rcParams['pdf.fonttype'] = original_fonttype
-                    logger.info(f"Exported PDF (fonts embedded) to {filepath}")
+                        matplotlib.rcParams['svg.fonttype'] = original_svg_fonttype
 
-                # Restore title and redraw with grid
-                self.canvas.ax.set_title(current_title)
-                self._update_plot()
+                    pdf_bytes = clipboard_export.svg_bytes_to_pdf(svg_buffer.getvalue())
+                    if pdf_bytes is not None:
+                        with open(filepath, 'wb') as f:
+                            f.write(pdf_bytes)
+                        logger.info(f"Exported PDF with outlined text to {filepath}")
+                    else:
+                        # No SVG->PDF converter available: matplotlib PDF (fonts embedded)
+                        original_fonttype = matplotlib.rcParams.get('pdf.fonttype', 42)
+                        matplotlib.rcParams['pdf.fonttype'] = 42
+                        try:
+                            self.canvas.fig.savefig(filepath, format='pdf', bbox_inches=bbox, dpi=300, transparent=True)
+                        finally:
+                            matplotlib.rcParams['pdf.fonttype'] = original_fonttype
+                        logger.info(f"Exported PDF (fonts embedded) to {filepath}")
 
                 logger.info(f"Exported PDF to {filepath}")
             except Exception as e:
@@ -3953,11 +3952,18 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
 
             # Draw custom outline if enabled (same convention as Paragraphulator)
             if node.get('outline_enabled', False):
+                # Quoted at the reference scale like every other stored
+                # width, so the ring keeps its thickness relative to the
+                # node instead of staying a fixed on-screen hairline.
+                outline_lw = (node.get('outline_width',
+                                       config.DEFAULT_NODE_OUTLINE_WIDTH)
+                              * points_per_data_unit
+                              / REFERENCE_POINTS_PER_DATA_UNIT)
                 outline_circle = patches.Circle(
                     node['pos'], node_radius,
                     fill=False,
                     edgecolor=node.get('outline_color', config.DEFAULT_NODE_OUTLINE_COLOR),
-                    linewidth=node.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH),
+                    linewidth=outline_lw,
                     alpha=node.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA),
                     zorder=10.5  # on top of the fill, below labels
                 )

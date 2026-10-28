@@ -110,7 +110,7 @@ def content_bbox_inches(fig, pad_frac: float = 0.03):
     return bbox.transformed(fig.dpi_scale_trans.inverted())
 
 
-def render_figure_formats(fig, png_dpi: int = 300):
+def render_figure_formats(fig, png_dpi: int = 300, bbox=None):
     """Render ``fig`` to PDF, SVG and PNG byte strings.
 
     Parameters
@@ -119,6 +119,10 @@ def render_figure_formats(fig, png_dpi: int = 300):
         The figure to render.
     png_dpi : int, default=300
         Resolution for the raster (PNG) fallback.
+    bbox : matplotlib.transforms.Bbox or ``"tight"``, optional
+        Crop box to save with. Callers that have already measured the
+        figure pass theirs so it is not measured (and drawn) twice; left
+        out, it is computed here.
 
     Returns
     -------
@@ -128,7 +132,8 @@ def render_figure_formats(fig, png_dpi: int = 300):
     # Crop tightly to the graph (labels included) rather than the full figure,
     # so it pastes without a huge empty margin. Fall back to matplotlib's
     # "tight" if the content box can't be computed.
-    bbox = content_bbox_inches(fig)
+    if bbox is None:
+        bbox = content_bbox_inches(fig)
     bbox_arg = bbox if bbox is not None else "tight"
 
     # Render SVG glyphs as embedded vector outlines (svg.fonttype="path") so the
@@ -549,7 +554,8 @@ def _copy_qt(pdf_bytes, svg_bytes, png_bytes):
     return placed
 
 
-def copy_figure_to_clipboard(fig, png_dpi: int = 300, include_png: bool = True):
+def copy_figure_to_clipboard(fig, png_dpi: int = 300, include_png: bool = True,
+                             bbox=None):
     """Copy ``fig`` to the system clipboard as PDF + SVG (+ PNG).
 
     On macOS the data is placed on the native ``NSPasteboard`` with the proper
@@ -564,6 +570,8 @@ def copy_figure_to_clipboard(fig, png_dpi: int = 300, include_png: bool = True):
         The figure to copy.
     png_dpi : int, default=300
         Resolution for the raster (PNG) fallback.
+    bbox : matplotlib.transforms.Bbox or ``"tight"``, optional
+        Crop box to save with; measured from ``fig`` when left out.
     include_png : bool, default=True
         When ``True`` a high-resolution PNG flavour is placed alongside the
         vector ones as a universal raster fallback. When ``False`` the PNG is
@@ -581,7 +589,9 @@ def copy_figure_to_clipboard(fig, png_dpi: int = 300, include_png: bool = True):
     """
     global last_clipboard_method
 
-    pdf_bytes, svg_bytes, png_bytes = render_figure_formats(fig, png_dpi=png_dpi)
+    pdf_bytes, svg_bytes, png_bytes = render_figure_formats(fig,
+                                                            png_dpi=png_dpi,
+                                                            bbox=bbox)
     # Omitting the PNG payload makes every downstream copy path (which all skip
     # empty payloads) drop the raster flavour.
     if not include_png:

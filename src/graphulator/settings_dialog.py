@@ -683,19 +683,63 @@ class SettingsDialogBase(QDialog):
         if self._on_applied is not None:
             self._on_applied()
 
+    # ---- Sticky settings ----
+
+    def _sticky_params(self):
+        """Params that persist as soon as they are applied.
+
+        Most settings here are DEFAULTS for objects placed next, so it
+        makes sense that they only reach disk when you ask for them to
+        become the defaults. A few are tool preferences instead -- the
+        image-export scale is one: it describes how you work, not what the
+        graph contains, and silently reverting it on the next launch is
+        nobody's idea of a preference. Those persist on Apply/OK, and
+        Cancel unwinds them again.
+        """
+        return tuple(getattr(self._config, 'STICKY_PARAMS', ()))
+
+    def _persist_sticky(self):
+        """Write the sticky params' current values to the settings file.
+
+        A merge, not a save: `save` replaces the whole namespace with what
+        the dialog currently shows, which would quietly turn every other
+        widget into a saved default too.
+        """
+        sticky = {name: self._get_current_value(name)
+                  for name in self._sticky_params()
+                  if self._get_current_value(name) is not None}
+        if sticky and not self._manager.update(sticky):
+            logger.warning("Could not persist sticky settings: %s",
+                           ', '.join(sorted(sticky)))
+
     # ---- Button handlers ----
+
+    def _refresh_code_preview(self):
+        """Re-render an open code preview, if the window has one.
+
+        The export-scaling parameters change nothing but the generated
+        script, so the preview is the only place an edit to them shows up
+        at all.
+        """
+        refresh = getattr(self.graphulator, '_refresh_code_preview', None)
+        if callable(refresh):
+            refresh()
 
     def _on_apply(self):
         """Apply button - apply changes, refresh UI, keep dialog open."""
         self._apply_all_values()
+        self._persist_sticky()
         self._after_apply()
         self._refresh_ui()
+        self._refresh_code_preview()
 
     def _on_ok(self):
         """OK button - apply changes, refresh UI, close dialog."""
         self._apply_all_values()
+        self._persist_sticky()
         self._after_apply()
         self._refresh_ui()
+        self._refresh_code_preview()
         self.accept()
 
     def _on_cancel(self):
@@ -707,6 +751,9 @@ class SettingsDialogBase(QDialog):
                 continue
             if param_name in self._widgets and original_value is not None:
                 self._set_current_value(param_name, original_value)
+        # An earlier Apply may already have written a sticky param, so
+        # Cancel has to put the stored value back as well as the live one.
+        self._persist_sticky()
         self._refresh_ui()
         self.reject()
 

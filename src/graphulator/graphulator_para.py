@@ -62,7 +62,8 @@ from sympy.functions.elementary.complexes import conjugate as Conjugate
 from . import graph_primitives as gp
 from . import graphulator_para_config as config
 from . import code_export
-from .common_window import (GraphWindowCommonMixin,
+from .common_window import (REFERENCE_POINTS_PER_DATA_UNIT,
+                            GraphWindowCommonMixin,
                             auto_increment_label,
                             format_subscript_label,
                             letters_to_number, number_to_letters)
@@ -87,6 +88,7 @@ from .para_ui.canvas import MplCanvas
 from .para_ui.web_views import ZoomableWebView
 from .para_ui.shortcut_manager import ShortcutManager
 from .para_ui.doc_template import CachedDocumentationProcessor, DocumentationTemplateProcessor
+from .para_core import settings_manager
 from .para_core.settings_manager import (
     SettingsManager, get_settings_manager,
     USER_SETTINGS_DIR, USER_SETTINGS_FILE
@@ -235,7 +237,11 @@ SETTINGS_PARAMS = {
         ('SPARAMS_MODE_MARKER_LABEL_SIZE', 'Mode Marker Label Size', 'float',
          4.0, 16.0, 0.5),
     ],
-    'Export Scaling': [
+    'Image Export': [
+        ('IMAGE_EXPORT_SCALE', 'Export Scale (\u00d7 43 pt per unit)', 'float',
+         0.1, 10.0, 0.05),
+    ],
+    'Code Export Scaling': [
         ('GUI_SELFLOOP_LABEL_SCALE', 'GUI Self-loop Label Distance', 'float', 0.1, 5.0, 0.1),
         ('EXPORT_SELFLOOP_LABEL_DISTANCE', 'Export Self-loop Label Distance', 'float', 0.1, 5.0, 0.1),
         ('NODELABELSCALE', 'Node Label Scale', 'float', 0.1, 2.0, 0.05),
@@ -8219,9 +8225,12 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         self.is_modified = False  # Track unsaved changes
         self.recent_files = []  # List of recent file paths
         self.max_recent_files = 10
-        self.recent_files_path = Path.home() / '.graphulator_recent'
-        self.last_graph_path = Path.home() / '.graphulator_last.graph'
-        self.last_directory_path = Path.home() / '.graphulator_last_dir'
+        # Through the module, not the names imported above: a test
+        # redirects these so a run does not touch the live files (see
+        # settings_manager.state_dir).
+        self.recent_files_path = settings_manager.RECENT_FILES_PATH
+        self.last_graph_path = settings_manager.LAST_GRAPH_PATH
+        self.last_directory_path = settings_manager.LAST_DIRECTORY_PATH
         self.last_directory = None  # Last directory used for open/save
 
         # Load recent files list and last directory
@@ -8416,6 +8425,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         # Optional context-sensitive shortcut-hint overlay, on the main graph
         # canvas (parented to it so it never appears in figure exports)
         self._init_shortcut_overlay()
+        self._init_canvas_toast()
 
         self.graph_subtabs.addTab(original_graph_tab, "Original")
 
@@ -8998,6 +9008,13 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         copy_vector_action.triggered.connect(self._copy_graph_to_clipboard_vector)
         export_menu.addAction(copy_vector_action)
         export_menu.addSeparator()
+
+        preview_code_action = QAction("Preview Code Output...", self)
+        preview_code_action.setStatusTip(
+            "Run the exported Python here and show its figure beside the "
+            "script, instead of round-tripping through a notebook")
+        preview_code_action.triggered.connect(self._show_code_preview)
+        export_menu.addAction(preview_code_action)
 
         export_code_action = QAction("Python Code...", self)
         sm.bind_action("file.export_code", export_code_action)
@@ -9618,6 +9635,9 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         self.zoom_level = view.get("zoom_level", 1.0)
 
         self.use_latex = view.get("use_latex", False)
+        # Rendering mode is global matplotlib state: setting the flag
+        # alone left a LaTeX graph drawing in serif MathText.
+        self._apply_latex_mode()
 
         # Get extensible property dictionaries (new .pgraph format)
         node_properties = data.get("node_properties", {})
@@ -10159,26 +10179,12 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 if not filepath.endswith('.png'):
                     filepath += '.png'
                 try:
-                    # Save current title
-                    current_title = self.canvas.ax.get_title()
-
-                    # Clear title for export
-                    self.canvas.ax.set_title('')
-
-                    # Redraw without grid
-                    self._update_plot_no_grid()
-
-                    # Crop tightly to the graph (labels included), not the full view.
-                    from . import clipboard_export
-                    bbox = clipboard_export.content_bbox_inches(self.canvas.fig)
-                    bbox_arg = bbox if bbox is not None else 'tight'
-
-                    # Export
-                    self.canvas.fig.savefig(filepath, dpi=300, bbox_inches=bbox_arg, transparent=True)
-
-                    # Restore title and redraw with grid
-                    self.canvas.ax.set_title(current_title)
-                    self._update_plot()
+                    # Renders at the absolute export scale, cropped to the
+                    # content, and puts the canvas back afterwards.
+                    with self._image_export_scope() as bbox:
+                        self.canvas.fig.savefig(
+                            filepath, dpi=self._image_export_dpi(bbox),
+                            bbox_inches=bbox, transparent=True)
 
                     print(f"Exported PNG to {filepath}")
                 except Exception as e:
@@ -10233,13 +10239,20 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     or getattr(self, 'line_resonators', None))
 
     def _copy_graph_to_clipboard(self, include_png=True):
-        """Copy the whole graph to the clipboard as vector PDF/SVG (+ PNG).
+        """Copy the graph to the clipboard as vector PDF/SVG (+ PNG).
 
         Places several representations on the clipboard so it pastes with full
         vector fidelity into Keynote, PowerPoint, Illustrator, etc. Copies the
         currently displayed graph (including the Kron canvas when that subtab is
         active). When ``include_png`` is False the raster fallback is omitted
         (see :func:`clipboard_export.copy_figure_to_clipboard`).
+
+        With a selection, only the selected sub-graph is drawn and its
+        selection rings and halos are left off, so what lands on the
+        clipboard is the sub-graph as it would look unselected. An empty
+        selection copies everything. The Kron reduction is computed data
+        with a node list of its own, so a copy of that canvas always takes
+        the whole thing.
         """
         from . import clipboard_export
 
@@ -10268,22 +10281,22 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 return
 
             try:
-                # Match the look of the file exports: drop the title and grid.
-                current_title = self.canvas.ax.get_title()
-                self.canvas.ax.set_title('')
-                self._update_plot_no_grid()
+                with self._clipboard_export_scope(
+                        selection=not copy_kron) as (bbox, selection):
+                    backend, formats = \
+                        clipboard_export.copy_figure_to_clipboard(
+                            self.canvas.fig, include_png=include_png,
+                            png_dpi=self._image_export_dpi(bbox), bbox=bbox)
 
-                backend, formats = clipboard_export.copy_figure_to_clipboard(
-                    self.canvas.fig, include_png=include_png
-                )
-
-                self.canvas.ax.set_title(current_title)
-                self._update_plot()
-
-                print(f"Copied graph to clipboard via {backend}: {formats}")
-                msg = "Graph copied to clipboard (vector only)" if not include_png \
-                    else "Graph copied to clipboard"
+                what = f"Selection ({selection})" if selection else "Graph"
+                print(f"Copied {what.lower()} to clipboard via {backend}: "
+                      f"{formats}")
+                msg = f"{what} copied to clipboard"
+                if not include_png:
+                    msg += " (vector only)"
                 self.statusBar().showMessage(msg, 3000)
+                self._export_toast(bbox, selection,
+                                   vector_only=not include_png)
             except Exception as e:
                 QMessageBox.critical(
                     self, "Copy Error", f"Could not copy graph to clipboard:\n{e}"
@@ -10329,32 +10342,17 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 if not filepath.endswith('.svg'):
                     filepath += '.svg'
                 try:
-                    # Save current title
-                    current_title = self.canvas.ax.get_title()
-
-                    # Clear title for export
-                    self.canvas.ax.set_title('')
-
-                    # Redraw without grid
-                    self._update_plot_no_grid()
-
-                    # Crop tightly to the graph (labels included), not the full view.
-                    from . import clipboard_export
-                    bbox = clipboard_export.content_bbox_inches(self.canvas.fig)
-                    bbox_arg = bbox if bbox is not None else 'tight'
-
                     # Render glyphs as outlined paths (svg.fonttype="path") so the
                     # file is self-contained -- no CM/LaTeX fonts needed to view it.
                     original_svg_fonttype = matplotlib.rcParams.get('svg.fonttype', 'path')
                     matplotlib.rcParams['svg.fonttype'] = 'path'
                     try:
-                        self.canvas.fig.savefig(filepath, format='svg', bbox_inches=bbox_arg, transparent=True)
+                        with self._image_export_scope() as bbox:
+                            self.canvas.fig.savefig(filepath, format='svg',
+                                                    bbox_inches=bbox,
+                                                    transparent=True)
                     finally:
                         matplotlib.rcParams['svg.fonttype'] = original_svg_fonttype
-
-                    # Restore title and redraw with grid
-                    self.canvas.ax.set_title(current_title)
-                    self._update_plot()
 
                     print(f"Exported SVG to {filepath}")
                 except Exception as e:
@@ -10459,51 +10457,36 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 if not filepath.endswith('.pdf'):
                     filepath += '.pdf'
                 try:
-                    # Save current title
-                    current_title = self.canvas.ax.get_title()
-
-                    # Clear title for export
-                    self.canvas.ax.set_title('')
-
-                    # Redraw without grid
-                    self._update_plot_no_grid()
-
-                    # Crop tightly to the graph (labels included), not the full view.
                     from . import clipboard_export
-                    bbox = clipboard_export.content_bbox_inches(self.canvas.fig)
-                    bbox_arg = bbox if bbox is not None else 'tight'
 
                     # Build the PDF from the *outlined* SVG so its text is paths,
                     # not font-referencing glyphs. This is what lets Illustrator
                     # (which imports the PDF) show the labels without Computer
                     # Modern installed. Falls back to matplotlib's font-embedded
                     # PDF if no SVG->PDF converter is available.
-                    svg_buffer = io.BytesIO()
-                    original_svg_fonttype = matplotlib.rcParams.get('svg.fonttype', 'path')
-                    matplotlib.rcParams['svg.fonttype'] = 'path'
-                    try:
-                        self.canvas.fig.savefig(svg_buffer, format='svg', bbox_inches=bbox_arg, transparent=True)
-                    finally:
-                        matplotlib.rcParams['svg.fonttype'] = original_svg_fonttype
-
-                    pdf_bytes = clipboard_export.svg_bytes_to_pdf(svg_buffer.getvalue())
-                    if pdf_bytes is not None:
-                        with open(filepath, 'wb') as f:
-                            f.write(pdf_bytes)
-                        print(f"Exported PDF with outlined text to {filepath}")
-                    else:
-                        # No SVG->PDF converter available: matplotlib PDF (fonts embedded)
-                        original_fonttype = matplotlib.rcParams.get('pdf.fonttype', 42)
-                        matplotlib.rcParams['pdf.fonttype'] = 42
+                    with self._image_export_scope() as bbox:
+                        svg_buffer = io.BytesIO()
+                        original_svg_fonttype = matplotlib.rcParams.get('svg.fonttype', 'path')
+                        matplotlib.rcParams['svg.fonttype'] = 'path'
                         try:
-                            self.canvas.fig.savefig(filepath, format='pdf', bbox_inches=bbox_arg, dpi=300, transparent=True)
+                            self.canvas.fig.savefig(svg_buffer, format='svg', bbox_inches=bbox, transparent=True)
                         finally:
-                            matplotlib.rcParams['pdf.fonttype'] = original_fonttype
-                        print(f"Exported PDF (fonts embedded) to {filepath}")
+                            matplotlib.rcParams['svg.fonttype'] = original_svg_fonttype
 
-                    # Restore title and redraw with grid
-                    self.canvas.ax.set_title(current_title)
-                    self._update_plot()
+                        pdf_bytes = clipboard_export.svg_bytes_to_pdf(svg_buffer.getvalue())
+                        if pdf_bytes is not None:
+                            with open(filepath, 'wb') as f:
+                                f.write(pdf_bytes)
+                            print(f"Exported PDF with outlined text to {filepath}")
+                        else:
+                            # No SVG->PDF converter available: matplotlib PDF (fonts embedded)
+                            original_fonttype = matplotlib.rcParams.get('pdf.fonttype', 42)
+                            matplotlib.rcParams['pdf.fonttype'] = 42
+                            try:
+                                self.canvas.fig.savefig(filepath, format='pdf', bbox_inches=bbox, dpi=300, transparent=True)
+                            finally:
+                                matplotlib.rcParams['pdf.fonttype'] = original_fonttype
+                            print(f"Exported PDF (fonts embedded) to {filepath}")
 
                     print(f"Exported PDF to {filepath}")
                 except Exception as e:
@@ -15310,8 +15293,11 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     'outline_color', config.DEFAULT_NODE_OUTLINE_COLOR)
                 outline_width = node.get('outline_width', config.DEFAULT_NODE_OUTLINE_WIDTH)
                 outline_alpha = node.get('outline_alpha', config.DEFAULT_NODE_OUTLINE_ALPHA)
-                # Convert outline width to display units (similar to how we handle other linewidths)
-                outline_linewidth = outline_width
+                # Quoted at the reference scale like every other stored
+                # width, so the ring keeps its thickness relative to the
+                # node instead of staying a fixed on-screen hairline.
+                outline_linewidth = (outline_width * points_per_data_unit
+                                     / REFERENCE_POINTS_PER_DATA_UNIT)
                 outline_circle = patches.Circle(
                     node['pos'], node_radius,
                     fill=False,
