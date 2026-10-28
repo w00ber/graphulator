@@ -12,6 +12,7 @@ hooks (_save_last_directory, _save_last_edge_props, _after_grid_change)
 rather than by editing method bodies, so a fix made here lands in both apps.
 """
 
+import contextlib
 import json
 import logging
 import re
@@ -32,7 +33,30 @@ logger = logging.getLogger(__name__)
 #: drawing around it grows -- a zoomed-in graph then shows hairline strokes
 #: on huge nodes. The edge renderers have used this number since the start;
 #: the glyphs and their wires were the ones still drawing in raw points.
+#:
+#: It doubles as the ABSOLUTE SCALE every image export is pinned to: 1 data
+#: unit = 43 pt = 0.597 in. The number is not arbitrary -- a 12 in figure
+#: showing the default 20-unit view sits at 43.2 pt per unit, which is the
+#: view the sizes in Settings were calibrated against. Exporting at exactly
+#: this scale makes _zoom_lw_scale() equal 1, so a stored line width of 5.5
+#: arrives in Illustrator as 5.5 pt and a label size of 50 as 50 pt. Before
+#: this, an export was whatever size the zoom happened to be: the same
+#: graph came out 1.65 in wide at 0.5x and 6.6 in at 2x.
 REFERENCE_POINTS_PER_DATA_UNIT = 43.0
+
+#: Figure side, in inches, that an image export is rendered on. The content
+#: is centered on it at the pinned scale; a graph bigger than the figure
+#: still exports in full, because the crop box is measured from the drawn
+#: artists and matplotlib honors one that reaches past the figure edge.
+#: Holding the figure at a fixed size is what keeps the intermediate render
+#: buffer bounded no matter how large the drawing is.
+IMAGE_EXPORT_FIGURE_INCHES = 12.0
+
+#: Longest side, in pixels, a raster (PNG) export may reach. An absolute
+#: scale ties the exported size to the graph's extent rather than to the
+#: window, so a wide sub-circuit can be 30 in across -- and 300 dpi of that
+#: is a 9000 px, gigabyte-class buffer. The dpi is lowered to fit instead.
+IMAGE_EXPORT_MAX_RASTER_PX = 6000
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +193,30 @@ class GraphWindowCommonMixin:
         self._shortcut_overlay_on = bool(
             getattr(self.APP_CONFIG, 'SHOW_SHORTCUT_OVERLAY', False))
         self._update_shortcut_overlay()
+
+    def _init_canvas_toast(self):
+        """Create the transient message panel over the canvas.
+
+        Call once, after self.canvas (and after the shortcut overlay, which
+        the toast steps around when both want the same corner).
+        """
+        from .canvas_toast import CanvasToast
+        self._canvas_toast = CanvasToast(
+            self.canvas,
+            avoid=lambda: getattr(self, '_shortcut_overlay', None))
+
+    def _flash_canvas(self, title, detail=None, msec=None):
+        """Flash a short notice over the canvas, if the panel exists.
+
+        For things that have to be SEEN to have happened -- a copy to the
+        paste buffer, where the status bar is both far from where the eye
+        is and easy to miss. Silent when there is no canvas toast (headless
+        tests, a window built before _init_canvas_toast).
+        """
+        toast = getattr(self, '_canvas_toast', None)
+        if toast is None:
+            return
+        toast.flash(title, detail, msec)
 
     def _shortcut_context(self):
         """Selection context: 'none' | 'node' | 'edge' | 'selfloop'."""
@@ -718,6 +766,236 @@ class GraphWindowCommonMixin:
         """
         self._copy_graph_to_clipboard(include_png=False)
 
+    # ---- selection-only image export -------------------------------------
+    #
+    # The clipboard copy renders the live canvas, so a copy made with a
+    # sub-circuit selected came out as the WHOLE graph with selection rings
+    # and halos drawn on part of it. Narrowing the drawn scene to the
+    # selection, with the selection lists emptied, gives the sub-graph on
+    # its own, drawn exactly as an unselected graph is. Nothing selected
+    # means the whole graph, so the plain export is unchanged.
+
+    def _selection_attrs(self):
+        """Names of the attributes holding the current selection."""
+        return ('selected_nodes', 'selected_edges')
+
+    def _export_glyph_subset(self):
+        """{scene attribute: glyphs} for a selection-only export.
+
+        `{}` in an app with no glyph layer. A glyph's wires resolve their
+        far end against the drawn node and glyph lists, so narrowing those
+        lists drops a wire that leaves the selection without any filtering
+        of its own.
+        """
+        return {}
+
+    def _export_scene_subset(self):
+        """{scene attribute: objects to draw} for a selection-only export.
+
+        `{}` means "draw everything", which is what an empty selection
+        asks for. An edge comes along whenever BOTH its modes do, rather
+        than only when it sits in selected_edges: a rubber band picks an
+        edge up by its midpoint, so a band around two modes can leave the
+        edge between them out, and a sub-graph picture missing its own
+        edges reads as broken.
+        """
+        nodes = list(self.selected_nodes)
+        glyphs = self._export_glyph_subset()
+        if not nodes and not any(glyphs.values()):
+            return {}
+        kept = {id(n) for n in nodes}
+        edges = [e for e in self.edges
+                 if id(e['from_node']) in kept and id(e['to_node']) in kept]
+        subset = {'nodes': nodes, 'edges': edges}
+        subset.update(glyphs)
+        return subset
+
+    @staticmethod
+    def _export_subset_summary(subset):
+        """"3 node(s) and 1 port(s)" for the status line, or None."""
+        names = (('nodes', 'node'), ('edges', 'edge'), ('ports', 'port'),
+                 ('txlines', 'txline'), ('line_resonators', 'line'))
+        parts = [f"{len(subset[key])} {name}(s)"
+                 for key, name in names if subset.get(key)]
+        return ' and '.join(parts) if parts else None
+
+    # ---- absolute-scale image export ------------------------------------
+
+    #: See the module constants of the same names.
+    IMAGE_EXPORT_FIGURE_INCHES = IMAGE_EXPORT_FIGURE_INCHES
+    IMAGE_EXPORT_MAX_RASTER_PX = IMAGE_EXPORT_MAX_RASTER_PX
+
+    def _image_export_scale(self):
+        """The user's export multiplier (Settings), 1.0 by default.
+
+        1.0 means REFERENCE_POINTS_PER_DATA_UNIT, the scale at which stored
+        line widths and label sizes come out as literal points.
+        """
+        try:
+            value = float(getattr(self.APP_CONFIG, 'IMAGE_EXPORT_SCALE', 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+        return value if value > 0 else 1.0
+
+    def _image_export_centre(self):
+        """Point the export view is centered on: the drawn content.
+
+        Falls back to the current view center for a scene whose extents
+        come out degenerate (an empty graph, say), so an export never ends
+        up looking at (0, 0) when the drawing is somewhere else.
+        """
+        try:
+            x_min, x_max, y_min, y_max = self._calculate_graph_extents()
+        except Exception:
+            logger.debug("Export extents unavailable", exc_info=True)
+            x_min = x_max = y_min = y_max = 0.0
+        if x_max > x_min or y_max > y_min:
+            return (x_min + x_max) / 2, (y_min + y_max) / 2
+        xlim, ylim = self._get_xlim(), self._get_ylim()
+        return (xlim[0] + xlim[1]) / 2, (ylim[0] + ylim[1]) / 2
+
+    def _image_export_dpi(self, bbox, dpi=300):
+        """`dpi` lowered as needed to respect IMAGE_EXPORT_MAX_RASTER_PX."""
+        try:
+            longest = max(bbox.width, bbox.height)
+        except AttributeError:
+            return dpi                      # 'tight': size is not known yet
+        if longest <= 0:
+            return dpi
+        capped = int(self.IMAGE_EXPORT_MAX_RASTER_PX / longest)
+        if capped < dpi:
+            logger.debug("Raster export capped at %d dpi for a %.1f in side",
+                         max(capped, 36), longest)
+            return max(capped, 36)
+        return dpi
+
+    @contextlib.contextmanager
+    def _absolute_scale_export_scope(self, enabled=True):
+        """Pin the figure to the absolute export scale inside this block.
+
+        The canvas is a Qt widget, so its figure is whatever size the window
+        is and its view spans whatever the zoom says -- which is why an
+        export used to come out at a size nobody chose. Here the figure is
+        held at IMAGE_EXPORT_FIGURE_INCHES and the view at exactly
+        REFERENCE_POINTS_PER_DATA_UNIT x the user's multiplier, centered on
+        the drawing. `forward=False` keeps the resize off the Qt widget.
+
+        Yields the points-per-data-unit in force, or None when disabled.
+        """
+        if not enabled:
+            yield None
+            return
+        fig = self.canvas.fig
+        target = REFERENCE_POINTS_PER_DATA_UNIT * self._image_export_scale()
+        side = self.IMAGE_EXPORT_FIGURE_INCHES
+        half = side * 72.0 / target / 2.0
+        centre_x, centre_y = self._image_export_centre()
+        saved_size = tuple(fig.get_size_inches())
+        saved_view = (self.base_xlim, self.base_ylim, self.zoom_level)
+        try:
+            fig.set_size_inches(side, side, forward=False)
+            self.base_xlim = (centre_x - half, centre_x + half)
+            self.base_ylim = (centre_y - half, centre_y + half)
+            self.zoom_level = 1.0
+            yield target
+        finally:
+            self.base_xlim, self.base_ylim, self.zoom_level = saved_view
+            fig.set_size_inches(*saved_size, forward=False)
+
+    @contextlib.contextmanager
+    def _image_export_scope(self, enabled=True, redraw=True):
+        """Set an image export up, and put the canvas back afterwards.
+
+        Drops the title, pins the absolute scale, redraws without the grid
+        and yields the crop box to hand `savefig` -- the four steps every
+        image export was repeating. On the way out the title, the figure
+        size and the view come back and the canvas is redrawn as the user
+        had it, whether the export finished or raised.
+
+        `redraw=False` leaves that last redraw to an OUTER scope, which is
+        what a selection-only export needs: a redraw while the scene is
+        still narrowed paints the selection alone and leaves it there.
+        """
+        from . import clipboard_export
+
+        ax = self.canvas.ax
+        title = ax.get_title()
+        ax.set_title('')
+        try:
+            with self._absolute_scale_export_scope(enabled=enabled):
+                self._update_plot_no_grid()
+                bbox = clipboard_export.content_bbox_inches(self.canvas.fig)
+                yield bbox if bbox is not None else 'tight'
+        finally:
+            # After the redraw, not before: _update_plot clears the axes,
+            # which takes the title with it -- the reason the old
+            # set_title-then-redraw in each export never restored anything.
+            if redraw:
+                self._update_plot()
+            ax.set_title(title)
+
+    def _export_toast(self, bbox, selection=None, vector_only=False):
+        """Flash what just went to the paste buffer, over the canvas.
+
+        The scale is the point of it: an export is now a fixed physical
+        size rather than whatever the zoom was, so the number that decided
+        that size should be visible at the moment it is used -- and the
+        size it produced along with it, which is what you actually paste.
+        """
+        scale = self._image_export_scale()
+        parts = [f"at {scale:g}\u00d7 scale"]
+        try:
+            parts.append(f"{bbox.width:.1f} \u00d7 {bbox.height:.1f} in")
+        except AttributeError:
+            pass                            # 'tight': no measurement to show
+        if selection:
+            parts.append(selection)
+        if vector_only:
+            parts.append("vector only")
+        title = ("Selection exported to paste buffer" if selection
+                 else "Exported to paste buffer")
+        self._flash_canvas(title, " \u00b7 ".join(parts))
+
+    @contextlib.contextmanager
+    def _clipboard_export_scope(self, selection=True):
+        """The selection narrowing and the absolute scale, together.
+
+        Yields `(crop box, selection summary)`. The single redraw happens
+        once BOTH are undone: redrawing from inside the narrowing left the
+        canvas showing the exported sub-graph alone and nothing else, which
+        looked like the rest of the drawing had been hidden until the next
+        click put it back.
+        """
+        try:
+            with self._export_selection_scope(enabled=selection) as summary, \
+                    self._image_export_scope(redraw=False) as bbox:
+                yield bbox, summary
+        finally:
+            self._update_plot()
+
+    @contextlib.contextmanager
+    def _export_selection_scope(self, enabled=True):
+        """Draw only the selection, unhighlighted, inside this block.
+
+        Yields the summary of what was narrowed to, or None when the whole
+        graph is being exported. `enabled=False` is the escape hatch for a
+        canvas the selection does not belong to (Paragraphulator's Kron
+        reduction has its own node list and no glyphs at all).
+        """
+        subset = self._export_scene_subset() if enabled else {}
+        attrs = self._selection_attrs() if enabled else ()
+        saved = {name: getattr(self, name) for name in attrs}
+        saved.update({name: getattr(self, name) for name in subset})
+        try:
+            for name, objects in subset.items():
+                setattr(self, name, objects)
+            for name in attrs:
+                setattr(self, name, [])
+            yield self._export_subset_summary(subset)
+        finally:
+            for name, value in saved.items():
+                setattr(self, name, value)
+
     def _draw_triangular_grid(self):
         """Draw rotated triangular grid"""
         spacing = self.grid_spacing
@@ -1127,6 +1405,24 @@ class GraphWindowCommonMixin:
         self.drag_start_pos = (x, y)
         self._drag_duplicate = bool(duplicate)
         return True
+
+    def _click_grabs_selected_node(self, x, y):
+        """True when (x, y) lands on a node that is ALREADY selected.
+
+        Such a click grabs the whole selection (see _arm_group_drag_from),
+        so the glyph half of that selection has to survive it. The glyph
+        hit-test runs before node handling and used to clear the glyph
+        selection on every click that missed a glyph -- which meant a
+        node + port group reached _arm_group_drag_from with its ports
+        already gone, and the drag, the Option-drag copy and the next
+        Ctrl+C all quietly left the ports and their wires behind. Grabbing
+        the port instead of the node worked, which is what made it look
+        intermittent.
+        """
+        if x is None or y is None:
+            return False
+        node = self._find_node_at_position(x, y)
+        return node is not None and any(n is node for n in self.selected_nodes)
 
     def _snapped_group_delta(self, dx, dy, anchor=None, nodes=None):
         """One snapped (dx, dy) for the whole group.

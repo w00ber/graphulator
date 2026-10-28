@@ -127,10 +127,28 @@ DEFAULT_WIRE_LINESTYLE = '-'      # one of WIRE_LINESTYLES' values
 # Off gives matplotlib's square-ended dashes.
 DEFAULT_WIRE_ROUND_CAPS = True
 
+# Image exports (clipboard copy, PNG/SVG/PDF files) are rendered at an
+# ABSOLUTE scale rather than at whatever the canvas zoom happens to be:
+# 1 data unit = REFERENCE_POINTS_PER_DATA_UNIT (43) pt x this multiplier.
+# At 1.0 a stored line width of 5.5 arrives in Illustrator as 5.5 pt, a
+# label size of 50 as 50 pt, and a default node (r = 0.6) is 0.72 in across.
+# Raise it for a bigger figure at the same stroke-to-size ratio, lower it
+# for a smaller one; the proportions never change.
+IMAGE_EXPORT_SCALE = 1.0
+
 # Interface settings
 SHOW_SHORTCUT_OVERLAY = False  # optional on-canvas context-sensitive shortcut hints
 SHORTCUT_OVERLAY_CORNER = 'top-right'  # 'top-left'|'top-right'|'bottom-left'|'bottom-right'
 SHORTCUT_OVERLAY_SHOW_ALL = False  # False: curated essentials; True: every shortcut for the context
+
+# Settings that persist the moment they are applied, rather than waiting
+# for "Save as Defaults". Everything else in SETTINGS_PARAMS is a default
+# for objects placed NEXT, so it belongs on disk only when asked for; these
+# are tool preferences, which nobody expects to revert on relaunch.
+STICKY_PARAMS = (
+    'IMAGE_EXPORT_SCALE',
+)
+
 
 # =============================================================================
 # SETTINGS DIALOG PARAMETER DEFINITIONS
@@ -202,6 +220,10 @@ SETTINGS_PARAMS = {
           ('Dash-dot', '-.')], None, None),
         ('DEFAULT_WIRE_ROUND_CAPS', 'Rounded Wire Dash Caps', 'bool',
          None, None, None),
+    ],
+    'Image Export': [
+        ('IMAGE_EXPORT_SCALE', 'Export Scale (\u00d7 43 pt per unit)', 'float',
+         0.1, 10.0, 0.05),
     ],
     'Interface': [
         ('SHOW_SHORTCUT_OVERLAY', 'Show Shortcut Hints', 'bool', None, None, None),

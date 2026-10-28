@@ -302,3 +302,134 @@ def test_dragging_a_selected_port_moves_the_group_in_para(para):
     assert a['pos'] != (0.0, 0.0)
     assert port['pos'] != (-6.0, 0.0)
     assert para.dragging_group is False
+
+
+# ---------------------------------------------------------------------------
+# grabbing the NODE half of the group must keep the glyphs
+#
+# The glyph hit-test runs before node handling and used to clear the glyph
+# selection on any click that missed a glyph -- a click on a node included.
+# So the port + node group reached _arm_group_drag_from with its ports
+# already gone: grabbing the port moved everything, grabbing the node moved
+# the nodes alone, which is what made move / Option-drag-copy / copy-paste
+# of a port + wire + node look intermittent.
+# ---------------------------------------------------------------------------
+
+def test_clicking_a_selected_node_keeps_the_glyphs_in_the_selection(win):
+    a = add_node(win, 'A', (0.0, 0.0))
+    port = win.add_port(label='P1', pos=(-6.0, 0.0))
+    win.connect_port_to_node(port, a)
+    win.selected_nodes[:] = [a]
+    win.selected_ports = [port]
+
+    # the click misses every glyph: it is the node that is being grabbed
+    assert win._maybe_handle_glyph_click(click(0.0, 0.0), False, False) is False
+    assert win.selected_ports == [port]
+
+
+def test_clicking_an_unselected_node_still_clears_the_glyphs(win):
+    add_node(win, 'A', (0.0, 0.0))
+    port = win.add_port(label='P1', pos=(-6.0, 0.0))
+    win.selected_ports = [port]                 # node NOT selected
+
+    assert win._maybe_handle_glyph_click(click(0.0, 0.0), False, False) is False
+    assert win.selected_ports == []
+
+
+def test_clicking_empty_space_still_clears_the_glyphs(win):
+    port = win.add_port(label='P1', pos=(-6.0, 0.0))
+    win.selected_ports = [port]
+    assert win._maybe_handle_glyph_click(click(9.0, 9.0), False, False) is False
+    assert win.selected_ports == []
+
+
+def test_dragging_a_selected_node_moves_the_whole_group(win):
+    a = add_node(win, 'A', (0.0, 0.0))
+    port = win.add_port(label='P1', pos=(-6.0, 0.0))
+    win.connect_port_to_node(port, a)
+    win.selected_nodes[:] = [a]
+    win.selected_ports = [port]
+    ax = win.canvas.ax
+
+    win._on_click(click(0.0, 0.0, ax=ax))
+    assert win.drag_pending_group is True
+    win._on_motion(click(0.0, 4.0, ax=ax))
+    assert win.dragging_group is True
+    win._on_release(click(0.0, 4.0, ax=ax))
+
+    assert a['pos'] != (0.0, 0.0)
+    assert port['pos'] != (-6.0, 0.0)
+
+
+def test_option_dragging_a_selected_node_copies_the_glyphs_too(win):
+    a = add_node(win, 'A', (0.0, 0.0))
+    port = win.add_port(label='P1', pos=(-6.0, 0.0))
+    win.connect_port_to_node(port, a)
+    win.selected_nodes[:] = [a]
+    win.selected_ports = [port]
+
+    assert win._maybe_handle_glyph_click(click(0.0, 0.0), False, False,
+                                         True) is False
+    assert win._arm_group_drag_from(a, 0.0, 0.0, True) is True
+    message = win._commit_group_drag(0.0, 8.0)
+
+    assert 'Copied' in message
+    assert len(win.nodes) == 2 and len(win.ports) == 2
+    new_port = win.selected_ports[0]
+    assert new_port is not port
+    assert new_port['connections'][0]['node_id'] != a['node_id']
+
+
+def test_copying_after_clicking_a_selected_node_still_carries_the_port(win):
+    a = add_node(win, 'A', (0.0, 0.0))
+    port = win.add_port(label='P1', pos=(-6.0, 0.0))
+    win.connect_port_to_node(port, a)
+    win.selected_nodes[:] = [a]
+    win.selected_ports = [port]
+
+    win._maybe_handle_glyph_click(click(0.0, 0.0), False, False)
+    win._copy_nodes()
+    assert len(win.clipboard['ports']) == 1
+    assert len(win.clipboard['ports'][0]['connections']) == 1
+
+
+def test_clicking_a_selected_node_keeps_the_glyphs_in_para(para):
+    a = add_node(para, 'A', (0.0, 0.0))
+    port = para.add_port(label='P1', pos=(-6.0, 0.0))
+    att = para.add_port_attachment(port, a)
+    para.selected_nodes[:] = [a]
+    para.selected_ports = [port]
+    para.selected_attachments = [(port, att)]
+
+    assert para._maybe_handle_ports_normal_click(click(0.0, 0.0),
+                                                 False, False) is False
+    assert para.selected_ports == [port]
+    assert para.selected_attachments == [(port, att)]
+
+
+def test_clicking_an_unselected_node_still_clears_the_glyphs_in_para(para):
+    add_node(para, 'A', (0.0, 0.0))
+    port = para.add_port(label='P1', pos=(-6.0, 0.0))
+    para.selected_ports = [port]
+
+    assert para._maybe_handle_ports_normal_click(click(0.0, 0.0),
+                                                 False, False) is False
+    assert para.selected_ports == []
+
+
+def test_dragging_a_selected_node_moves_the_group_in_para(para):
+    a = add_node(para, 'A', (0.0, 0.0))
+    port = para.add_port(label='P1', pos=(-6.0, 0.0))
+    para.add_port_attachment(port, a)
+    para.selected_nodes[:] = [a]
+    para.selected_ports = [port]
+    ax = para.canvas.ax
+
+    para._on_click_normal_mode(click(0.0, 0.0, ax=ax), False)
+    assert para.drag_pending_group is True
+    para._on_motion(click(0.0, 4.0, ax=ax))
+    assert para.dragging_group is True
+    para._on_release(click(0.0, 4.0, ax=ax))
+
+    assert a['pos'] != (0.0, 0.0)
+    assert port['pos'] != (-6.0, 0.0)

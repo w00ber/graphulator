@@ -1502,6 +1502,37 @@ class ExplicitPortsMixin:
         return ([att for _port, att in self.selected_attachments]
                 + [conn for _line, _end, conn in self.selected_taps])
 
+    def _selection_attrs(self):
+        return super()._selection_attrs() + ('selected_ports',
+                                             'selected_lines',
+                                             'selected_attachments',
+                                             'selected_taps',
+                                             'selected_pump_buses')
+
+    def _export_glyph_subset(self):
+        """The glyph half of a selection-only image export.
+
+        A selected line brings the port that TERMINATES it along, even when
+        that port was not selected itself: add_line_resonator places it as
+        part of making the line, so a picture of the line without it is a
+        line that stops in mid-air. The pull goes one way only -- a
+        selected port does not drag its line (or its mode) in, or copying
+        one port would quietly bring half the graph.
+
+        A conjugate twin is a derived glyph, so it comes along only when
+        the selection names it; a selected primary draws on its own, the
+        same way it does in the clipboard copy.
+        """
+        ports = list(self.selected_ports)
+        seen = {id(p) for p in ports}
+        for line in self.selected_lines:
+            for end in ('x0', 'xL'):
+                for port in self._line_end_ports(line, end):
+                    if id(port) not in seen:
+                        seen.add(id(port))
+                        ports.append(port)
+        return {'ports': ports, 'line_resonators': list(self.selected_lines)}
+
     def _glyph_drag_extent(self, glyph):
         """Half-size of a glyph's drag ghost, in data units.
 
@@ -2361,10 +2392,15 @@ class ExplicitPortsMixin:
                 self._update_plot()
             return True
 
-        if not shift_pressed and (self.selected_ports or self.selected_lines
-                                  or self.selected_attachments
-                                  or self.selected_taps):
-            # clicking empty space clears glyph selection alongside nodes
+        # The click missed every glyph and link, so it belongs to whatever
+        # is under it and the glyph selection goes with the rest of the
+        # selection -- unless it grabs an already-selected node, which is a
+        # GROUP grab and has to keep the group's ports, lines and links.
+        if (not shift_pressed
+                and (self.selected_ports or self.selected_lines
+                     or self.selected_attachments or self.selected_taps)
+                and not self._click_grabs_selected_node(event.xdata,
+                                                        event.ydata)):
             self.selected_ports = []
             self.selected_lines = []
             self.selected_attachments = []

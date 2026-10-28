@@ -839,6 +839,16 @@ class GlyphMixin:
         """The style dicts behind every selected wire."""
         return [conn for _owner, conn in self.selected_wires]
 
+    def _selection_attrs(self):
+        return super()._selection_attrs() + ('selected_ports',
+                                             'selected_txlines',
+                                             'selected_wires')
+
+    def _export_glyph_subset(self):
+        """The glyph half of a selection-only image export."""
+        return {'ports': list(self.selected_ports),
+                'txlines': list(self.selected_txlines)}
+
     def _select_all(self):
         """Select everything, glyphs included.
 
@@ -1323,9 +1333,14 @@ class GlyphMixin:
             self._update_plot()
             return True
 
-        if not shift_pressed and (self.selected_ports
-                                  or self.selected_txlines
-                                  or self.selected_wires):
+        # The click missed every glyph, so it belongs to whatever is under
+        # it and the glyph selection goes with the rest of the selection --
+        # unless it grabs an already-selected node, which is a GROUP grab
+        # and has to keep the group's glyphs.
+        if (not shift_pressed
+                and (self.selected_ports or self.selected_txlines
+                     or self.selected_wires)
+                and not self._click_grabs_selected_node(x, y)):
             self._clear_glyph_selection()
         return False
 
