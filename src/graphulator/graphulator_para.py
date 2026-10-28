@@ -241,7 +241,7 @@ SETTINGS_PARAMS = {
         ('IMAGE_EXPORT_SCALE', 'Export Scale (\u00d7 43 pt per unit)', 'float',
          0.1, 10.0, 0.05),
     ],
-    'Export Scaling': [
+    'Code Export Scaling': [
         ('GUI_SELFLOOP_LABEL_SCALE', 'GUI Self-loop Label Distance', 'float', 0.1, 5.0, 0.1),
         ('EXPORT_SELFLOOP_LABEL_DISTANCE', 'Export Self-loop Label Distance', 'float', 0.1, 5.0, 0.1),
         ('NODELABELSCALE', 'Node Label Scale', 'float', 0.1, 2.0, 0.05),
@@ -9009,6 +9009,13 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         export_menu.addAction(copy_vector_action)
         export_menu.addSeparator()
 
+        preview_code_action = QAction("Preview Code Output...", self)
+        preview_code_action.setStatusTip(
+            "Run the exported Python here and show its figure beside the "
+            "script, instead of round-tripping through a notebook")
+        preview_code_action.triggered.connect(self._show_code_preview)
+        export_menu.addAction(preview_code_action)
+
         export_code_action = QAction("Python Code...", self)
         sm.bind_action("file.export_code", export_code_action)
         export_code_action.triggered.connect(lambda: self._export_code())
@@ -9628,6 +9635,9 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         self.zoom_level = view.get("zoom_level", 1.0)
 
         self.use_latex = view.get("use_latex", False)
+        # Rendering mode is global matplotlib state: setting the flag
+        # alone left a LaTeX graph drawing in serif MathText.
+        self._apply_latex_mode()
 
         # Get extensible property dictionaries (new .pgraph format)
         node_properties = data.get("node_properties", {})

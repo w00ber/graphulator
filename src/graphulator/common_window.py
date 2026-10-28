@@ -194,6 +194,45 @@ class GraphWindowCommonMixin:
             getattr(self.APP_CONFIG, 'SHOW_SHORTCUT_OVERLAY', False))
         self._update_shortcut_overlay()
 
+    # ---- generated-code preview -----------------------------------------
+
+    def _show_code_preview(self):
+        """Open (or raise) the window that renders the exported Python.
+
+        One window per app window, reused: it is meant to sit open beside
+        the export-scaling controls while they are tuned, so reopening it
+        should bring back what was already there rather than start over.
+        """
+        from .code_preview import CodePreviewWindow
+
+        existing = getattr(self, '_code_preview', None)
+        if existing is None:
+            existing = CodePreviewWindow(self, parent=self)
+            self._code_preview = existing
+        else:
+            existing.refresh()
+        existing.show()
+        existing.raise_()
+        existing.activateWindow()
+        return existing
+
+    def _refresh_code_preview(self):
+        """Re-render an open preview, if there is one and it wants to be.
+
+        Called from anywhere the generated code would come out different --
+        an export-scaling spinbox, say. A no-op when the window was never
+        opened, which is the usual case.
+        """
+        preview = getattr(self, '_code_preview', None)
+        if preview is None:
+            return
+        try:
+            preview.maybe_auto_refresh()
+        except RuntimeError:
+            # The dialog was destroyed under us (app teardown); forget it
+            # rather than raising out of an unrelated edit.
+            self._code_preview = None
+
     def _init_canvas_toast(self):
         """Create the transient message panel over the canvas.
 
@@ -1959,15 +1998,24 @@ class GraphWindowCommonMixin:
         except Exception as e:
             logger.error(f"Error saving recent files: {e}")
 
-    def _toggle_latex_mode(self):
-        """Toggle between MathText and LaTeX rendering"""
-        self.use_latex = not self.use_latex
+    def _apply_latex_mode(self, warn=True):
+        """Push `self.use_latex` into matplotlib and drop the glyph cache.
+
+        The rendering mode is GLOBAL matplotlib state (rcParams), not
+        something the canvas carries, so anything that changes
+        `self.use_latex` has to come through here. Opening a file used to
+        set the flag on its own and leave matplotlib in MathText with the
+        STIXGeneral face, so a graph saved with LaTeX on came back in a
+        serif MathText font and toggling off and on again was the only way
+        to make it render properly.
+        """
         matplotlib.rcParams['text.usetex'] = self.use_latex
 
         if self.use_latex:
             # Set up LaTeX preamble with sfmath for bold sans-serif fonts
             matplotlib.rcParams['text.latex.preamble'] = r'\usepackage{amsmath}\usepackage{sfmath}\renewcommand{\familydefault}{\sfdefault}'
-            self._warn_if_latex_unavailable()
+            if warn:
+                self._warn_if_latex_unavailable()
         else:
             # Reset to MathText mode
             matplotlib.rcParams['text.latex.preamble'] = ''
@@ -1976,6 +2024,11 @@ class GraphWindowCommonMixin:
 
         # Drop cached glyph paths (the global LaTeX preamble/fontset just changed).
         self._label_cache.clear()
+
+    def _toggle_latex_mode(self):
+        """Toggle between MathText and LaTeX rendering"""
+        self.use_latex = not self.use_latex
+        self._apply_latex_mode()
 
         render_mode = "LaTeX" if self.use_latex else "MathText"
         logger.info(f"Rendering mode: {render_mode}")

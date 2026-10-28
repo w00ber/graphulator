@@ -2105,6 +2105,12 @@ class GlyphMixin:
         if not self._has_glyphs:
             return []
         r = self.node_radius
+        # Glyph labels ride the same export knob the node labels do, so a
+        # single control keeps the whole drawing's lettering in step --
+        # tuning NODELABELSCALE used to move the modes and leave the ports
+        # and txlines behind at their own size.
+        label_rescale = float(
+            getattr(self, 'export_rescale', {}).get('NODELABELSCALE', 1.0))
         calls = []
 
         def label_of(obj):
@@ -2122,7 +2128,8 @@ class GlyphMixin:
                 extra.append(('angle', f"{term.get('angle', 0.0):.1f}"))
             else:
                 extra.append(('autoorient', 'True'))
-            style, per_glyph = self._glyph_style_args(term, PORT_LW, 'white')
+            style, per_glyph = self._glyph_style_args(
+                term, PORT_LW, 'white', labelscale=label_rescale)
             style += self._port_geometry_args(term)
             calls.append(Call('addport', ident=ident,
                               style=tuple([('R', f"{r:.3f}")] + style),
@@ -2134,7 +2141,8 @@ class GlyphMixin:
             ident = [('label', label_of(cx)),
                      ('xy', f"({x - x_center:.3f}, {y - y_center:.3f})"),
                      ('txline_id', str(cx['txline_id']))]
-            style, per_glyph = self._glyph_style_args(cx, TXLINE_LW, '#cccccc')
+            style, per_glyph = self._glyph_style_args(
+                cx, TXLINE_LW, '#cccccc', labelscale=label_rescale)
             calls.append(Call(
                 'addtxline', ident=ident,
                 style=tuple([('R', f"{r:.3f}")] + style),
@@ -2185,14 +2193,21 @@ class GlyphMixin:
         return args
 
     @staticmethod
-    def _glyph_style_args(glyph, default_lw, default_fill):
+    def _glyph_style_args(glyph, default_lw, default_fill, labelscale=1.0):
         """(appearance, per-glyph) keywords -- the split the grouped export
-        needs: everything that can be shared, then what cannot."""
+        needs: everything that can be shared, then what cannot.
+
+        `labelscale` is the export's label rescale (NODELABELSCALE), folded
+        into the glyph's own label multiplier so one knob drives every
+        label in the generated script.
+        """
         args = []
         for key, name, default in (('w_mult', 'length', 1.0),
                                    ('h_mult', 'height', 1.0),
                                    ('label_size_mult', 'labelscale', 1.0)):
             val = float(glyph.get(key, default))
+            if name == 'labelscale':
+                val *= labelscale
             if abs(val - default) > 1e-6:
                 args.append((name, f"{val:.3f}"))
         lw = float(glyph.get('linewidth', default_lw))

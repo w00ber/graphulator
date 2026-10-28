@@ -714,12 +714,24 @@ class SettingsDialogBase(QDialog):
 
     # ---- Button handlers ----
 
+    def _refresh_code_preview(self):
+        """Re-render an open code preview, if the window has one.
+
+        The export-scaling parameters change nothing but the generated
+        script, so the preview is the only place an edit to them shows up
+        at all.
+        """
+        refresh = getattr(self.graphulator, '_refresh_code_preview', None)
+        if callable(refresh):
+            refresh()
+
     def _on_apply(self):
         """Apply button - apply changes, refresh UI, keep dialog open."""
         self._apply_all_values()
         self._persist_sticky()
         self._after_apply()
         self._refresh_ui()
+        self._refresh_code_preview()
 
     def _on_ok(self):
         """OK button - apply changes, refresh UI, close dialog."""
@@ -727,6 +739,7 @@ class SettingsDialogBase(QDialog):
         self._persist_sticky()
         self._after_apply()
         self._refresh_ui()
+        self._refresh_code_preview()
         self.accept()
 
     def _on_cancel(self):

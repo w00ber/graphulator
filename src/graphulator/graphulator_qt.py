@@ -633,14 +633,30 @@ class PropertiesPanel(QWidget):
         scaling_tab.setLayout(scaling_layout)
 
         # Add title
-        title = QLabel("Export Scaling Parameters")
+        title = QLabel("Python Code Export")
         title.setStyleSheet("font-weight: bold; font-size: 11px;")
         scaling_layout.addWidget(title)
 
-        desc = QLabel("Tune these to match GUI and exported code rendering:")
+        # These are calibration constants baked into the NUMBERS the
+        # generated script contains -- they do not touch the canvas (bar
+        # the one GUI_ parameter), which is why the tab reads oddly next to
+        # the drawing defaults. Preview Output is what makes them tunable
+        # without a round trip through a notebook.
+        desc = QLabel(
+            "Scale factors written into the exported script, so its "
+            "matplotlib output matches the canvas. Preview Output renders "
+            "the code here as you tune them.")
         desc.setStyleSheet("font-size: 9px; color: gray;")
         desc.setWordWrap(True)
         scaling_layout.addWidget(desc)
+
+        preview_btn = QPushButton("Preview Output\u2026")
+        preview_btn.setToolTip(
+            "Run the exported code and show its figure beside the script, "
+            "re-rendering as these parameters change")
+        preview_btn.clicked.connect(
+            lambda: self.graphulator._show_code_preview())
+        scaling_layout.addWidget(preview_btn)
 
         # Create scroll area for parameters
         scroll = QScrollArea()
@@ -729,7 +745,7 @@ class PropertiesPanel(QWidget):
 
         scaling_layout.addStretch()
 
-        self.tabs.addTab(scaling_tab, "Export Scaling")
+        self.tabs.addTab(scaling_tab, "Code Export")
 
     def _update_scaling_param(self, key, value):
         """Update a scaling parameter"""
@@ -737,6 +753,9 @@ class PropertiesPanel(QWidget):
         # If it's the GUI parameter, update the plot immediately
         if key == 'GUI_SELFLOOP_LABEL_SCALE':
             self.graphulator._update_plot()
+        # Every other one changes only the generated code, so the preview
+        # is the only place the change is visible at all.
+        self.graphulator._refresh_code_preview()
 
     def _reset_scaling_params(self):
         """Reset all scaling parameters to defaults"""
@@ -2630,6 +2649,13 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
         export_menu.addAction(copy_vector_action)
         export_menu.addSeparator()
 
+        preview_code_action = QAction("Preview Code Output...", self)
+        preview_code_action.setStatusTip(
+            "Run the exported Python here and show its figure beside the "
+            "script, instead of round-tripping through a notebook")
+        preview_code_action.triggered.connect(self._show_code_preview)
+        export_menu.addAction(preview_code_action)
+
         export_code_action = QAction("Python Code...", self)
         export_code_action.setShortcut("Ctrl+Shift+E")
         export_code_action.triggered.connect(lambda: self._export_code())
@@ -2869,6 +2895,9 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
         self.grid_rotation = view.get("grid_rotation", 0)
         self.zoom_level = view.get("zoom_level", 1.0)
         self.use_latex = view.get("use_latex", False)
+        # Rendering mode is global matplotlib state: setting the flag
+        # alone left a LaTeX graph drawing in serif MathText.
+        self._apply_latex_mode()
 
         # Restore nodes
         node_id_map = {}  # Map from saved node_id to node object
