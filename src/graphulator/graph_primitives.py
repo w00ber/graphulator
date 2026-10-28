@@ -1704,6 +1704,42 @@ class GraphCircuit:
                                  cx['length'], cx['height'])[end]
         raise ValueError(f"Unknown wire anchor kind {kind!r}")
 
+    def _anchorR(self, spec):
+        """Reference radius of whatever a wire anchors to, or None."""
+        kind = spec[0]
+        try:
+            if kind == 'node':
+                node = self._findnode(spec[1])
+                return node.get('R') or self.nodeprefs['R']
+            if kind == 'port':
+                return self._findport(spec[1])['R']
+            if kind == 'txline':
+                return self._findtxline(spec[1])['R']
+        except ValueError:
+            return None
+        return None
+
+    def _wireR(self, w):
+        """Reference radius for one wire's curve.
+
+        The bezier reach is clamped to a few x R, so R is what decides how
+        early a wire leaves its lead and starts to bend. It has to be the
+        radius of the objects THIS wire joins, not the graph-wide default:
+        a generated script whose objects all carry R=0.6 was being routed
+        as if R were 2 (GraphCircuit's node default), which lifted the
+        clamp entirely -- the stub ran most of the way across and the fan
+        split in a tight S right against the nodes, instead of leaving the
+        port and spreading immediately the way the canvas draws it.
+
+        The START anchor wins: it is the lead-owning end, and a fan out of
+        one port has to agree with itself.
+        """
+        for spec in (w['start'], w['end']):
+            R = self._anchorR(spec)
+            if R:
+                return R
+        return self._glyphR()
+
     def _wirelead(self, spec):
         """Straight run a wire keeps at this anchor before curving.
 
@@ -1772,7 +1808,7 @@ class GraphCircuit:
             wire(ax=self.ax, p0=p0, t0=t0, p1=p1, t1=t1,
                  lead0=lead0, lead1=lead1,
                  capstyle=w.get('capstyle', WIRE_CAPSTYLE),
-                 R=self._glyphR(), color=w.get('color', WIRE_COLOR),
+                 R=self._wireR(w), color=w.get('color', WIRE_COLOR),
                  lw=w.get('lw'), linestyle=w.get('linestyle', '-'),
                  alpha=w.get('alpha', 0.9), label=w.get('label'),
                  labelscale=w.get('labelscale', 1.0),

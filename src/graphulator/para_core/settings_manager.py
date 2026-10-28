@@ -17,19 +17,41 @@ the only app that had settings then — and are migrated in place on first read.
 import copy
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# User settings directory and file
-USER_SETTINGS_DIR = Path.home() / '.graphulator'
+#: Environment variable that moves every per-user file this module names.
+STATE_DIR_ENV = 'GRAPHULATOR_STATE_DIR'
+
+
+def state_dir():
+    """Directory holding the per-user state: settings, the recent-files
+    list, the session autosave and the last-used directory.
+
+    ``GRAPHULATOR_STATE_DIR`` redirects all of it, which is what keeps a
+    test run out of the real files. The suite builds real windows, and
+    those used to read and write the live ``~/.graphulator*`` files: a run
+    appended pytest temp paths to the recent list, pointed the last-used
+    directory at a temp folder that no longer exists, and overwrote the
+    session autosave with whatever empty graph a test happened to hold --
+    so the app came back blank after every test run.
+    """
+    override = os.environ.get(STATE_DIR_ENV)
+    return Path(override).expanduser() if override else Path.home()
+
+
+# Resolved once, at import. Both apps read these through the module (never
+# `from ... import RECENT_FILES_PATH`) so a test can redirect them.
+USER_SETTINGS_DIR = state_dir() / '.graphulator'
 USER_SETTINGS_FILE = USER_SETTINGS_DIR / 'settings.json'
 
-# Recent files and last directory paths
-RECENT_FILES_PATH = Path.home() / '.graphulator_recent'
-LAST_GRAPH_PATH = Path.home() / '.graphulator_last.graph'
-LAST_DIRECTORY_PATH = Path.home() / '.graphulator_last_dir'
+# Recent files, session autosave and last directory paths
+RECENT_FILES_PATH = state_dir() / '.graphulator_recent'
+LAST_GRAPH_PATH = state_dir() / '.graphulator_last.graph'
+LAST_DIRECTORY_PATH = state_dir() / '.graphulator_last_dir'
 
 # Maximum number of recent files to track
 MAX_RECENT_FILES = 10
@@ -140,6 +162,24 @@ class SettingsManager:
         whole[self.namespace] = settings_dict
         if self._write_all(whole):
             self._settings = settings_dict
+            return True
+        return False
+
+    def update(self, partial: Dict[str, Any]) -> bool:
+        """Merge `partial` into this app's saved settings.
+
+        Unlike :meth:`save`, which replaces the whole namespace with what
+        the Settings dialog currently shows, this touches only the keys it
+        is given. That is what lets a STICKY setting persist the moment it
+        is applied without dragging every other widget's value to disk
+        alongside it.
+        """
+        whole = self._read_all()
+        merged = dict(whole.get(self.namespace, {}))
+        merged.update(partial)
+        whole[self.namespace] = merged
+        if self._write_all(whole):
+            self._settings = merged
             return True
         return False
 

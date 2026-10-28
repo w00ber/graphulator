@@ -352,8 +352,9 @@ SHORTCUT_DEFINITIONS: List[ShortcutDefinition] = [
         action_id="clipboard.copy_graph_image",
         display_name="Copy Graph to Clipboard",
         category="Selection & Clipboard",
-        description="Copy the whole graph to the clipboard (vector PDF/SVG + PNG) "
-        "for pasting into Keynote, PowerPoint, Illustrator, etc.",
+        description="Copy the selection \u2014 or the whole graph when nothing is "
+        "selected \u2014 to the clipboard (vector PDF/SVG + PNG) for pasting into "
+        "Keynote, PowerPoint, Illustrator, etc. Selection highlighting is left off.",
         default_keys={"default": "Ctrl+Shift+I"},
         is_menu_action=True,
     ),
@@ -361,8 +362,9 @@ SHORTCUT_DEFINITIONS: List[ShortcutDefinition] = [
         action_id="clipboard.copy_graph_vector",
         display_name="Copy Graph to Clipboard (Vector Only)",
         category="Selection & Clipboard",
-        description="Copy the graph as vector PDF/SVG only (no raster fallback) so "
-        "apps like Keynote/PowerPoint paste editable vector art instead of an image.",
+        description="Copy the selection \u2014 or the whole graph when nothing is "
+        "selected \u2014 as vector PDF/SVG only (no raster fallback) so apps like "
+        "Keynote/PowerPoint paste editable vector art instead of an image.",
         default_keys={"default": "Ctrl+Shift+J"},
         is_menu_action=True,
     ),
