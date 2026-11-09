@@ -4857,18 +4857,14 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
                     logger.debug(f"Position ({snap_x:.3f}, {snap_y:.3f}) already occupied!")
                     return
 
-                # Continuous duplicate mode - use last node properties
-                if self.placement_mode == 'continuous_duplicate':
+                # Continuous duplicate mode, and continuous mode after its
+                # first (dialog) node: place at once with the last node's
+                # look and the next label in its series
+                if self._places_node_silently():
                     if self.last_node_props:
                         self._save_state()
 
-                        # Auto-increment the label (or use 'A' if empty string)
-                        current_label = self.last_node_props['label']
-                        if current_label == '':
-                            # First node - start with 'A'
-                            next_label = 'A'
-                        else:
-                            next_label = self._auto_increment_label(current_label)
+                        next_label = self._suggest_next_node_label()
 
                         # Add node with duplicated properties and incremented label
                         self.nodes.append({
@@ -4895,9 +4891,9 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
                         self._update_plot()
                     return
 
-                # Show dialog for single and continuous modes
+                # Show dialog for single mode and continuous mode's first node
                 # In continuous mode, inherit properties from last node
-                default_label = self._get_next_label()
+                default_label = self._suggest_next_node_label()
                 if self.placement_mode == 'continuous' and self.last_node_props:
                     # Use properties from last modified node
                     dialog = NodeInputDialog(
@@ -4953,6 +4949,10 @@ class Graphulator(GlyphMixin, GraphWindowCommonMixin, QMainWindow):
                         }
 
                         logger.info(f"✓ Node '{result['label']}' ({result['color_key']}) placed at ({snap_x:.3f}, {snap_y:.3f})")
+
+                        # The rest of a continuous session skips the dialog
+                        if self.placement_mode == 'continuous':
+                            self._continuous_seeded = True
 
                         # Exit single mode
                         if self.placement_mode == 'single':

@@ -48,7 +48,7 @@ graphulator
 
 ### Modes
 - `g` - Place single node
-- `Shift+G` - Continuous node placement
+- `Shift+G` - Continuous node placement (dialog for the first node, then labels step on: A_0, A_1, ...)
 - `Ctrl+G` - Auto-increment node labels
 - `e` - Place single edge
 - `Ctrl+E` - Continuous edge placement

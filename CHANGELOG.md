@@ -260,6 +260,16 @@
     end the band missed would otherwise be edited invisibly.
 
 ### Fixed
+- **Continuous node placement (`Shift+G`) lost the label series and asked
+  for every node.** The node dialog opened on each click, and its default
+  label came from a plain letter counter, so a series started as `A_0` went
+  on `B`, `C`, … In both apps the dialog now opens only for the first node
+  of a session (toggle the mode off and on to see it again); every click
+  after that places a node at once with the same look and the next label in
+  the series — `A_0`, `A_1`, … `A_9`, `A_{10}`, negative subscripts
+  included. The single-node dialog (`G`) offers the same next label, and a
+  label already on the canvas is stepped past instead of reused (which also
+  stops `Ctrl+G` with no previous node from starting at a second `A`).
 - **Node colors exported as the wrong color.** A hand-picked color was drawn
   correctly on screen and came out as an unrelated palette name in the
   generated code — a graph of three custom colors exported as three

@@ -135,3 +135,133 @@ def test_smart_paste_still_continues_a_positive_series(qapp):
     from graphulator.graphulator_para import LabelPatternAnalyzer as LA
     mapping = LA.compute_next_labels(['A_1'], {'A_1', 'A_2'})
     assert mapping['A_1'] == 'A_3'
+
+
+# ---------------------------------------------------------------------------
+# continuous placement (Shift+G): one dialog, then a subscripted series
+# ---------------------------------------------------------------------------
+#
+# The reported symptom: the node dialog opened on EVERY click, and its
+# default label came from a plain letter counter, so a series started as
+# 'A_0' went on 'B', 'C', ... instead of 'A_1', 'A_2'.
+
+class _StubNodeDialog:
+    """Stands in for NodeInputDialog: counts how often it opens and accepts
+    whatever label it was offered (or the one a test asks it to type)."""
+
+    opened = []
+    typed = None
+
+    def __init__(self, default_label='A', default_color='BLUE', parent=None,
+                 **_):
+        from unittest import mock
+        type(self).opened.append(default_label)
+        self.label = type(self).typed or default_label
+        type(self).typed = None
+        for name in ('node_size_combo', 'label_size_combo', 'conj_checkbox',
+                     'node_size_slider', 'label_size_slider',
+                     'outline_checkbox', 'outline_color_combo',
+                     'outline_width_slider', 'outline_alpha_slider'):
+            setattr(self, name, mock.MagicMock())
+
+    def exec(self):
+        from PySide6.QtWidgets import QDialog
+        return QDialog.Accepted
+
+    def get_result(self):
+        return {'label': self.label, 'color': '#6699ff', 'color_key': 'BLUE',
+                'node_size_mult': 1.0, 'label_size_mult': 1.0, 'conj': False,
+                'outline_enabled': False, 'outline_color_key': 'BLACK',
+                'outline_color': 'black', 'outline_width': 1.0,
+                'outline_alpha': 1.0}
+
+
+def _left_click(win, x, y):
+    import types
+    win._on_click(types.SimpleNamespace(xdata=x, ydata=y, button=1,
+                                        inaxes=win.canvas.ax, dblclick=False,
+                                        key=None))
+
+
+@pytest.fixture(params=['graphulator_qt', 'graphulator_para'])
+def placing_window(request, qapp, tmp_path, monkeypatch):
+    import importlib
+    module = importlib.import_module(f'graphulator.{request.param}')
+    monkeypatch.setattr(module, 'NodeInputDialog', _StubNodeDialog)
+    _StubNodeDialog.opened = []
+    _StubNodeDialog.typed = None
+    w = module.Graphulator()
+    w.last_graph_path = tmp_path / 'last'
+    w.recent_files_path = tmp_path / 'recent'
+    w.nodes.clear()
+    w.node_counter = 0
+    w.last_node_props = None
+    return w
+
+
+def test_continuous_mode_asks_once_then_continues_the_subscript(
+        placing_window):
+    w = placing_window
+    w._toggle_continuous_mode()
+    _StubNodeDialog.typed = 'A_0'
+    for i in range(4):
+        _left_click(w, 2.0 * i, 0.0)
+
+    assert [n['label'] for n in w.nodes] == ['A_0', 'A_1', 'A_2', 'A_3']
+    assert len(_StubNodeDialog.opened) == 1
+    assert w.placement_mode == 'continuous'
+
+
+def test_reentering_continuous_mode_asks_again_and_offers_the_next_label(
+        placing_window):
+    w = placing_window
+    w._toggle_continuous_mode()
+    _StubNodeDialog.typed = 'B_8'
+    _left_click(w, 0.0, 0.0)
+    _left_click(w, 2.0, 0.0)
+    w._toggle_continuous_mode()            # off
+    w._toggle_continuous_mode()            # on again: a fresh session
+    _left_click(w, 4.0, 0.0)
+
+    assert [n['label'] for n in w.nodes] == ['B_8', 'B_9', 'B_{10}']
+    assert len(_StubNodeDialog.opened) == 2
+    assert _StubNodeDialog.opened[-1] == 'B_{10}'
+
+
+def test_the_next_label_steps_past_labels_already_in_use(placing_window):
+    w = placing_window
+    w._toggle_continuous_mode()
+    _StubNodeDialog.typed = 'A_0'
+    _left_click(w, 0.0, 0.0)
+    w.nodes.append(dict(w.nodes[0], node_id=99, label='A_1', pos=(9.0, 9.0)))
+    _left_click(w, 2.0, 0.0)
+
+    assert w.nodes[-1]['label'] == 'A_2'
+
+
+def test_single_placement_offers_the_next_subscript(placing_window):
+    w = placing_window
+    w.placement_mode = 'single'
+    _StubNodeDialog.typed = 'a_{-1}'
+    _left_click(w, 0.0, 0.0)
+    w.placement_mode = 'single'
+    _left_click(w, 2.0, 0.0)
+
+    assert _StubNodeDialog.opened[-1] == 'a_0'
+
+
+def test_duplicate_mode_on_an_empty_label_continues_the_letter_count(
+        placing_window):
+    """Ctrl+G with no previous node used to start at 'A' even when an 'A'
+    was already on the canvas."""
+    w = placing_window
+    w.nodes.append({'node_id': 0, 'label': 'A', 'pos': (9.0, 9.0),
+                    'color': '#6699ff', 'color_key': 'BLUE',
+                    'node_size_mult': 1.0, 'label_size_mult': 1.0,
+                    'conj': False})
+    w.node_counter = 1
+    w._toggle_continuous_duplicate_mode()
+    _left_click(w, 0.0, 0.0)
+
+    assert w.nodes[-1]['label'] == 'B'
+    assert _StubNodeDialog.opened == []

@@ -1177,6 +1177,35 @@ class GraphWindowCommonMixin:
             second = chr(ord('A') + (self.node_counter % 26))
             return first + second
 
+    def _suggest_next_node_label(self):
+        """Label for the next placed node: the last label, stepped.
+
+        ``A_0`` -> ``A_1``, ``B`` -> ``C``, through the shared
+        :func:`auto_increment_label` table, so a subscripted series keeps
+        its subscript. A label already on the canvas is stepped past rather
+        than reused. With no last label, or one that fits no pattern, it
+        falls back to the plain letter counter.
+        """
+        used = {str(node.get('label', '')) for node in self.nodes}
+        label = str((self.last_node_props or {}).get('label', '') or '')
+        if label:
+            for _ in range(10000):
+                stepped = auto_increment_label(label)
+                if stepped == label:
+                    break                    # fits no pattern: fall back
+                if stepped not in used:
+                    return stepped
+                label = stepped
+        return self._get_next_label()
+
+    def _places_node_silently(self):
+        """True when a node-placement click skips the node dialog: always in
+        continuous duplicate mode, and in continuous mode once its first
+        node has been placed (see :meth:`_toggle_continuous_mode`)."""
+        return (self.placement_mode == 'continuous_duplicate'
+                or (self.placement_mode == 'continuous'
+                    and getattr(self, '_continuous_seeded', False)))
+
     def _get_xlim(self):
         """Get x limits based on zoom level and canvas aspect ratio"""
         center = (self.base_xlim[0] + self.base_xlim[1]) / 2
@@ -1961,7 +1990,14 @@ class GraphWindowCommonMixin:
         self._update_plot()
 
     def _toggle_continuous_mode(self):
-        """Toggle continuous placement mode"""
+        """Toggle continuous placement mode.
+
+        The first node of each session goes through the node dialog (to set
+        the starting label and look); every node after it is placed at once
+        with the same look and the next label in the series. Toggling the
+        mode off and on again brings the dialog back.
+        """
+        self._continuous_seeded = False
         if self.placement_mode == 'continuous':
             self.placement_mode = None
             logger.debug("Exited continuous placement mode")

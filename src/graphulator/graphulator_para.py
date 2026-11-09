@@ -14511,15 +14511,10 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         Returns a dict with the properties that the ghost preview should display,
         based on the current placement mode and dialog/node defaults.
         """
-        # For continuous_duplicate mode, use last_node_props with auto-incremented label
-        if self.placement_mode == 'continuous_duplicate' and self.last_node_props:
-            current_label = self.last_node_props['label']
-            if current_label == '':
-                next_label = 'A'
-            else:
-                next_label = self._auto_increment_label(current_label)
+        # A node placed without the dialog: last_node_props, next label
+        if self._places_node_silently() and self.last_node_props:
             return {
-                'label': next_label,
+                'label': self._suggest_next_node_label(),
                 'color': self.last_node_props['color'],
                 'color_key': self.last_node_props['color_key'],
                 'node_size_mult': self.last_node_props['node_size_mult'],
@@ -14534,7 +14529,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         # For continuous mode with existing last_node_props, inherit those properties
         if self.placement_mode == 'continuous' and self.last_node_props:
             return {
-                'label': self._get_next_label(),
+                'label': self._suggest_next_node_label(),
                 'color': self.last_node_props['color'],
                 'color_key': self.last_node_props['color_key'],
                 'node_size_mult': self.last_node_props['node_size_mult'],
@@ -14554,7 +14549,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         outline_color = config.MYCOLORS.get(outline_color_key, 'black')
 
         return {
-            'label': self._get_next_label(),
+            'label': self._suggest_next_node_label(),
             'color': color,
             'color_key': color_key,
             'node_size_mult': NodeInputDialog.last_node_size,
@@ -16657,18 +16652,14 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             print(f"Position ({snap_x:.3f}, {snap_y:.3f}) already occupied!")
             return
 
-        # Continuous duplicate mode - use last node properties
-        if self.placement_mode == 'continuous_duplicate':
+        # Continuous duplicate mode, and continuous mode after its first
+        # (dialog) node: place at once with the last node's look and the
+        # next label in its series
+        if self._places_node_silently():
             if self.last_node_props:
                 self._save_state()
 
-                # Auto-increment the label (or use 'A' if empty string)
-                current_label = self.last_node_props['label']
-                if current_label == '':
-                    # First node - start with 'A'
-                    next_label = 'A'
-                else:
-                    next_label = self._auto_increment_label(current_label)
+                next_label = self._suggest_next_node_label()
 
                 # Add node with duplicated properties and incremented label
                 self.nodes.append({
@@ -16705,9 +16696,9 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 self._update_plot()
             return
 
-        # Show dialog for single and continuous modes
+        # Show dialog for single mode and continuous mode's first node
         # In continuous mode, inherit properties from last node
-        default_label = self._get_next_label()
+        default_label = self._suggest_next_node_label()
         if self.placement_mode == 'continuous' and self.last_node_props:
             # Use properties from last modified node
             dialog = NodeInputDialog(
@@ -16788,6 +16779,10 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 }
 
                 print(f"✓ Node '{result['label']}' ({result['color_key']}) placed at ({snap_x:.3f}, {snap_y:.3f})")
+
+                # The rest of a continuous session skips the dialog
+                if self.placement_mode == 'continuous':
+                    self._continuous_seeded = True
 
                 # Exit single mode
                 if self.placement_mode == 'single':
