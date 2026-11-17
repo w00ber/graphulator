@@ -202,7 +202,22 @@ longer duplicates it.
 4. The engine (Workstream A) compiles the same model directly to M_super,
    with the legacy compiler kept as the regression oracle.
 
-## Questions for JA
+## Decisions (JA, 17 Nov 2026)
+
+1. **12.2:** stdlib dataclasses, no pydantic. Keep `.pgraph`, version 4.0.
+2. **Twin:** the twin leaves the physics and survives only as
+   `drawing.sector_views`. Deleting the twin view hides it; removing the
+   idler physics means removing the pump (or setting the sector window to {0}).
+3. **Taps:** keep the legacy `{rate, n_ref}` under `legacy_anchor` and compile
+   it through the comb path until the inverse tap profile is derived and
+   gated (tracked follow-up).
+4. **Solve settings** travel with the document.
+5. **12.3 default sector window:** pending. Proposal: `sectors: "auto"`
+   (grow symmetrically from {-1..0}, stop when max_sweep |dS| relative to
+   (G-1) < `sector_tol` = 1e-3, hard cap `sector_max` = 16 with a
+   not-converged warning); an explicit `[m_lo, m_hi]` overrides.
+
+## Questions for JA (original, answered above)
 
 1. Dataclasses vs pydantic; keep `.pgraph` + 4.0 (12.2).
 2. Is it acceptable that the twin disappears from the physics and survives
