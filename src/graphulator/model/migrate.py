@@ -30,6 +30,7 @@ from __future__ import annotations
 import copy
 from typing import Any, Dict, List
 
+from .quantize import quantize_sweep
 from .schema import (Attachment, Block, Coupling, Document, Drawing, Mode,
                      Plane, Pumped, SectorView, SolveSettings, Sweep, Tone)
 
@@ -47,7 +48,7 @@ LINE_PARAMS = ("FSR", "Ztx", "alpha_uniform", "sections", "f_ref", "end_coupling
 # physics a twin mirrors from its primary (GUI _sync_all_twins)
 TWIN_SYNC = ("FSR", "Ztx", "f_max", "end_coupling", "Z0_port", "alpha_uniform",
              "load", "sections", "f_ref")
-SCATTER_KNOWN = ("frequency", "sparams_plot")
+SCATTER_KNOWN = ("frequency", "sparams_plot", "injection_node_id", "tail_closure")
 TOP_KNOWN = ("version", "format", "metadata", "view", "nodes", "edges",
              "code_properties", "notes", "scattering", "ports", "line_resonators")
 ENDS = ("x0", "xL")
@@ -63,6 +64,13 @@ def end_conns(line: Dict[str, Any], end: str) -> List[Dict[str, Any]]:
 
 def _mid(nid):
     return f"n{nid}"
+
+
+def legacy_node_id(mode_id):
+    """Inverse of _mid: 'n6' -> 6 (None -> None)."""
+    if mode_id is None:
+        return None
+    return int(mode_id[1:]) if mode_id[1:].lstrip("-").isdigit() else mode_id[1:]
 
 
 def _eid(e):
@@ -291,15 +299,21 @@ def from_legacy(d: Dict[str, Any]) -> Document:
         fr = sc.get("frequency")
         if fr:
             if "center" in fr:
-                doc.sweep = Sweep(center=fr["center"], span=fr["span"], points=int(fr["points"]),
-                                  extras={k: v for k, v in fr.items()
-                                          if k not in ("center", "span", "points")})
-            else:      # older files: start/stop (kept verbatim, center/span derived)
-                doc.sweep = Sweep(center=(fr["start"] + fr["stop"]) / 2,
-                                  span=fr["stop"] - fr["start"], points=int(fr["points"]),
-                                  extras={"_start_stop": True,
-                                          **{k: v for k, v in fr.items() if k != "points"}})
+                c, s_ = fr["center"], fr["span"]
+                extra = {k: v for k, v in fr.items() if k not in ("center", "span", "points")}
+            else:      # oldest files: start/stop -> center/span, as the GUI loader does
+                c, s_ = (fr["start"] + fr["stop"]) / 2, fr["stop"] - fr["start"]
+                extra = {k: v for k, v in fr.items() if k not in ("start", "stop", "points")}
+            c, s_, n = quantize_sweep(c, s_, fr["points"])          # decision Q2
+            doc.sweep = Sweep(center=c, span=s_, points=n, extras=extra)
         dr.sparams_plot = sc.get("sparams_plot")
+        if "injection_node_id" in sc:                               # decision Q1
+            root = sc["injection_node_id"]
+            doc.solve.root = None if root is None else _mid(root)
+        else:
+            doc.solve.extras["_no_root_key"] = True
+        if sc.get("tail_closure") is not None:                      # decision Q3
+            doc.solve.tail_closure = bool(sc["tail_closure"])
         doc.solve.legacy_frames = {k: v for k, v in sc.items() if k not in SCATTER_KNOWN}
     return doc
 
@@ -458,15 +472,17 @@ def to_legacy(doc: Document) -> Dict[str, Any]:
         out["line_resonators"] = [legacy_lines[i] for i in dr.order.get("lines", list(legacy_lines))]
 
     # scattering
-    if doc.solve.legacy_frames is not None or doc.sweep is not None:
-        sc = dict(doc.solve.legacy_frames or {})
+    sv = doc.solve
+    if (sv.legacy_frames is not None or doc.sweep is not None
+            or sv.root is not None or sv.tail_closure is not None):
+        sc = dict(sv.legacy_frames or {})
+        if not sv.extras.get("_no_root_key", False):
+            sc["injection_node_id"] = legacy_node_id(sv.root)
+        if sv.tail_closure is not None:
+            sc["tail_closure"] = bool(sv.tail_closure)
         if doc.sweep is not None:
-            ex = dict(doc.sweep.extras)
-            if ex.pop("_start_stop", False):
-                sc["frequency"] = {**ex, "points": doc.sweep.points}
-            else:
-                sc["frequency"] = {"center": doc.sweep.center, "span": doc.sweep.span,
-                                   "points": doc.sweep.points, **ex}
+            c, s_, n = quantize_sweep(doc.sweep.center, doc.sweep.span, doc.sweep.points)
+            sc["frequency"] = {"center": c, "span": s_, "points": n, **doc.sweep.extras}
         if dr.sparams_plot is not None:
             sc["sparams_plot"] = dr.sparams_plot
         out["scattering"] = sc

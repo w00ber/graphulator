@@ -7,7 +7,10 @@ Gate 1b: the migration loses nothing -- 4.0 -> legacy reproduces the original
 canonicalization being a line end's connections in list form (the GUI
 loader's own normalization of the oldest files) and dropping the edge
 'from_to' display string, which the GUI regenerates from node labels on every
-save (some shipped files carry a stale one from before a relabel).
+save (some shipped files carry a stale one from before a relabel), and the
+sweep, which is stored as its spin boxes hold it (decision Q2: center/span
+quantized to the display precision; the oldest start/stop form becomes
+center/span, as the GUI loader converts it).
 """
 import copy
 import glob
@@ -18,6 +21,7 @@ import pytest
 
 from graphulator import model as M
 from graphulator.model.migrate import end_conns
+from graphulator.model.quantize import quantize, quantize_sweep
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FILES = sorted(glob.glob(os.path.join(ROOT, "examples", "**", "*.pgraph"), recursive=True)
@@ -37,6 +41,14 @@ def _canon_legacy(d):
         l["ends"] = {e: end_conns(l, e) for e in ("x0", "xL")}
     for e in d.get("edges", []):
         e.pop("from_to", None)
+    fr = (d.get("scattering") or {}).get("frequency")
+    if fr:
+        if "center" in fr:
+            c, s = fr.pop("center"), fr.pop("span")
+        else:
+            a, b = fr.pop("start"), fr.pop("stop")
+            c, s = (a + b) / 2, b - a
+        fr["center"], fr["span"], fr["points"] = quantize_sweep(c, s, fr["points"])
     return d
 
 
@@ -161,3 +173,59 @@ def test_unknown_keys_survive():
     assert back["future_top_level"] == {"x": 1}
     assert back["line_resonators"][0]["future_line_key"] == [1, 2]
     assert back["ports"][0]["future_port_key"] == "y"
+
+
+# ---------------------------------------------------------------------------
+# decisions Q1-Q3 (design note): root, quantized sweep, tail closure
+# ---------------------------------------------------------------------------
+
+PG = os.path.join(ROOT, "examples", "pgraphs")
+
+
+def test_quantize_is_spin_box_rounding():
+    # ties away from zero on the exact binary value (QDoubleSpinBox), not
+    # Python's ties-to-even
+    assert quantize(-0.125, 2) == -0.13 and quantize(0.125, 2) == 0.13
+    assert quantize(-2.625, 2) == -2.63 and quantize(0.375, 2) == 0.38
+    assert quantize(2.675, 2) == 2.67          # the double is 2.67499...
+    assert quantize(5.9999999999999964, 2) == 6.0
+    assert str(quantize(-0.001, 2)) == "0.0"
+
+
+def test_migration_stores_the_spin_box_sweep():
+    doc = M.load(os.path.join(PG, "5MODE_CHEBY.pgraph"))
+    assert (doc.sweep.center, doc.sweep.span, doc.sweep.points) == (6.0, 0.4, 801)
+
+
+def test_save_quantizes_the_sweep(tmp_path):
+    doc = M.load(os.path.join(PG, "5MODE_CHEBY.pgraph"))
+    doc.sweep.center, doc.sweep.span = -0.125, 0.2999999999999994
+    M.save(doc, tmp_path / "x.pgraph")
+    sw = _raw(tmp_path / "x.pgraph")["sweep"]
+    assert (sw["center"], sw["span"]) == (-0.13, 0.3)
+    assert doc.sweep.center == -0.125             # the in-memory doc is untouched
+
+
+def test_injection_root_migrates_to_solve():
+    doc = M.load(os.path.join(PG, "TEUFELATOR.pgraph"))
+    assert doc.solve.root == "n6"
+    assert "injection_node_id" not in doc.solve.legacy_frames
+    assert M.to_legacy(doc)["scattering"]["injection_node_id"] == 6
+
+
+def test_stale_root_is_a_warning_not_an_error():
+    doc = M.load(os.path.join(PG, "TEUFELATOR.pgraph"))
+    doc.solve.root = "n999"
+    issues = [(i.level, i.path) for i in M.validate(doc)]
+    assert ("warning", "solve/root") in issues
+    assert not any(lvl == "error" for lvl, _ in issues)
+
+
+def test_tail_closure_travels_with_the_file():
+    raw = _raw(os.path.join(PG, "TL_3_PUMPED_TERMINATION_AMPLIFIER.pgraph"))
+    assert M.from_legacy(raw).solve.tail_closure is None     # old file: app default
+    raw["scattering"]["tail_closure"] = False
+    doc = M.from_legacy(raw)
+    assert doc.solve.tail_closure is False
+    assert "tail_closure" not in doc.solve.legacy_frames
+    assert M.to_legacy(doc)["scattering"]["tail_closure"] is False

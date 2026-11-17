@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Union
 
 from .migrate import MigrationError, from_legacy, to_legacy
+from .quantize import quantize_sweep
 from .schema import (
     VERSION,
     Attachment,
@@ -52,7 +53,13 @@ def load(path: Union[str, Path]) -> Document:
 
 
 def save(doc: Document, path: Union[str, Path]) -> None:
+    """Write `doc` as 4.0. User-entered numbers are stored quantized to their
+    widget's precision (decision Q2); `doc` itself is not modified."""
     d = doc.to_dict()
+    if d.get("sweep") is not None:
+        sw = d["sweep"]
+        sw["center"], sw["span"], sw["points"] = quantize_sweep(sw["center"], sw["span"],
+                                                                sw["points"])
     d["version"] = VERSION
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(d, fh, indent=2)

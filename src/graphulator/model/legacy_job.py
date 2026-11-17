@@ -38,7 +38,8 @@ from ..autograph import (
     compute_hub_bridge_links,
     pgraph_port_to_hub,
 )
-from .migrate import to_legacy
+from .migrate import legacy_node_id, to_legacy
+from .quantize import spin as _spin
 from .schema import Document
 
 logger = logging.getLogger(__name__)
@@ -449,11 +450,10 @@ def _find_components(st: _State) -> List[Dict[str, Any]]:
     return result
 
 
-def _injection_node_id(st: _State, components) -> Optional[int]:
-    """What a freshly loaded window's injection combo holds: the first port
-    node (node order) of the shown component. The file's saved
-    injection_node_id is NOT applied -- the loader tries to select it before
-    the combo is populated (design note, step 2, quirk Q1)."""
+def _injection_node_id(st: _State, components, saved=None) -> Optional[int]:
+    """What the injection combo holds once scattering mode is entered: the
+    document's saved root (solve.root) if it is a port node of the shown
+    component, else the first port node (node order) of it (decision Q1)."""
     current = components[0] if len(components) == 1 else None
     if current is not None:
         nodes, port_ids = current['nodes'], current['port_node_ids']
@@ -463,7 +463,10 @@ def _injection_node_id(st: _State, components) -> Optional[int]:
         for port in st.ports:
             if port.get('monitored', True):
                 port_ids.update(a['node_id'] for a in port['attachments'])
-    return next((n['node_id'] for n in nodes if n['node_id'] in port_ids), None)
+    shown = [n['node_id'] for n in nodes if n['node_id'] in port_ids]
+    if saved is not None and saved in shown:
+        return saved
+    return shown[0] if shown else None
 
 
 def _default_root_node_id(st: _State):
@@ -659,7 +662,8 @@ def sweep_grid(doc: Document) -> np.ndarray:
     residue (center 5.9999999999999964); the GUI rounds that to the boxes'
     display decimals and clamps it to their ranges on load, and the plot is
     computed from the rounded value. So does this (quirk Q2 in the design
-    note), so that a file reproduces the plot its author saw.
+    note), so that a file reproduces the plot its author saw. Rounding is
+    QDoubleSpinBox's (ties away from zero, model.quantize), not Python's.
     """
     sw = doc.sweep
     if sw is None:
@@ -670,12 +674,6 @@ def sweep_grid(doc: Document) -> np.ndarray:
     s = _spin(s, _cfg.FREQ_SPAN_MIN, _cfg.FREQ_SPAN_MAX, _cfg.FREQ_SPAN_DECIMALS)
     n = int(_spin(n, _cfg.FREQ_POINTS_MIN, _cfg.FREQ_POINTS_MAX, _cfg.FREQ_POINTS_DECIMALS))
     return np.linspace(c - s / 2, c + s / 2, n)
-
-
-def _spin(value, lo, hi, decimals):
-    """QDoubleSpinBox.setValue: round to the display decimals, then clamp."""
-    v = float(f"{float(value):.{decimals}f}")
-    return min(max(v, lo), hi)
 
 
 def compile_jobs(doc: Document, f_root_s=None, tail_closure=None) -> List[Dict[str, Any]]:
@@ -691,7 +689,7 @@ def compile_jobs(doc: Document, f_root_s=None, tail_closure=None) -> List[Dict[s
         tail_closure = True if doc.solve.tail_closure is None else doc.solve.tail_closure
     st = _load_state(to_legacy(doc))
     components = _find_components(st)
-    injection = _injection_node_id(st, components)
+    injection = _injection_node_id(st, components, legacy_node_id(doc.solve.root))
     todo = components if len(components) > 1 else [None]
     start, stop, n = f_root_s[0], f_root_s[-1], len(f_root_s)
     jobs = []

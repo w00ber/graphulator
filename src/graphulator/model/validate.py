@@ -78,6 +78,8 @@ def validate(doc: Document) -> List[Issue]:
             warn("solve/sectors", "a pumped document solved in one sector has no idler")
     if not s.sector_max >= 2:
         err("solve/sector_max", "must be >= 2")
+    if s.root is not None and s.root not in modes:
+        warn("solve/root", f"injection root {s.root!r} is not a mode; the first port mode is used")
 
     # a sweep point exactly on a line pole (f = n FSR of an open-open line)
     if doc.sweep is not None and doc.sweep.points > 1:

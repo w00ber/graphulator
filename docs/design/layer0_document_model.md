@@ -345,6 +345,59 @@ M_super compiler will read the model objects directly.
    engine until step 4. Under M_super, a line's non-promoted part is exact
    (Σ0), so there is no truncated tail and the flag is ignored.
 
+## Step 3a as built: Q1-Q3 (17 Nov 2026)
+
+- **Q1 (root).** `SolveSettings.root` (a mode id, `n<node>`) now holds the
+  injection root. Migration moves `scattering.injection_node_id` into it, and
+  `to_legacy` writes it back. The GUI clears the injection combo on every
+  load and remembers the saved id. `_enter_scattering_mode` applies it right
+  after it fills the combo (`_apply_pending_injection_node`, signals
+  blocked, so the spanning tree saved in the file is kept). If the id is not
+  a port node of the shown component, the combo keeps its first port node.
+  `compile_jobs` follows the same rule. A root that does not name a mode is a
+  validation *warning*. Effects:
+  - TEUFELATOR is solved at root 6 again.
+  - DTWPA_8MODE and DTWPA_MINIMAL2 fall back as before.
+  - The root no longer depends on which file was open before (tested by
+    opening files in sequence in one window).
+- **Q2 (quantize).** `model/quantize.py` does `quantize(x, d)` with Decimal
+  `ROUND_HALF_UP` on the exact binary value. It matches `QDoubleSpinBox` on
+  40k values, exact ties included (-0.125 -> -0.13; 2.675 -> 2.67, because
+  the double is 2.67499...). `sweep_grid`'s `_spin` uses it. The sweep is
+  quantized at migration (start/stop files become center/span, as in the GUI
+  loader) and in `save()`; the in-memory doc is not modified. The range clamp
+  stays in `sweep_grid` only. It is a widget limit, not a property of the
+  data. The round-trip gate's canonicalization now includes the quantized
+  sweep.
+  - **Scope, deliberately narrow:** only the sweep is quantized. Other
+    user-entered numbers (mode freq, rates, FSR, ...) are held by table
+    cells and dialogs, not by the sweep spin boxes. Quantizing them at
+    migration would change S relative to today's GUI, which loads them
+    unrounded, and would break the bit-identical gate. That needs the GUI to
+    quantize at load in the same step. Left for step 3 proper.
+- **Q2 open point (center < 0), audited.** No physics assumes f > 0. M is
+  linear in f, the comb holds ±n·FSR, and the conjugate flips are
+  sign-agnostic. A sweep can already cross zero today (center 0.1, span 2).
+  What lowering `FREQ_CENTER_MIN` would also need:
+  - `sweep_grid` clamps to the same constant, so it follows automatically.
+  - The manual x-limit spin boxes are `setRange(0, 1000)` (para ~8452/8482)
+    and would clamp negative xlims.
+  - Mode markers loop over `n = 1..N` only, so the -n half gets no markers
+    on a negative sweep (cosmetic).
+  - **Pre-existing bug, reachable now:** exactly f = 0 gives NaN when a port
+    shares an inductively loaded line end. `input_impedance` does
+    `1/(1/ZL + 1/Z_open)` with ZL = 0 and Z_open = A/C -> inf. An odd point
+    count over a zero-crossing sweep lands on it. Tracked separately.
+  - Not changed yet: whether to lower the minimum is your call.
+- **Q3 (tail closure).** The GUI writes `scattering.tail_closure` and
+  restores it on load. A file without the key, and File > New, reset it to
+  the app default (on). It is no longer session state that leaks between
+  files. Migration maps it to `solve.tail_closure`.
+
+Gates: round-trip (all shipped files), compiler == GUI field for field and
+S bit-identical (now with the saved root), plus new tests for TEUFELATOR's
+root, file-sequence independence, and tail-closure save/restore.
+
 ## Questions for JA (original, answered above)
 
 1. Dataclasses vs pydantic; keep `.pgraph` + 4.0 (12.2).

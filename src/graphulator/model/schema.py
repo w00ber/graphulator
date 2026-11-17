@@ -13,8 +13,8 @@ Deviations from the design note (recorded there):
 - Attachment stores the legacy ``rate`` (and phase) instead of ``weight =
   sqrt(rate)``, so a migrated file round-trips bit-exactly; ``weight`` is a
   derived property.
-- Sweep keeps ``center/span/points`` as stored by the GUI (start/stop are
-  derived) for the same reason.
+- Sweep keeps ``center/span/points`` as the GUI's spin boxes hold them,
+  quantized to their display precision (decision Q2; start/stop derived).
 - Line pumps keep their legacy ``{rate, n_ref}`` anchor (like taps, decision
   3a) until the anchor -> depth inverse is gated for loaded/stepped lines.
 """
@@ -205,14 +205,19 @@ class SolveSettings(_Base):
     """sectors: 'auto' (grow symmetrically from {-1..0} until max-sweep |dS|
     relative to (G-1) < sector_tol, capped at sector_max sectors) or an
     explicit [m_lo, m_hi]. kept_poles: block id -> {'f_max': f} | [n, ...].
-    tail_closure None = app default. legacy_frames: the spanning-tree /
-    injection / constraint-group state the legacy engine uses for lumped
+    tail_closure: the legacy comb engine's tail closure (None = app default,
+    on); M_super ignores it (a line's non-promoted part is exact). root: the
+    mode id the sweep is injected at (the legacy injection node, which fixes
+    the lumped sector frame); used when it is a port mode of the shown
+    component, else the first port mode is (decision Q1). legacy_frames: the
+    spanning-tree / constraint-group state the legacy engine uses for lumped
     sectors (HANDOFF sec. 6), kept verbatim."""
     sectors: Union[str, List[int]] = "auto"
     sector_tol: float = 1e-3
     sector_max: int = 16
     kept_poles: Dict[str, Any] = field(default_factory=dict)
     tail_closure: Optional[bool] = None
+    root: Optional[str] = None
     legacy_frames: Optional[Dict[str, Any]] = None
     extras: Dict[str, Any] = field(default_factory=dict)
 

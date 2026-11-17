@@ -9418,6 +9418,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 "tree_edges": tree_edges_list,
                 "chord_edges": chord_edges_list,
                 "injection_node_id": injection_node_id,
+                "tail_closure": bool(getattr(self, 'line_tail_closure', True)),
                 "frequency": {
                     "center": self.properties_panel.freq_center_spin.value(),
                     "span": self.properties_panel.freq_span_spin.value(),
@@ -9773,6 +9774,17 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     self.properties_panel.sympy_code_display.setPlainText(new_code)
                     self.properties_panel._sympy_code_manual = new_code
 
+        # Per-document scattering settings start from the app defaults; a
+        # previous file's injection choice or tail closure must not leak in
+        # (the combo used to keep the last file's selection).
+        self._pending_injection_node_id = None
+        self.line_tail_closure = True
+        if hasattr(self, 'properties_panel') and hasattr(self.properties_panel, 'injection_node_combo'):
+            combo = self.properties_panel.injection_node_combo
+            combo.blockSignals(True)
+            combo.clear()
+            combo.blockSignals(False)
+
         # Load scattering data if present
         if "scattering" in data:
             scattering_data = data["scattering"]
@@ -9801,18 +9813,13 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                         self.properties_panel.freq_span_spin.setValue(span)
                     self.properties_panel.freq_points_spin.setValue(freq_settings.get("points", config.FREQ_POINTS_DEFAULT))
 
-            # Load injection node selection
-            if "injection_node_id" in scattering_data and scattering_data["injection_node_id"] is not None:
-                injection_node_id = scattering_data["injection_node_id"]
-                # Set injection node after updating the combo box (deferred via QTimer)
-                if hasattr(self, 'properties_panel') and hasattr(self.properties_panel, 'injection_node_combo'):
-                    combo = self.properties_panel.injection_node_combo
-                    # Find index with matching node_id
-                    for i in range(combo.count()):
-                        if combo.itemData(i) == injection_node_id:
-                            combo.setCurrentIndex(i)
-                            print(f"Restored injection node: {combo.itemText(i)} (node_id={injection_node_id})")
-                            break
+            # Injection root (decision Q1): the combo is empty here, so the
+            # saved id is applied when _enter_scattering_mode fills it.
+            self._pending_injection_node_id = scattering_data.get("injection_node_id")
+
+            # Legacy-comb tail closure travels with the file (decision Q3)
+            if scattering_data.get("tail_closure") is not None:
+                self.line_tail_closure = bool(scattering_data["tail_closure"])
 
             # Load S-parameter plot settings if present
             if "sparams_plot" in scattering_data:
@@ -9946,6 +9953,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
         # Clear scattering data (exit mode and reset all state)
         self._clear_scattering_data()
+        self.line_tail_closure = True       # per-document setting (decision Q3)
 
         # Reset view
         self.grid_type = config.DEFAULT_GRID_TYPE
@@ -11236,6 +11244,28 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
         combo.blockSignals(False)
 
+    def _apply_pending_injection_node(self):
+        """Select the injection root a loaded file saved (decision Q1), once
+        the combo holds the shown component's port nodes. If the saved id is
+        not among them the combo keeps its first port node (today's rule).
+        Signals stay blocked: the file's spanning tree was built for that
+        root, so nothing is recomputed."""
+        pending = getattr(self, '_pending_injection_node_id', None)
+        self._pending_injection_node_id = None
+        if pending is None or not hasattr(self, 'properties_panel') \
+                or not hasattr(self.properties_panel, 'injection_node_combo'):
+            return
+        combo = self.properties_panel.injection_node_combo
+        index = combo.findData(pending)
+        if index >= 0:
+            combo.blockSignals(True)
+            combo.setCurrentIndex(index)
+            combo.blockSignals(False)
+            print(f"Restored injection node: {combo.itemText(index)} (node_id={pending})")
+        else:
+            print(f"Saved injection node {pending} is not a port node of the shown "
+                  f"component; using {combo.currentText() or 'the default root'}")
+
     def _on_injection_node_changed(self):
         """Handle injection node selection change - recompute spanning tree"""
         if not self.scattering_mode:
@@ -11667,6 +11697,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
         # Update injection node dropdown with current nodes (filtered by component)
         self._update_injection_node_dropdown()
+        self._apply_pending_injection_node()
 
         # Connect injection node dropdown to recompute spanning tree when changed
         if hasattr(self, 'properties_panel') and hasattr(self.properties_panel, 'injection_node_combo'):
@@ -11808,6 +11839,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
         # Clear all scattering state
         self.scattering_mode = False
+        self._pending_injection_node_id = None
         self.scattering_graph = None
         self.scattering_tree_edges = set()
         self.scattering_chord_edges = set()

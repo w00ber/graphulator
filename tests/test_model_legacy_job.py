@@ -111,10 +111,26 @@ def test_two_lines_one_port_is_two_jobs():
 
 def test_sweep_rounds_like_the_spin_boxes():
     doc = M.load(os.path.join(PG, "5MODE_CHEBY.pgraph"))
-    assert (doc.sweep.center, doc.sweep.span) == (5.9999999999999964, 0.39999999999999936)
+    assert (doc.sweep.center, doc.sweep.span) == (6.0, 0.4)      # quantized at migration
     f = sweep_grid(doc)
     assert (f[0], f[-1], len(f)) == (5.8, 6.2, 801)
     assert np.array_equal(f, np.linspace(6.0 - 0.4 / 2, 6.0 + 0.4 / 2, 801))
+    # residue set by a script is still rounded the spin-box way (ties away
+    # from zero), and the center is clamped to the box's range
+    doc.sweep.center, doc.sweep.span = 6.125, 0.125
+    f = sweep_grid(doc)
+    assert np.array_equal(f, np.linspace(6.13 - 0.13 / 2, 6.13 + 0.13 / 2, 801))
+    doc.sweep.center = -1.0
+    assert sweep_grid(doc)[400] == 0.0
+
+
+def test_saved_root_is_used():
+    doc = M.load(os.path.join(PG, "TEUFELATOR.pgraph"))
+    assert [j["root_node_id"] for j in compile_jobs(doc)] == [6]       # decision Q1
+    doc.solve.root = "n999"                                           # not a port node
+    assert [j["root_node_id"] for j in compile_jobs(doc)] == [4]       # first port node
+    doc.solve.root = None
+    assert [j["root_node_id"] for j in compile_jobs(doc)] == [4]
 
 
 def test_solve_tail_closure_reaches_the_job():
@@ -205,3 +221,36 @@ def test_gate_tail_closure_off(fresh_window):
     (a,) = gui
     assert _norm(b) == _norm(a) and a["tail_closure"] is False
     assert _same_result(compute_job(a), compute_job(b))
+
+
+def test_gate_teufelator_root_restored(fresh_window):
+    _, (job,) = _gui_jobs(fresh_window(), os.path.join(PG, "TEUFELATOR.pgraph"))
+    assert job["root_node_id"] == 6
+
+
+def test_gate_root_does_not_depend_on_the_previous_file(fresh_window):
+    """The root used to depend on what was open before (stale combo)."""
+    win = fresh_window()
+    for first in ("DTWPA_8MODE.pgraph", "TEUFELATOR.pgraph", "5MODE_CHEBY.pgraph"):
+        _gui_jobs(win, os.path.join(PG, first))
+        for path in ("TEUFELATOR.pgraph", "DTWPA_8MODE.pgraph", "DTWPA_MINIMAL2.pgraph"):
+            _, gui = _gui_jobs(win, os.path.join(PG, path))
+            ours = compile_jobs(M.load(os.path.join(PG, path)))
+            assert [_norm(j) for j in gui] == [_norm(j) for j in ours], (first, path)
+
+
+def test_gate_tail_closure_saved_and_restored(fresh_window):
+    path = os.path.join(PG, "TL_3_PUMPED_TERMINATION_AMPLIFIER.pgraph")
+    win = fresh_window()
+    _gui_jobs(win, path, tail_closure=False)
+    with contextlib.redirect_stdout(io.StringIO()):
+        saved = win._serialize_graph()
+    assert saved["scattering"]["tail_closure"] is False
+    doc = M.from_dict(json.loads(json.dumps(saved)))
+    assert doc.solve.tail_closure is False
+    with contextlib.redirect_stdout(io.StringIO()):
+        win._deserialize_graph(json.loads(json.dumps(saved)))
+    assert win.line_tail_closure is False
+    # and the next file without the key goes back to the app default
+    _gui_jobs(win, os.path.join(PG, "TL_1_OPEN_LINE_ON_A_PORT.pgraph"))
+    assert win.line_tail_closure is True
