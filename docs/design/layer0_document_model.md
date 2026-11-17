@@ -317,6 +317,34 @@ M_super compiler will read the model objects directly.
   The compiler uses `solve.tail_closure` and falls back to the app default
   (on). Per decision 4 the GUI should save it in step 3.
 
+## Decisions on Q1-Q3 (JA, 17 Nov 2026) -- to do first in step 3
+
+1. **Q1: restore the saved root.** Select `scattering.injection_node_id`
+   after `_enter_scattering_mode` has filled the combo. Fall back to today's
+   rule (first port node) only when the saved id is not a port node of the
+   shown component. The compiler follows the same rule, and the root moves
+   into `solve`. Expected effect: `TEUFELATOR` goes back to the plot its
+   author saved (root 6), not the one a fresh open shows today (root 4).
+2. **Q2: store and use sensible numbers.** User-entered quantities are
+   quantized to their widget's precision as sgn(x) * round(|x|, d), half
+   away from zero. That is what `QDoubleSpinBox` already does (checked:
+   -0.125 -> -0.13), while Python's `f"{x:.2f}"`/`round` round half to even
+   (-0.125 -> -0.12). `_spin` in `legacy_job.py` uses the Python rule and
+   must be switched. No shipped file hits an exact half, so the gate did not
+   catch it.
+   - The current GUI already saves rounded values, because `value()` returns
+     the rounded number. The residue in old files (center
+     5.9999999999999964) comes from older builds and scripts. Quantize at
+     migration and at save, so the model stores sensible values.
+   - Derived numbers (linspace grids, computed rates) are NOT rounded.
+   - Keep the center clamp at 0 only if the center is always a lab-frame
+     frequency. A rotating-frame detuning sweep needs `FREQ_CENTER_MIN < 0`
+     (open: check whether anything downstream assumes center > 0).
+3. **Q3: save `tail_closure`** in the document (`solve.tail_closure`). It
+   is a setting of the legacy discrete-comb engine, which stays the GUI's
+   engine until step 4. Under M_super, a line's non-promoted part is exact
+   (Σ0), so there is no truncated tail and the flag is ignored.
+
 ## Questions for JA (original, answered above)
 
 1. Dataclasses vs pydantic; keep `.pgraph` + 4.0 (12.2).
