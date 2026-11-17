@@ -97,6 +97,7 @@ from .para_core.interaction_state import InteractionMode, PlacementMode
 from .para_core.graph_state import capture_graph_state
 from .autograph import (GraphExtractor, GraphScatteringMatrix,
                         compute_hub_bridge_links)
+from .model.legacy_job import compute_job
 
 logger = logging.getLogger(__name__)
 
@@ -7845,133 +7846,9 @@ class LabelPatternAnalyzer:
         return f"Node{number}"
 
 
-def _compute_sparams_job(job):
-    """Compute S-parameters for one self-contained component job.
-
-    Pure computation over the plain data packaged by
-    Graphulator._build_sparams_job — no GUI access, safe to run on a
-    worker thread.
-
-    Returns:
-        dict with S-parameter results, or None if the component is invalid
-        (e.g. missing parameter assignments).
-    """
-    comp_name = job['comp_name']
-    nodes = job['nodes']
-    edges = job['edges']
-    root_node_id = job['root_node_id']
-    f_root_s = job['f_root_s']
-    hubs = job.get('hubs') or []
-    line_resonators = job.get('line_resonators') or []
-
-    extractor = GraphExtractor()
-
-    if nodes and not line_resonators:
-        # Compute spanning tree for this component. (With line macros in
-        # the job the comb-mode ids exist only after the extractor's
-        # expansion pre-pass — tap edges reference them — so the extractor
-        # computes the tree itself over the expanded graph.)
-        gui_nodes = [{'node_id': node['node_id']} for node in nodes]
-        gui_edges = [
-            {
-                'from_node_id': edge['from_node_id'],
-                'to_node_id': edge['to_node_id'],
-                'is_self_loop': edge['is_self_loop']
-            }
-            for edge in edges
-        ]
-
-        # Zero-offset bridge links across shared hubs (see
-        # autograph.compute_hub_bridge_links): the tree must reach
-        # hub-bridged subgraphs so their pump-frame accumulation survives
-        link_pairs = compute_hub_bridge_links(
-            [n['node_id'] for n in nodes],
-            [(e['from_node_id'], e['to_node_id'])
-             for e in gui_edges if not e['is_self_loop']],
-            [[a[0] for a in h['attachments']] for h in hubs])
-        gui_edges = gui_edges + [
-            {'from_node_id': a, 'to_node_id': b, 'is_self_loop': False}
-            for a, b in link_pairs]
-
-        tree_edges_nested, chord_edges_list, is_connected = extractor.compute_spanning_tree(
-            gui_nodes, gui_edges, root_node_id
-        )
-
-        # Convert to list format for extractor
-        tree_edges_list = []
-        for branch in tree_edges_nested:
-            for from_id, to_id in branch:
-                tree_edges_list.append([from_id, to_id])
-    else:
-        # Line-macro-only job: no GUI nodes; the extractor's expansion
-        # pre-pass supplies the comb nodes and its root rule picks the root
-        tree_edges_list = None
-        chord_edges_list = None
-        root_node_id = None
-
-    extractor.extract_graph_data(
-        nodes=nodes,
-        edges=edges,
-        scattering_assignments=job['scattering_assignments'],
-        frequency_settings={'start': job['freq_start'], 'stop': job['freq_stop'],
-                            'points': job['freq_points']},
-        root_node_id=root_node_id,
-        precomputed_tree_edges=tree_edges_list,
-        precomputed_chord_edges=chord_edges_list,
-        hubs=hubs,
-        line_resonators=line_resonators
-    )
-
-    # Validate all required parameters are assigned before computing
-    missing = extractor.validate_scattering_assignments()
-    missing_items = (missing.get('missing_nodes', [])
-                     + missing.get('missing_edges', [])
-                     + missing.get('missing_hubs', []))
-    if missing_items:
-        detail = "\n".join(f"  - {item}" for item in missing_items)
-        logger.info(f"  {comp_name}: Missing scattering parameters:\n{detail}")
-        return None
-
-    # Check if injection node is conjugated
-    root_node = next((n for n in nodes if n['node_id'] == root_node_id), None)
-    f_calc = f_root_s
-    if root_node and root_node.get('conj', False):
-        f_calc = -f_root_s
-        logger.info(f"  {comp_name}: Injection node is conjugated - using negative frequencies")
-
-    # Compute S-matrix (the comb tail closure is on unless the job says
-    # otherwise -- see autograph.GraphScatteringMatrix._build_tail_closure)
-    scattering_calc = GraphScatteringMatrix(
-        extractor, f_calc, tail_closure=job.get('tail_closure', True))
-
-    logger.info(f"  {comp_name}: {scattering_calc.num_ports} ports computed")
-
-    # Build enriched port_dict with labels for checkbox/plot code, keyed by
-    # the channel refs in port_ids (hub_id for explicit hubs, node_id for
-    # legacy auto-wrapped ports). Port label = hub label (legacy: node label).
-    conj_by_node = {n['node_id']: n.get('conj', False) for n in nodes}
-    enriched_port_dict = {}
-    for hub, ref in zip(scattering_calc.port_hubs, scattering_calc.port_ids):
-        if 'legacy_node_id' in hub:
-            B_ext = hub['legacy_B_ext']
-            conj = conj_by_node.get(hub['legacy_node_id'], False)
-        else:
-            B_ext = sum(mag ** 2 for _, mag, _ in hub['attachments'])
-            # all attachments share one sector (Phase-1 gate)
-            first = hub['attachments'][0][0] if hub['attachments'] else None
-            conj = conj_by_node.get(first, False)
-        enriched_port_dict[ref] = {'B_ext': B_ext, 'label': hub['label'],
-                                   'conj': conj}
-
-    return {
-        'S': scattering_calc.S,
-        'SdB': scattering_calc.SdB,
-        'port_dict': enriched_port_dict,
-        'drive_signals': scattering_calc.drive_signals,
-        'port_ids': list(scattering_calc.port_ids),
-        'component_index': job['component_index'],
-        'component_label': job['component_label'],
-    }
+# The worker is Qt-free and lives with the model's legacy compiler (Layer 0
+# step 2); this name is kept for the worker thread and for tests/scripts.
+_compute_sparams_job = compute_job
 
 
 class SParamsWorker(QThread):

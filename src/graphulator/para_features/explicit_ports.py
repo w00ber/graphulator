@@ -79,6 +79,12 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QVBoxLayout,
 
 from ..autograph import (LineResonator, LINE_LOAD_TYPES,
                         line_fsr_for_target, line_fsr_for_target_general)
+# Pure leaves shared with the Qt-free legacy compiler (Layer 0 step 2), so
+# the GUI and model paths cannot drift in the physics they hand the extractor
+from ..model.legacy_job import (TWIN_MIRRORED_KEYS, clamp_mode,  # noqa: F401
+                                end_conns, line_extractor_id as _line_extractor_id,
+                                line_payload, port_hub_payload, pump_anchor,
+                                pump_frame_rule, pump_partners)
 
 logger = logging.getLogger(__name__)
 
@@ -141,11 +147,6 @@ PUMP_BUS_COLOR = 'black'            # the pump bus (crosses sectors)
 PUMP_BUS_STROKES = 3
 
 
-def _line_extractor_id(line):
-    """Stable extractor line_id for a GUI line resonator."""
-    return f"line:{line['line_id']}"
-
-
 def _rotate_point(x, y, cx, cy, angle_deg):
     """Rotate (x, y) about (cx, cy) by angle_deg CCW."""
     if not angle_deg:
@@ -176,45 +177,6 @@ ALPHA_TOOLTIP = (
 )
 
 
-def port_hub_payload(port):
-    """GUI port -> extractor hub dict (kappa = sign * sqrt(rate)).
-
-    Same conversion as autograph.pgraph_port_to_hub — the GUI dict and the
-    .pgraph 'ports' entry share one schema, so the programmatic
-    extract_from_pgraph route and the live GUI route stay in lockstep.
-    """
-    from ..autograph import pgraph_port_to_hub
-    return pgraph_port_to_hub(port)
-
-
-def line_payload(line):
-    """GUI line dict -> extractor LineResonator kwargs dict."""
-    return {
-        'line_id': _line_extractor_id(line),
-        'label': line['label'],
-        'FSR': float(line['FSR']),
-        'Ztx': float(line['Ztx']),
-        'f_max': float(line['f_max']),
-        # port_end is deprecated: termination comes from line['ends'], which
-        # the GUI merges into the connected port's hub column. Emitting None
-        # keeps LineResonator from generating an implicit hub of its own.
-        'port_end': None,
-        'Z0_port': float(line.get('Z0_port', 50.0)),
-        'alpha_uniform': float(line.get('alpha_uniform', 0.0)),
-        'conj': bool(line.get('conj', False)),
-        # a shunt reactance at one end; None keeps the open-open comb
-        'load': (dict(line['load']) if line.get('load') else None),
-        # impedance steps along the line; None is the uniform line at Ztx
-        'sections': ([dict(sec) for sec in line['sections']]
-                     if line.get('sections') else None),
-    }
-
-
-# Physics fields a pumped line's conjugate twin mirrors from its primary.
-# The twin is the SAME physical line seen in the idler sector, so it owns
-# only its layout (pos, angle, style) and its own end connections.
-TWIN_MIRRORED_KEYS = ('FSR', 'Ztx', 'f_max', 'Z0_port', 'alpha_uniform')
-# (load and sections are mirrored explicitly by _sync_twin as deep copies)
 PUMP_COUPLINGS = ('inductive', 'capacitive')
 
 # The pump couples EVERY mode n of the line to EVERY mode m of its twin
@@ -360,40 +322,6 @@ def pump_modulation_fraction(rate, f_n, f_m):
     if denom <= 0:
         return float('nan')                 # a DC mode has no such ratio
     return 2.0 * float(rate) / denom
-
-
-def pump_partners(resonator, n_ref, f_p):
-    """Every resonant partner of mode n under ONE pump, by family.
-
-    In the two-cluster picture with the twin in the frame f - f_p, its +m
-    member sits at f_p - f_m and its -m member at f_p + f_m; in the frame
-    f + f_p the -m member sits at f_m - f_p. So a single pump frequency
-    satisfies THREE conditions, not one:
-
-        f_n + f_m = f_p     amplification   (two-mode squeezing)
-        f_m - f_n = f_p     up-conversion   (always has a target)
-        f_n - f_m = f_p     down-conversion (only when f_n > f_p)
-
-    Reporting only the first -- which the panel used to do -- hides the
-    conversion processes that the same pump drives regardless, and those
-    are exactly what is missed when someone means to amplify (sec. 7.6).
-
-    Returns [{'family', 'm', 'f_m', 'target', 'detune', 'in_comb'}], the
-    entries whose target frequency is positive, ordered as above.
-    """
-    f_n = resonator.mode_freq(n_ref)
-    out = []
-    for family, target in (('amplification', f_p - f_n),
-                           ('up-conversion', f_n + f_p),
-                           ('down-conversion', f_n - f_p)):
-        if target <= 0:
-            continue                    # no such pairing for this n and f_p
-        m = resonator.nearest_harmonic(target)
-        f_m = resonator.mode_freq(m)
-        out.append({'family': family, 'm': int(m), 'f_m': float(f_m),
-                    'target': float(target), 'detune': float(f_m - target),
-                    'in_comb': abs(f_m - target) <= 1e-9})
-    return out
 
 
 def pump_pair_family(n, m, f_n, f_m, f_p):
@@ -3378,10 +3306,7 @@ class ExplicitPortsMixin:
     @staticmethod
     def _end_conns(line, end):
         """Connection list at one end (normalizes legacy None/dict forms)."""
-        raw = (line.get('ends') or {}).get(end)
-        if not raw:
-            return []
-        return [raw] if isinstance(raw, dict) else list(raw)
+        return end_conns(line, end)
 
     def _line_end_ports(self, line, end):
         """Port glyphs terminating `end`, in connection order."""
@@ -3508,14 +3433,7 @@ class ExplicitPortsMixin:
         into the taps and pumps that named a mode. Clamping keeps drawing
         and extraction working; the warning says why the number moved.
         """
-        n = int(n)
-        if 1 <= n <= resonator.N:
-            return n
-        logger.warning(
-            "%s on line %r references mode %d, outside the %d-mode comb; "
-            "clamping. Raise f_max or re-enter the reference mode.",
-            what, label, n, resonator.N)
-        return int(min(max(n, 1), resonator.N))
+        return clamp_mode(resonator, n, label, what)
 
     def pump_load_modulation(self, line):
         """(beta, symbol) for the load element itself, or (None, None)."""
@@ -3618,17 +3536,7 @@ class ExplicitPortsMixin:
         dispersed comb the n-th mode is not at n*FSR, so pairing off
         n_ref*FSR would name the wrong partner (docs sec. 7.4).
         """
-        pump = line['pump']
-        resonator = self.line_resonator_for(line)
-        n_ref = self._clamp_mode(resonator, pump.get('n_ref', 1),
-                                 line['label'], 'pump')
-        f_p = float(pump['f_p'])
-        partners = pump_partners(resonator, n_ref, f_p)
-        if not partners:                        # cannot happen: f_n + f_p > 0
-            return n_ref, resonator.nearest_harmonic(f_p - resonator.mode_freq(n_ref)), 'amplification'
-        rank = {'amplification': 0, 'down-conversion': 1, 'up-conversion': 2}
-        best = min(partners, key=lambda p: (abs(p['detune']), rank[p['family']]))
-        return n_ref, int(best['m']), best['family']
+        return pump_anchor(line)
 
     def _pump_reference_pair(self, line):
         """(n_ref, m_ref) of the anchored pair -- see _pump_anchor."""
@@ -3639,7 +3547,7 @@ class ExplicitPortsMixin:
     def pump_frame_rule(family):
         """Twin drive frame for the anchored family: 'sector' (omega - f_p)
         or 'sector+' (omega + f_p). See autograph's frame accumulation."""
-        return 'sector+' if family == 'up-conversion' else 'sector'
+        return pump_frame_rule(family)
 
     def set_line_pump(self, line, end, f_p, rate, phase=0.0, n_ref=None,
                       coupling='inductive', twin_pos=None):

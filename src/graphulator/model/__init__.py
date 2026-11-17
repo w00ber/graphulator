@@ -4,6 +4,10 @@
     save(doc, path)           # always writes 4.0
     issues = validate(doc)
     legacy = to_legacy(doc)   # the 2.0/3.0 dict today's GUI reads
+
+    from graphulator.model.legacy_job import compile_jobs, compute_job
+    results = [compute_job(j) for j in compile_jobs(doc)]   # = the GUI's Show S
+(legacy_job is not imported here: it pulls in the numerics, the schema does not.)
 """
 from __future__ import annotations
 

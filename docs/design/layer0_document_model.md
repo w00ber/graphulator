@@ -1,6 +1,7 @@
 # Layer 0: a Qt-free document model (design note, for review)
 
-*Status: proposal, 16 Nov 2026. No code yet. Sections tagged **[decide]**
+*Status: proposal, 16 Nov 2026; steps 1-2 built 17 Nov (see "as built"
+sections near the end; step 2 has open quirks Q1-Q3). Sections tagged **[decide]**
 need JA's call (they map to HANDOFF §12). Everything else is a default I'll
 build unless told otherwise.*
 
@@ -244,6 +245,77 @@ Deviations from the text above, all for exact round-trip:
 - Ids are deterministic from legacy ids (`n<node>`, `e<from>_<to>`,
   `port<id>`, `line<id>`, `bext<node>`, ...); legacy list order is kept in
   `drawing.order`.
+
+## Step 2 as built (17 Nov 2026)
+
+`src/graphulator/model/legacy_job.py`: `compile_jobs(doc, f_root_s=None,
+tail_closure=None)` returns the job list that Show S builds for the same file
+(`_compute_and_plot_sparams` -> `_build_sparams_job`), and `compute_job(job)`
+turns one job into S. `compute_job` is the old
+`graphulator_para._compute_sparams_job` moved out of the Qt module. The old
+name is kept as an alias, so the worker thread and the scripts are unchanged.
+The module imports no Qt (a test checks this).
+
+**Gate** (`tests/test_model_legacy_job.py`, 143 tests). Each of the 70 shipped
+files is opened in a fresh window the way File > Open does it, and the GUI's
+jobs are built. They are compared with `compile_jobs(load(path))`:
+- every job matches field by field;
+- S matches bit for bit (`np.array_equal`), and so do `port_ids` and
+  `port_dict`;
+- the document's sweep grid is the GUI's grid.
+
+TL_3 is also checked with the tail closure switched off. All of it passes on
+the first run of the compiler.
+
+**How it works.** The compiler takes `to_legacy(doc)` (exact, from step 1) and
+redoes, without Qt, everything the GUI does between opening a file and
+building a job:
+- the loader's normalization: dropped dangling attachments and ends, float
+  coercion, sections canonicalized, implied `port_end` ports materialized;
+- twin sync;
+- `_find_connected_components`;
+- the injection-root rule;
+- hub, tap-edge and pump-bus synthesis.
+
+The pure leaves the two paths share now live in `legacy_job.py`, and
+`explicit_ports.py` imports them from there. They are `line_payload`,
+`port_hub_payload`, `pump_partners`, the pump anchor and frame rule,
+`clamp_mode`, `end_conns` and `TWIN_MIRRORED_KEYS`. With one copy of each, the
+two paths cannot disagree about the physics. What the gate tests is the
+translation around those leaves, which is the part that was duplicated.
+
+Going through `to_legacy` is deliberate. This compiler is the regression
+oracle for step 4, so its job is to equal today's GUI, not to be elegant. The
+M_super compiler will read the model objects directly.
+
+**GUI quirks the compiler reproduces on purpose (for JA: fix or keep?)**
+- **Q1: the saved injection root is ignored on load.** `_deserialize_graph`
+  tries to select `scattering.injection_node_id` in the injection combo
+  before `_enter_scattering_mode` has filled the combo. On a fresh window the
+  selection silently fails, and the root becomes the first port node in node
+  order. Three shipped files are affected:
+  - `TEUFELATOR` saved root 6 but gets root 4. Node 4 is conjugated and node 6
+    is not, so the sweep axis flips sector, and |S| differs by up to ≈10
+    between the two roots.
+  - `DTWPA_8MODE` and `DTWPA_MINIMAL2` saved ids that no longer exist.
+
+  In a window that already had a file open, the stale combo can make the
+  selection succeed, so today the root depends on what was open before. My
+  suggestion: restore the root after the combo is filled, and fall back to
+  the current rule when the saved id is not a port node. That changes the
+  TEUFELATOR plot, which is why it is your call. Once decided, the root
+  belongs in `solve` rather than `legacy_frames`.
+- **Q2: the sweep is rounded by the spin boxes.** Files store spin-box
+  stepping residue, e.g. center 5.9999999999999964 or span 0.2999999999999994.
+  The GUI rounds that to 2 decimals and clamps it to the boxes' ranges, and
+  the plot is computed from the rounded values. `sweep_grid` does the same,
+  reading the live `graphulator_para_config` limits. Six shipped files would
+  give a slightly different grid without it. A center below 0 is clamped to
+  0, so a sweep across zero cannot be saved from the GUI. Tests build such
+  sweeps directly.
+- **Q3: tail closure is not saved.** `line_tail_closure` is session state.
+  The compiler uses `solve.tail_closure` and falls back to the app default
+  (on). Per decision 4 the GUI should save it in step 3.
 
 ## Questions for JA (original, answered above)
 
