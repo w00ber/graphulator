@@ -178,9 +178,9 @@ def test_glyph_only_graph_saves_its_sweep_window(para, tmp_path):
     panel.freq_points_spin.setValue(333)
     path = tmp_path / "amp.pgraph"
     assert win._save_graph_to_file(str(path))
-    data = json.loads(path.read_text())
-    assert data['scattering']['frequency'] == {'center': 4.25, 'span': 2.5,
-                                               'points': 333}
+    from graphulator import model
+    sweep = model.load(path).sweep          # the GUI writes 4.0 (Layer 0 step 3)
+    assert (sweep.center, sweep.span, sweep.points) == (4.25, 2.5, 333)
 
 
 def test_ports_panel_appears_on_entering_scattering_mode(para, monkeypatch):

@@ -446,6 +446,17 @@ AMP_BA saves xlim ±7.776, and a reload shows ±5.4), and it is stable after
 that. Opening a file twice therefore does not give the same view. The tests
 compare against the same model-free reload instead of the file's view.
 
+**Other readers of `.pgraph`:**
+- `autograph.load_pgraph`, which scripts and `extract_from_pgraph` use, now
+  converts 4.0 files through the model. A GUI-saved file still feeds the
+  script path, gated by `test_gui_hubs`' golden-S test, which now goes
+  through a 4.0 save.
+- `misc/make_test_scenes.py` and `misc/make_line_examples.py` keep writing
+  the legacy layout on purpose. The shipped examples are the 2.0/3.0
+  fixtures the migration and compiler gates run on.
+- Two GUI tests that read raw `scattering` keys from a saved file now read
+  it through `model.load`.
+
 **Note:** a GUI-saved 4.0 file records `meta.migrated_from` = the GUI's
 internal layout (2.0/3.0). That is accurate for now, since the GUI state
 still is that layout. It goes away when the GUI holds the model natively.

@@ -152,8 +152,9 @@ def test_toggle_persists_through_save_and_load(para, tmp_path):
     _plot(win, 0.5, 10.0)
     path = tmp_path / "marks.pgraph"
     assert win._save_graph_to_file(str(path))
-    data = json.loads(path.read_text())
-    assert data['scattering']['sparams_plot']['mark_modes'] is True
+    from graphulator import model
+    plot = model.load(path).drawing.sparams_plot   # the GUI writes 4.0
+    assert plot['mark_modes'] is True
 
 
 def _index_labels(win):

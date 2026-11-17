@@ -13,6 +13,8 @@ import pickle
 import numpy as np
 import pytest
 
+from graphulator import model as M
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if hasattr(os, "geteuid") and os.geteuid() == 0:
     # QtWebEngine refuses to sandbox as root (CI containers)
@@ -223,8 +225,10 @@ def test_legacy_pgraph_saved_then_loaded_is_golden_equal(para, tmp_path):
     out = tmp_path / "resaved.pgraph"
     assert win._save_graph_to_file(str(out))
     saved = json.load(open(out))
-    assert saved['version'] == '2.0'
-    assert 'ports' not in saved
+    assert saved['version'] == '4.0'            # the GUI writes 4.0 (Layer 0 step 3)
+    # still a legacy (no explicit ports) graph in the old layout
+    legacy = M.to_legacy(M.from_dict(saved))
+    assert legacy['version'] == '2.0' and 'ports' not in legacy
 
     from graphulator import autograph
     with open(GOLDEN_PKL, 'rb') as fh:
