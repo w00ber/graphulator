@@ -212,10 +212,38 @@ longer duplicates it.
    it through the comb path until the inverse tap profile is derived and
    gated (tracked follow-up).
 4. **Solve settings** travel with the document.
-5. **12.3 default sector window:** pending. Proposal: `sectors: "auto"`
+5. **12.3 default sector window:** accepted: `sectors: "auto"`
    (grow symmetrically from {-1..0}, stop when max_sweep |dS| relative to
    (G-1) < `sector_tol` = 1e-3, hard cap `sector_max` = 16 with a
    not-converged warning); an explicit `[m_lo, m_hi]` overrides.
+
+## Step 1 as built (17 Nov 2026)
+
+`src/graphulator/model/` (schema, migrate, validate; `units.py` deferred until
+something needs it) and `tests/test_model_roundtrip.py`. Gate: all 70 shipped
+`.pgraph` files migrate with no validation errors, save/reload as 4.0 to an
+equal Document, and `to_legacy()` reproduces the original 2.0/3.0 dict
+exactly (only canonicalizations: line-end connections in list form, and the
+derived edge `from_to` string, which is stale in a few files). `to_legacy()`
+is also the bridge for steps 2-3: the GUI and engine can consume a 4.0
+document through today's loader before they read the model natively.
+
+Deviations from the text above, all for exact round-trip:
+- `Attachment` stores the legacy `rate` (+ `phase_deg`); `weight = sqrt(rate)`
+  is derived.
+- `Sweep` stores `center/span/points` as the GUI does (start/stop derived);
+  the oldest files' start/stop form is kept verbatim.
+- Line pumps keep a `legacy_anchor {rate, n_ref, coupling, end}` like taps
+  (3a); `depth = delta(1/L)` is computed by the engine, not stored, until the
+  anchor inverse is gated for loaded/stepped lines.
+- A line end is the port plane it terminates on, else an internal plane
+  `line<id>.<end>`; more than one port on one end is rejected.
+- Unmonitored ports (loss hubs) -> internal plane + `R` block with
+  `params = {"R": "matched"}`. No shipped file has one yet.
+- Self-loops without physics (the legacy `B_ext` marker) are drawing-only.
+- Ids are deterministic from legacy ids (`n<node>`, `e<from>_<to>`,
+  `port<id>`, `line<id>`, `bext<node>`, ...); legacy list order is kept in
+  `drawing.order`.
 
 ## Questions for JA (original, answered above)
 
