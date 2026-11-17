@@ -16,8 +16,21 @@ from pathlib import Path
 from typing import Any, Dict, Union
 
 from .migrate import MigrationError, from_legacy, to_legacy
-from .schema import (Attachment, Block, Coupling, Document, Drawing, Mode, Plane,
-                     Pumped, SectorView, SolveSettings, Sweep, Tone, VERSION)
+from .schema import (
+    VERSION,
+    Attachment,
+    Block,
+    Coupling,
+    Document,
+    Drawing,
+    Mode,
+    Plane,
+    Pumped,
+    SectorView,
+    SolveSettings,
+    Sweep,
+    Tone,
+)
 from .validate import Issue, validate
 
 __all__ = ["Attachment", "Block", "Coupling", "Document", "Drawing", "Issue",

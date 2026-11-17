@@ -25,15 +25,19 @@ in the physics; what the gate tests is the translation around them.
 """
 from __future__ import annotations
 
-import copy
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from ..autograph import (GraphExtractor, GraphScatteringMatrix, LineResonator,
-                         compute_hub_bridge_links, pgraph_port_to_hub)
-from .. import graphulator_para_config as _cfg   # Qt-free; read live, as the GUI does
+from .. import graphulator_para_config as _cfg  # Qt-free; read live, as the GUI does
+from ..autograph import (
+    GraphExtractor,
+    GraphScatteringMatrix,
+    LineResonator,
+    compute_hub_bridge_links,
+    pgraph_port_to_hub,
+)
 from .migrate import to_legacy
 from .schema import Document
 
