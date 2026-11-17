@@ -36,7 +36,8 @@ from .validate import Issue, validate
 
 __all__ = ["Attachment", "Block", "Coupling", "Document", "Drawing", "Issue",
            "MigrationError", "Mode", "Plane", "Pumped", "SectorView", "SolveSettings",
-           "Sweep", "Tone", "from_dict", "from_legacy", "load", "save", "to_legacy",
+           "Sweep", "Tone", "VERSION", "from_dict", "from_legacy", "load", "save",
+           "to_file_dict", "to_legacy",
            "validate"]
 
 
@@ -52,14 +53,20 @@ def load(path: Union[str, Path]) -> Document:
         return from_dict(json.load(fh))
 
 
-def save(doc: Document, path: Union[str, Path]) -> None:
-    """Write `doc` as 4.0. User-entered numbers are stored quantized to their
-    widget's precision (decision Q2); `doc` itself is not modified."""
+def to_file_dict(doc: Document) -> Dict[str, Any]:
+    """`doc` as the JSON dict a 4.0 file holds. User-entered numbers are
+    stored quantized to their widget's precision (decision Q2); `doc` itself
+    is not modified."""
     d = doc.to_dict()
+    d["version"] = VERSION
     if d.get("sweep") is not None:
         sw = d["sweep"]
         sw["center"], sw["span"], sw["points"] = quantize_sweep(sw["center"], sw["span"],
                                                                 sw["points"])
-    d["version"] = VERSION
+    return d
+
+
+def save(doc: Document, path: Union[str, Path]) -> None:
+    """Write `doc` as a 4.0 file (see to_file_dict)."""
     with open(path, "w", encoding="utf-8") as fh:
-        json.dump(d, fh, indent=2)
+        json.dump(to_file_dict(doc), fh, indent=2)

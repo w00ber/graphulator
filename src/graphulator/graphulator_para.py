@@ -62,6 +62,7 @@ from sympy.functions.elementary.complexes import conjugate as Conjugate
 from . import graph_primitives as gp
 from . import graphulator_para_config as config
 from . import code_export
+from . import model
 from .common_window import (REFERENCE_POINTS_PER_DATA_UNIT,
                             GraphWindowCommonMixin,
                             auto_increment_label,
@@ -8870,6 +8871,14 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         save_as_action.triggered.connect(self._save_graph_as)
         file_menu.addAction(save_as_action)
 
+        # A copy in the pre-model format, for builds that cannot read 4.0
+        save_legacy_action = QAction("Save Legacy 3.0 Copy...", self)
+        save_legacy_action.setToolTip(
+            "Write a copy in the pgraph 2.0/3.0 format older builds read. "
+            "The open file and its name are unchanged.")
+        save_legacy_action.triggered.connect(self._save_legacy_copy)
+        file_menu.addAction(save_legacy_action)
+
         file_menu.addSeparator()
 
         # Export submenu
@@ -9206,6 +9215,72 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 action.triggered.connect(lambda checked, f=example_file: self._load_example(f))
                 self.examples_menu.addAction(action)
 
+    # -- files go through the Layer-0 document model (design note, step 3) --
+    # Document fields the GUI's legacy state has no slot for. They are kept
+    # from the file that was opened and put back on save, so Open -> Save
+    # does not reset them (4.0 files written by scripts may set them).
+    _MODEL_ONLY_SOLVE = ("sectors", "sector_tol", "sector_max")
+
+    def _file_dict_from_state(self, data):
+        """GUI state dict (pgraph 2.0/3.0 layout) -> a pgraph 4.0 file dict.
+
+        If the model cannot represent the state, the legacy dict is written
+        instead (with a warning), so a save never loses the user's work."""
+        if data.get("format") != "pgraph":
+            return data
+        try:
+            doc = model.from_legacy(data)
+            carry = getattr(self, '_model_carry', None)
+            if carry:
+                doc.units = dict(carry["units"])
+                for k in self._MODEL_ONLY_SOLVE:
+                    setattr(doc.solve, k, copy.deepcopy(carry["solve"][k]))
+            return model.to_file_dict(doc)
+        except Exception:
+            logger.exception("4.0 conversion failed; writing the legacy format")
+            return data
+
+    def _state_dict_from_file(self, data):
+        """Any pgraph file dict (2.0 / 3.0 / 4.0) -> the 2.0/3.0 layout the
+        GUI loader reads, via the model (one migration path for every
+        version). Other files (.graph, pgraph versions the model does not
+        read) go to the GUI loader unchanged."""
+        self._model_carry = None
+        if data.get("format") != "pgraph":
+            return data
+        try:
+            doc = model.from_dict(data)
+        except model.MigrationError:
+            logger.warning("Not a model-readable pgraph; loading it directly", exc_info=True)
+            return data
+        self._model_carry = {
+            "units": dict(doc.units),
+            "solve": {k: copy.deepcopy(getattr(doc.solve, k)) for k in self._MODEL_ONLY_SOLVE},
+        }
+        return model.to_legacy(doc)
+
+    def _save_legacy_copy(self):
+        """Write the current graph in the pre-model 2.0/3.0 layout to a new
+        file. current_filepath and the modified flag are left alone."""
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "Save Legacy 3.0 Copy", self._get_default_directory(),
+            self.FILE_DIALOG_FILTER)
+        if not filepath:
+            return False
+        if not filepath.endswith(self.FILE_EXTENSION):
+            filepath += self.FILE_EXTENSION
+        try:
+            # through the model and back, so the copy is what a 4.0 save
+            # holds (quantized sweep, canonical ends), in the old layout
+            data = model.to_legacy(model.from_legacy(self._serialize_graph()))
+            with open(filepath, 'w') as f:
+                json.dump(data, f, indent=2)
+            logger.info(f"Saved legacy {data.get('version')} copy to {filepath}")
+            return True
+        except Exception as e:
+            QMessageBox.critical(self, "Error Saving File", f"Could not save file:\n{e}")
+            return False
+
     def _load_example(self, example_path):
         """Load an example graph file"""
         try:
@@ -9220,7 +9295,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
             # Parse and load the example
             data = json.loads(content)
-            self._deserialize_graph(data)
+            self._deserialize_graph(self._state_dict_from_file(data))
 
             # Mark as not saved (it's from examples, not a file)
             self.current_filepath = None
@@ -9954,6 +10029,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         # Clear scattering data (exit mode and reset all state)
         self._clear_scattering_data()
         self.line_tail_closure = True       # per-document setting (decision Q3)
+        self._model_carry = None
 
         # Reset view
         self.grid_type = config.DEFAULT_GRID_TYPE
@@ -10391,7 +10467,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         if self._check_unsaved_changes():
             # Save last graph automatically (for session restore)
             try:
-                data = self._serialize_graph()
+                data = self._file_dict_from_state(self._serialize_graph())
                 with open(self.last_graph_path, 'w') as f:
                     json.dump(data, f, indent=2)
             except Exception:

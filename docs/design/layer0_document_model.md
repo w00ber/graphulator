@@ -402,6 +402,54 @@ Gates: round-trip (all shipped files), compiler == GUI field for field and
 S bit-identical (now with the saved root), plus new tests for TEUFELATOR's
 root, file-sequence independence, and tail-closure save/restore.
 
+## Step 3, slice 1 as built: file I/O through the model (17 Nov 2026)
+
+JA chose option (a): the GUI writes 4.0, and a legacy copy is available for
+older builds.
+
+- `CommonWindow` has two identity hooks, `_file_dict_from_state` and
+  `_state_dict_from_file`. They are used by Save / Save As, Open, recent
+  files, Reload Last Graph and the close-time autosave. The Graphulator
+  (non-para) app is unchanged.
+- Paragraphulator overrides both hooks:
+  - **Open** (and Examples): `model.from_dict` -> `to_legacy` -> the
+    existing `_deserialize_graph`. Every 2.0/3.0/4.0 file takes the one
+    migration path. `.graph` files, and pgraph versions the model rejects,
+    go to the GUI loader unchanged.
+  - **Save**: `_serialize_graph()` -> `from_legacy` -> `model.to_file_dict`,
+    which writes 4.0. If the conversion raises, the legacy dict is written
+    and logged, so a save never loses work.
+  - **File > Save Legacy 3.0 Copy...** writes the old layout (via the model,
+    so it is quantized like a 4.0 save). It is a copy: the open file's path
+    and the modified flag are not touched.
+- **4.0-only settings carried across the GUI.** `solve.sectors`,
+  `sector_tol`, `sector_max` and `units` have no slot in the GUI's legacy
+  state. They are stashed at Open and restored at Save, so Open -> Save
+  does not reset them. File > New and every Open reset the stash.
+- `model.to_file_dict(doc)` is the 4.0 dict that `save()` writes.
+
+Gate (`tests/test_gui_model_io.py`, every shipped file):
+- opening through the model leaves the GUI in the same state as the raw
+  open: same `_serialize_graph()` and the same Show S jobs;
+- a GUI save is valid 4.0 (no validation errors), and reopening it gives
+  the same state as the equivalent reopen without the model;
+- 4.0-only settings survive Open -> Save and do not leak into the next file;
+- the legacy copy is 2.0/3.0 and reads back.
+
+The comparisons exclude the `svg`/`kron_svg` renderings and the
+serializer's timestamps.
+
+**Pre-existing GUI quirk found (not fixed, model-independent).** The view
+limits a file saves are not the view a reload shows. The first load into a
+fresh window and the first reload of a GUI save both refit the view (e.g.
+AMP_BA saves xlim ±7.776, and a reload shows ±5.4), and it is stable after
+that. Opening a file twice therefore does not give the same view. The tests
+compare against the same model-free reload instead of the file's view.
+
+**Note:** a GUI-saved 4.0 file records `meta.migrated_from` = the GUI's
+internal layout (2.0/3.0). That is accurate for now, since the GUI state
+still is that layout. It goes away when the GUI holds the model natively.
+
 ## Questions for JA (original, answered above)
 
 1. Dataclasses vs pydantic; keep `.pgraph` + 4.0 (12.2).
