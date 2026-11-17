@@ -384,11 +384,15 @@ M_super compiler will read the model objects directly.
     and would clamp negative xlims.
   - Mode markers loop over `n = 1..N` only, so the -n half gets no markers
     on a negative sweep (cosmetic).
-  - **Pre-existing bug, reachable now:** exactly f = 0 gives NaN when a port
-    shares an inductively loaded line end. `input_impedance` does
-    `1/(1/ZL + 1/Z_open)` with ZL = 0 and Z_open = A/C -> inf. An odd point
-    count over a zero-crossing sweep lands on it. Tracked separately.
-  - Not changed yet: whether to lower the minimum is your call.
+  - At exactly f = 0, a port sharing an inductively loaded line end gives
+    NaN (`input_impedance`: ZL = 0, Z_open -> inf). **JA: not a bug.** The
+    impedance there is undefined, and NaN is the right placeholder in the
+    arrays. Leave it.
+  - **JA: keep `FREQ_CENTER_MIN = 0`.** Nothing sweeps below zero today, so
+    there is no reason to open it now.
+- **JA on Q2 scope:** quantizing only the sweep is accepted. Other
+  user-entered numbers are rounded when the GUI reads through the model
+  (step 3 proper), together with GUI-side rounding at load.
 - **Q3 (tail closure).** The GUI writes `scattering.tail_closure` and
   restores it on load. A file without the key, and File > New, reset it to
   the app default (on). It is no longer session state that leaks between
