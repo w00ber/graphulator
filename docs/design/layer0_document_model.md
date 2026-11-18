@@ -733,6 +733,24 @@ The bit-identical Show S gate stays in place throughout.
 - **L4, constraint groups (C1).** Promote them to the model, keyed by
   object id (my default), or keep them verbatim in `legacy_frames`?
 
+## Decisions on L1-L4 (JA, 18 Nov 2026)
+
+- **L1, order:** step 4 (the M_super compiler) next. The live-state slices
+  C1-C4 come after, each started when an M_super GUI feature needs that
+  object kind in the model.
+- **L2, edit API:** plain Qt-free functions on a Document that return a
+  change record. No observable Document.
+- **L3, twin UI:** this turned out to be the general RWA and workflow
+  question. It is recorded in `docs/design/workflows.md` (abstract vs
+  physical workflow, the RWA checker, sector glyphs). C2 waits on that
+  note's open items W1-W3.
+- **L4, constraint groups:** promote them to the model in C1, with members
+  stored by stable object id. The UI and export keep showing labels.
+- **Step 4 semantics (abstract workflow):** M_super solves the lumped graph
+  exactly as drawn (the user's RWA), with no automatic sector expansion.
+  Milestone 1 gate: bit-for-bit against the legacy engine on every lumped
+  shipped file.
+
 ## Questions for JA (original, answered above)
 
 1. Dataclasses vs pydantic; keep `.pgraph` + 4.0 (12.2).
