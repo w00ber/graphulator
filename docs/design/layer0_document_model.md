@@ -1,6 +1,6 @@
 # Layer 0: a Qt-free document model (design note, for review)
 
-*Status: proposal, 16 Nov 2026; steps 1-2 built 17 Nov, step 3 slices 1-2
+*Status: proposal, 16 Nov 2026; steps 1-2 built 17 Nov, step 3 slices 1-3
 built 17-18 Nov (see "as built" sections near the end). Sections tagged **[decide]**
 need JA's call (they map to HANDOFF §12). Everything else is a default I'll
 build unless told otherwise.*
@@ -498,11 +498,7 @@ Gate (`tests/test_gui_show_s_model.py`):
   live builder with a logged error.
 
 **Next in step 3 (proposed order):**
-1. Slice 3: the scattering-code export
-   (`_generate_scattering_calculation_code`, ~600 lines, the third
-   translator named in the Goal) reads the Document instead of the widgets.
-   Gate: the generated script, run, gives S bit-identical to Show S on every
-   shipped file.
+1. Slice 3: the scattering-code export (done, below).
 2. Slice 4: the rest of decision Q2. Quantize user-entered numbers (mode
    freq, rates, FSR, ...) at migration and at GUI load together, re-baseline
    the bit-identical gates once on the quantized values.
@@ -510,6 +506,53 @@ Gate (`tests/test_gui_show_s_model.py`):
    with the widgets as views. That removes the snapshot, the legacy
    `_build_sparams_job`, and `meta.migrated_from` on GUI saves. This is the
    large one and wants its own design pass before code.
+
+## Step 3, slice 3 as built: the scattering-code export from the model (18 Nov 2026)
+
+`model/export_script.py` (no Qt): `scattering_script(doc, f_root_s=None,
+tail_closure=None, traces=None, source=None)` renders the Export to .py /
+Paste Buffer script from `compile_jobs(doc)`, the jobs Show S solves. The
+GUI's `_generate_scattering_calculation_code` is now a thin wrapper: it
+passes `_model_document()`, the spin-box grid, the tail-closure switch, the
+checked S-parameter boxes and the file path. The ~600-line widget reader is
+gone.
+
+The script carries the job data literally (nodes, edges with the
+synthesized tap / pump-bus edges, assignments, hubs, line macros, root) and
+a `solve()` function that is `compute_job` written out against the public
+autograph API. One component gives `scattering_matrix` / `gsm`, several give
+`gsm_components[i]`, as before.
+
+**What changed in exported scripts (the old exporter disagreed with Show S):**
+- **Conjugated root.** Show S sweeps `-f` when the injection node is
+  conjugated; the old script did not, so its S was the other sector's (the
+  Lee-2013 export test compared sorted |S|^2 because of this). Now the
+  script flips like Show S.
+- **Spanning tree.** The old script reused the GUI's cached tree; Show S
+  recomputes it from the root with hub bridge links. The script now does
+  the same.
+- **Tail closure.** The old script always used the default (on); now it
+  writes the GUI's switch.
+- **Numbers are exact** (`repr`), not `round(x, 9)`: a rounded literal is a
+  slightly different circuit. Once slice 4 quantizes user-entered numbers,
+  the literals are the clean values anyway.
+- **Constraint groups** still become shared variables (`gP_group1 = ...`),
+  but a member uses the variable only if its value equals the group's
+  exactly; an edited-away member keeps its own literal.
+- Node and edge dicts carry their parameters (as the job does), and the
+  dead duplicate-label comment was dropped.
+
+Gates:
+- `tests/test_model_export_script.py` (Qt-free): for every shipped file the
+  script, run, gives `compute_job`'s S bit for bit with the same port order;
+  plus a custom grid with tail closure off, TEUFELATOR at both roots,
+  constraint variables, multi-component trace selection, the full script
+  (with plotting) running, and no Qt import.
+- `tests/test_gui_show_s_model.py`: the GUI's export, run, equals Show S on
+  every shipped file; an unsaved grid, the tail switch and the checked
+  traces reach the script.
+- The older export tests (`test_gui_hubs`, `test_pumped_line`,
+  `test_stepped_line`, `test_intermode_lee2013`) pass unchanged.
 
 ## Questions for JA (original, answered above)
 

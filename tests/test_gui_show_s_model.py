@@ -180,3 +180,48 @@ def test_truncation_check_runs_through_the_model(win, monkeypatch):
     assert len(seen) == 2
     (a,), (b,) = (list(s.values()) for s in seen)
     assert b == 2 * a
+
+
+# ---------------------------------------------------------------------------
+# slice 3: Export to .py renders from the model, so it is Show S
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("path", FILES, ids=IDS)
+def test_gui_export_reproduces_show_s(win, path):
+    from tests.test_model_export_script import _run_script
+    _open(win, path)
+    f = _grid(win)
+    with contextlib.redirect_stdout(io.StringIO()):
+        jobs = win._sparams_jobs(f)
+        code = win.properties_panel._generate_scattering_calculation_code()
+    logging.disable(logging.WARNING)
+    try:
+        _, gsms = _run_script(code)
+        want = [_run(j) for j in jobs]
+    finally:
+        logging.disable(logging.NOTSET)
+    assert len(gsms) == len(want)
+    for g, res in zip(gsms.values(), want):
+        if res is None:
+            assert g is None
+        else:
+            assert np.array_equal(g.S, res["S"]) and list(g.port_ids) == res["port_ids"]
+
+
+def test_gui_export_uses_live_edits_and_checked_traces(win):
+    _open(win, os.path.join(PG, "5MODE_CHEBY.pgraph"))
+    win.properties_panel.freq_points_spin.setValue(57)
+    win.line_tail_closure = False
+    with contextlib.redirect_stdout(io.StringIO()):
+        win._compute_and_plot_sparams()
+    win._sparams_worker.wait()
+    from PySide6.QtWidgets import QApplication
+    QApplication.processEvents()
+    boxes = win.sparams_checkboxes
+    assert boxes
+    for key, box in boxes.items():
+        box.setChecked(key[-2:] == (1, 0))
+    code = win.properties_panel._generate_scattering_calculation_code()
+    assert ", 57)" in code and "tail_closure=False" in code
+    adds = [ln for ln in code.splitlines() if ln.startswith("gsm.add_trace(")]
+    assert len(adds) == 1 and adds[0].startswith("gsm.add_trace(1, 0,")
