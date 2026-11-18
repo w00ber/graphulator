@@ -27,6 +27,7 @@ if hasattr(os, "geteuid") and os.geteuid() == 0:
     os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
 
 from graphulator import model as M  # noqa: E402
+from tests.snap_helpers import snap_legacy  # noqa: E402
 from graphulator.model.legacy_job import compile_jobs, compute_job, sweep_grid  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -176,7 +177,10 @@ def _gui_jobs(win, path, tail_closure=None):
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
     with contextlib.redirect_stdout(io.StringIO()):
-        win._deserialize_graph(data)
+        # the file as the model reads it: floating-point residue in
+        # user-entered numbers snapped (decision Q2 option A), stated
+        # independently in tests/snap_helpers.py
+        win._deserialize_graph(snap_legacy(data))
         if not win.scattering_mode:
             win._enter_scattering_mode()      # what Show S does when needed
         if tail_closure is not None:

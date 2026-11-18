@@ -31,6 +31,7 @@ import copy
 from typing import Any, Dict, List
 
 from .quantize import quantize_sweep
+from .snap import snap_document
 from .schema import (Attachment, Block, Coupling, Document, Drawing, Mode,
                      Plane, Pumped, SectorView, SolveSettings, Sweep, Tone)
 
@@ -315,7 +316,7 @@ def from_legacy(d: Dict[str, Any]) -> Document:
         if sc.get("tail_closure") is not None:                      # decision Q3
             doc.solve.tail_closure = bool(sc["tail_closure"])
         doc.solve.legacy_frames = {k: v for k, v in sc.items() if k not in SCATTER_KNOWN}
-    return doc
+    return snap_document(doc)                   # decision Q2 (option A)
 
 
 # ---------------------------------------------------------------------------

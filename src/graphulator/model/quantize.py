@@ -23,6 +23,28 @@ def quantize(x: float, decimals: int) -> float:
     return q + 0.0
 
 
+#: snap() moves a value only when it is this close (relative) to its
+#: widget-precision rounding: a few ulps of floating-point residue
+#: (14.999999999999996 -> 15.0), never a deliberately finer number
+#: (FSR = 4.008568771762118 stays). Decision Q2, option A (JA, 18 Nov 2026).
+SNAP_REL = 1e-12
+
+
+def snap(x, decimals: int):
+    """x snapped to quantize(x, decimals) if it is only residue away from it,
+    else x unchanged. None, bools and non-numbers pass through."""
+    if x is None or isinstance(x, bool) or not isinstance(x, (int, float)):
+        return x
+    xf = float(x)
+    if xf != xf or xf in (float("inf"), float("-inf")):
+        return x
+    q = quantize(xf, decimals)
+    if q == xf:
+        return x
+    scale = max(abs(xf), abs(q), 10.0 ** -int(decimals))
+    return q if abs(xf - q) <= SNAP_REL * scale else x
+
+
 def spin(x: float, lo: float, hi: float, decimals: int) -> float:
     """QDoubleSpinBox.setValue: quantize to the display decimals, then clamp."""
     return min(max(quantize(x, decimals), lo), hi)

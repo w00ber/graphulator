@@ -22,6 +22,7 @@ import pytest
 from graphulator import model as M
 from graphulator.model.migrate import end_conns
 from graphulator.model.quantize import quantize, quantize_sweep
+from tests.snap_helpers import snap_legacy
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FILES = sorted(glob.glob(os.path.join(ROOT, "examples", "**", "*.pgraph"), recursive=True)
@@ -36,7 +37,7 @@ def _raw(path):
 
 
 def _canon_legacy(d):
-    d = copy.deepcopy(d)
+    d = snap_legacy(d)                   # Q2 option A: residue is snapped
     for l in d.get("line_resonators", []) or []:
         l["ends"] = {e: end_conns(l, e) for e in ("x0", "xL")}
     for e in d.get("edges", []):
@@ -229,3 +230,78 @@ def test_tail_closure_travels_with_the_file():
     assert doc.solve.tail_closure is False
     assert "tail_closure" not in doc.solve.legacy_frames
     assert M.to_legacy(doc)["scattering"]["tail_closure"] is False
+
+
+# ---------------------------------------------------------------------------
+# decision Q2, option A: snap floating-point residue, keep deliberate digits
+# ---------------------------------------------------------------------------
+
+SCENES = os.path.join(ROOT, "examples", "test_scenes")
+
+
+def test_snap_moves_residue_only():
+    from graphulator.model.quantize import snap
+    assert snap(14.999999999999996, 4) == 15.0
+    assert snap(0.10000000000000003, 5) == 0.1
+    assert snap(0.028399999999999998, 5) == 0.0284
+    assert snap(3e-18, 3) == 0.0                         # residue around zero
+    # deliberate digits finer than the widget are not residue
+    assert snap(4.008568771762118, 4) == 4.008568771762118
+    assert snap(0.003604911497849718, 6) == 0.003604911497849718
+    assert snap(6.0123, 3) == 6.0123
+    for x in (None, True, "matched", float("nan")):
+        assert snap(x, 3) is x
+
+
+def test_shipped_residue_is_snapped():
+    doc = M.load(os.path.join(PG, "BOGO_AB_AMP.pgraph"))
+    assert [t.f for t in doc.tones] == [15.0]
+    leg = M.to_legacy(M.load(os.path.join(PG, "FPJA_PRA.pgraph")))
+    assert [n["B_ext"] for n in leg["nodes"][:2]] == [0.0284, 0.0283]
+
+
+def test_script_computed_physics_is_kept():
+    """The Lee-2013 scene's numbers are computed to put f_A at 1.840 GHz and
+    the pump exactly on f_B - f_A; rounding them to widget precision would
+    move f_A by 13.5 kHz. Snapping leaves every one of them alone."""
+    path = os.path.join(SCENES, "INTERMODE_LEE2013_CONVERSION.pgraph")
+    raw = _raw(path)
+    leg = M.to_legacy(M.load(path))
+    keys = ("FSR", "Ztx", "f_max", "Z0_port", "load", "pump", "sections")
+    for a, b in zip(raw["line_resonators"], leg["line_resonators"]):
+        assert {k: a.get(k) for k in keys} == {k: b.get(k) for k in keys}
+
+
+def test_coinciding_tones_merge():
+    raw = _raw(os.path.join(PG, "5MODE_CHEBY.pgraph"))
+    pumpable = [e for e in raw["edges"] if not e.get("is_self_loop")][:2]
+    pumpable[0]["f_p"], pumpable[1]["f_p"] = 12.0, 11.999999999999998
+    doc = M.from_legacy(raw)
+    twelve = [t for t in doc.tones if t.f == 12.0]
+    assert len(twelve) == 1 and len(doc.tones) == len({t.f for t in doc.tones})
+    assert sum(p.tone == twelve[0].id for p in doc.pumped) == 2
+
+
+def test_4p0_load_and_save_snap(tmp_path):
+    doc = M.load(os.path.join(PG, "5MODE_CHEBY.pgraph"))
+    doc.modes[0].freq = 6.0000000000000009
+    M.save(doc, tmp_path / "a.pgraph")
+    assert doc.modes[0].freq == 6.0000000000000009          # in-memory doc untouched
+    assert _raw(tmp_path / "a.pgraph")["modes"][0]["freq"] == 6.0
+    d = M.to_file_dict(doc)
+    d["modes"][0]["freq"] = 6.0000000000000009              # a script-written 4.0 file
+    assert M.from_dict(d).modes[0].freq == 6.0
+
+
+@pytest.mark.parametrize("name", ["AMP_BA", "BOGO_AB_AMP", "DTWPA_MINIMAL2", "FIG15", "FPJA_PRA"])
+def test_snapping_moves_S_only_at_roundoff(name, monkeypatch):
+    import numpy as np
+
+    import graphulator.model.migrate as mg
+    from graphulator.model.legacy_job import compile_jobs, compute_job
+    raw = _raw(os.path.join(PG, f"{name}.pgraph"))
+    snapped = [compute_job(j) for j in compile_jobs(M.from_legacy(raw))]
+    monkeypatch.setattr(mg, "snap_document", lambda d: d)
+    unsnapped = [compute_job(j) for j in compile_jobs(M.from_legacy(raw))]
+    for a, b in zip(snapped, unsnapped):
+        assert np.max(np.abs(a["S"] - b["S"])) < 1e-13      # measured <= 1.5e-15

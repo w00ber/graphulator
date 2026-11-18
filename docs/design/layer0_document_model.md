@@ -1,6 +1,6 @@
 # Layer 0: a Qt-free document model (design note, for review)
 
-*Status: proposal, 16 Nov 2026; steps 1-2 built 17 Nov, step 3 slices 1-3
+*Status: proposal, 16 Nov 2026; steps 1-2 built 17 Nov, step 3 slices 1-4
 built 17-18 Nov (see "as built" sections near the end). Sections tagged **[decide]**
 need JA's call (they map to HANDOFF §12). Everything else is a default I'll
 build unless told otherwise.*
@@ -499,9 +499,8 @@ Gate (`tests/test_gui_show_s_model.py`):
 
 **Next in step 3 (proposed order):**
 1. Slice 3: the scattering-code export (done, below).
-2. Slice 4: the rest of decision Q2. Quantize user-entered numbers (mode
-   freq, rates, FSR, ...) at migration and at GUI load together, re-baseline
-   the bit-identical gates once on the quantized values.
+2. Slice 4: the rest of decision Q2 (done, below: residue snapping,
+   option A).
 3. Live state: the GUI holds a Document and its tables and dialogs edit it,
    with the widgets as views. That removes the snapshot, the legacy
    `_build_sparams_job`, and `meta.migrated_from` on GUI saves. This is the
@@ -554,6 +553,64 @@ Gates:
   traces reach the script.
 - The older export tests (`test_gui_hubs`, `test_pumped_line`,
   `test_stepped_line`, `test_intermode_lee2013`) pass unchanged.
+
+## Step 3, slice 4 as built: residue snapping, Q2 option A (18 Nov 2026)
+
+**Why not full quantization.** Rounding every user-entered number to its
+widget's precision would have changed up to 36 values in the shipped
+files (counted with the properties-panel precisions, e.g. FSR to 4). The
+values fall into two groups:
+- **Residue:** a few ulps off a clean number, e.g. 14.999999999999996,
+  0.10000000000000003, 0.028399999999999998.
+- **Deliberate digits:** values computed by the scene scripts and finer than
+  any widget. The Lee-2013 FSR 4.008568771762118 puts f_A at exactly 1.840
+  GHz. Z0_port 38718.407... gives exactly 2.9 MHz. The pump f_p equals
+  f_B - f_A exactly.
+
+Rounding the second group moves f_A by 13.5 kHz and detunes the conversion
+pump by 23 kHz. That breaks the property the scene was built to have. Widget
+precision is also not one number: B_int has 3 decimals (milli-units) in the
+table but 1 in the node dialog, and f_p has 3 in the table but 4 in the pump
+panel. **JA chose option A:** snap residue only.
+
+**Rule** (`quantize.snap`): x becomes quantize(x, d) only when
+`|x - q| <= 1e-12 * max(|x|, |q|, 10^-d)`. Otherwise x is unchanged. `d` is
+the finest widget's precision in stored units, where milli-unit displays add
+3 (`model.PRECISION`: freq 3, B_int 6, rates 5, pump rate 6, phases 1, tones
+4, FSR 9, Ztx 2, Z0 2, f_max 4, f_ref 4, section Z 2, load f_Z 6). Derived
+numbers are not touched: alpha (entered as a loss rate) and section
+fractions (entered as angles). The sweep keeps its unconditional
+quantization, since it only ever comes from its spin boxes.
+
+**Where it runs** (`model/snap.py`, `snap_document`):
+- at the end of `from_legacy`;
+- in `from_dict` for 4.0 files;
+- in `to_file_dict` (on a copy).
+
+Every path goes through one of these: GUI Open, Save, Show S's snapshot, the
+export and scripts. So the GUI rounds at load "together with migration" for
+free. Tones that coincide after snapping are merged.
+
+**Effect on the shipped files:**
+- 10 values in 9 files move, all residue (AMP_BA, BOGO_AB_AMP x2,
+  DTWPA_MINIMAL2, FIG15, FPJA_PRA, the degenerate Lee pump 3.68, TMP,
+  WIDE_AB_AMP_2pole);
+- every deliberate digit is kept;
+- S moves by at most 1.5e-15.
+
+**Gates re-baselined once.** The GUI's raw-file reference opens are now taken
+on the snapped file: `test_model_legacy_job._gui_jobs` and
+`test_gui_model_io`'s pre-model path. The round-trip canonicalization also
+snaps. The snapped file is produced by `tests/snap_helpers.py`. It restates
+the rule against the *legacy* field names, so the model's Document-level
+field list is checked against an independent list. It is not checked against
+itself. New tests:
+- residue vs deliberate cases;
+- shipped residue snapped;
+- the Lee scene's computed numbers untouched;
+- tone merge;
+- 4.0 load and save;
+- S change below 1e-13 on the affected files.
 
 ## Questions for JA (original, answered above)
 

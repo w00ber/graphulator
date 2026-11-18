@@ -25,6 +25,7 @@ if hasattr(os, "geteuid") and os.geteuid() == 0:
     os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
 
 from graphulator import model as M  # noqa: E402
+from tests.snap_helpers import snap_legacy  # noqa: E402
 
 
 def _norm(job):
@@ -106,8 +107,10 @@ def test_open_through_model_is_same_gui_state(path, window):
     raw = _raw(path)
     # The first load into a fresh window sets different view limits from
     # every later one (pre-existing, independent of the model), so warm up.
-    _quiet(window._deserialize_graph, copy.deepcopy(raw))
-    _quiet(window._deserialize_graph, copy.deepcopy(raw))     # the pre-model path
+    # the pre-model path, on the file as the model reads it (residue snapped,
+    # decision Q2 option A; tests/snap_helpers.py states it independently)
+    _quiet(window._deserialize_graph, snap_legacy(raw))
+    _quiet(window._deserialize_graph, snap_legacy(raw))
     state_raw, jobs_raw = _state(window), _jobs(window)
     _open(window, raw)
     assert _state(window) == state_raw

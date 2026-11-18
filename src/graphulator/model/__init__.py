@@ -11,12 +11,14 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import Any, Dict, Union
 
 from .migrate import MigrationError, from_legacy, to_legacy
 from .quantize import quantize_sweep
+from .snap import PRECISION, snap_document
 from .schema import (
     VERSION,
     Attachment,
@@ -36,16 +38,16 @@ from .validate import Issue, validate
 
 __all__ = ["Attachment", "Block", "Coupling", "Document", "Drawing", "Issue",
            "MigrationError", "Mode", "Plane", "Pumped", "SectorView", "SolveSettings",
-           "Sweep", "Tone", "VERSION", "from_dict", "from_legacy", "load", "save",
-           "to_file_dict", "to_legacy",
+           "PRECISION", "Sweep", "Tone", "VERSION", "from_dict", "from_legacy", "load", "save",
+           "snap_document", "to_file_dict", "to_legacy",
            "validate"]
 
 
 def from_dict(d: Dict[str, Any]) -> Document:
     """Any supported pgraph dict -> Document."""
     if str(d.get("version")) == VERSION:
-        return Document.from_dict(d)
-    return from_legacy(d)
+        return snap_document(Document.from_dict(d))     # decision Q2 (option A)
+    return from_legacy(d)                               # snaps too
 
 
 def load(path: Union[str, Path]) -> Document:
@@ -57,7 +59,7 @@ def to_file_dict(doc: Document) -> Dict[str, Any]:
     """`doc` as the JSON dict a 4.0 file holds. User-entered numbers are
     stored quantized to their widget's precision (decision Q2); `doc` itself
     is not modified."""
-    d = doc.to_dict()
+    d = snap_document(copy.deepcopy(doc)).to_dict()
     d["version"] = VERSION
     if d.get("sweep") is not None:
         sw = d["sweep"]
