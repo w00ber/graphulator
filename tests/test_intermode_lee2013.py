@@ -163,6 +163,7 @@ def test_generated_code_carries_the_frame(para):
     exec(compile(head, '<generated>', 'exec'), ns)
     gsm = ns['scattering_matrix']
     S, _ = _S(win, np.linspace(F_A - 0.015, F_A + 0.015, 61))
-    got = np.abs(gsm.S[:, 0, 0]) ** 2 if gsm.S.shape[1] else None
-    assert got is not None
-    assert np.max(np.abs(np.sort(got) - np.sort(np.abs(S) ** 2))) < 1e-9
+    # frequency order kept: a script in the wrong frame gives the mirrored
+    # curve (the hole at the wrong f), which a sorted comparison would pass
+    assert gsm.port_labels[0] == 'TL'
+    assert np.array_equal(gsm.S[:, 0, 0], S)
