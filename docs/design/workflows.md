@@ -137,7 +137,11 @@ generates the images.
 - Transmission lines and other embedding circuits belong to the
   **physical workflow only**.
 
-## Physical-workflow pump model (later phase) **[W3: proposed depth, JA to confirm]**
+## Physical-workflow pump model (later phase) **[W3: levels 1-2 decided; embedding-network participations deferred]**
+
+JA, 18 Nov 2026: levels 1-2 are in. Participations for general embedding
+networks (beyond line poles) are likely wanted. Decide later, once their
+cost relative to today's line-pole machinery is known.
 
 Proposed stopping point: levels 1-2 below are in, level 3 is out.
 
