@@ -61,41 +61,38 @@ physics decision.
 
 ## Findings from the gate's input (read before the design)
 
-**F1. Legacy frames come from a DFS spanning tree, and loops are not
-checked.**
-- `compute_job` rebuilds a spanning tree from the root on every solve. It
-  does not use the tree saved in `legacy_frames`, which is stale in 2 of the
-  49 files that have one.
-- Each tree edge moves the frame by +-f_p. The sign says whether the edge
-  converts up or down. It is decided by comparing the effective frequencies
-  of the two modes, where a conjugated mode counts as -f_0.
-- A non-tree (chord) edge never constrains anything. Its f_p is
-  *overwritten* by the difference of its endpoints' frames.
-- Which edges end up as chords depends on the DFS order, and that order
-  comes from Python `set` iteration.
-
-What this means for the data:
-- **f_p = None means "derived", not "static".** Legacy requires f_p on tree
-  edges and returns no result otherwise. A coupling saved with f_p = None
-  only works because the DFS made it a chord. Migration turned those into
-  `Coupling` objects (documented as static). A *static* edge is one with
-  f_p = 0, which migration turned into a `Pumped` with a 0 Hz tone.
-- Some drawings are genuinely **frame-inconsistent**: going around a loop,
-  the signed pump frequencies do not sum to zero. TUTORIAL_PARACIRCULATOR
-  only works because its static-drawn A-B edge (6 vs 7 GHz) is a derived
-  chord at 1.0 GHz. In FPJA_PRA, A-B has f_p = 0 but the two pumps imply
-  1.601 GHz. In DTWPA_2_WIDE, one loop carries pumps at 12.0 and 12.12 GHz.
-
-Physically, a loop is frame-consistent when one choice of rotating frames
-makes every drawn coupling time-independent. The condition is that the
-signed pump frequencies around the loop sum to zero. It is the frequency
-analogue of the loop phase (the synthetic flux), which is the sum of the
-coupling phases. When the sum is a nonzero delta, no frame works. The
-as-drawn system is then really a Floquet problem at frequency delta. The
-legacy tree silently treats one edge of the loop as if it were resonant,
-which is a detuning error of size delta. *(speculation)* The level-2 RWA
-check, or M_super with sectors opened, is what can settle what such a
-drawing "should" give.
+**F1. Frames come from the spanning tree; a stored chord f_p is not an
+input.** *(Corrected 18 Nov after JA's reply. The first version of this
+note said some drawings had conflicting pump frequencies. That was my
+misreading.)*
+- The design is right: f_p is entered on tree edges only. A chord's f_p is
+  derived from its cycle. The GUI shows it read-only ("(chord)", in blue)
+  and never writes it back.
+- But the document does not record which edges are chords. `compute_job`
+  rebuilds the tree from the root on every solve. It does not use the tree
+  saved in `legacy_frames`, which is stale in 2 of the 49 files that have
+  one.
+- An edge that was a tree edge when its f_p was typed in keeps that value
+  after it becomes a chord. The value is then dead but still stored:
+  - FPJA_PRA: A-B is a chord with derived f_p 1.601, but 0.0 is stored;
+  - DTWPA_2_WIDE: 10-13 is a chord with derived f_p 12.12, but 12.0 is
+    stored.
+- My first compiler draft read every stored f_p as an input. That is what
+  produced the apparent loop conflicts. They are not in the physics.
+- **The real hazard:** the tree depends on the root, and on DFS order
+  (Python set iteration over int-tuple keys, deterministic but arbitrary).
+  If the tree changes, a stale value becomes an input again, silently.
+  Example: FPJA_PRA with the root moved from A to B. The tree changes, A-B
+  becomes a tree edge carrying the stale 0.0, the 13.671 GHz C-B pump
+  becomes the chord, and the frames change (B at 0 instead of +1.601
+  relative to A).
+- Data semantics:
+  - f_p = None marks an edge that has only ever been a chord.
+    Migration made it a `Coupling` (documented as "static"), which is
+    misleading.
+  - f_p = 0 is a static tree edge. Migration made it a `Pumped` with a 0 Hz
+    tone.
+  - Legacy refuses a tree edge whose f_p is None.
 
 **F2. The coupling phase belongs to the earlier mode in mode order, not to
 the drawn direction.** In 16 lumped files, 17 edges are drawn from a later
@@ -214,67 +211,37 @@ ulp-level difference rather than hide it. *(speculation)* The batched LAPACK
 solve should not depend on the block size, but I copy the blocking anyway
 rather than rely on that.
 
-## Frames: the one physics decision **[decide M1]**
+## Frames: the one physics decision **[decide M1]** (revised)
 
-**Proposed rule (deterministic, no DFS):**
-- Edge classes and the sector step from a to b:
-  - *pumped* (`Pumped`, tone f != 0): the step is +e_t if eff_b > eff_a,
-    else -e_t (legacy's sign rule). A tie with f != 0 is an issue;
-    there is none in the shipped files.
-  - *static* (`Pumped` with a 0 Hz tone): the step is 0.
-  - *port bridge* (two modes on one port plane): the step is 0. A resistor
-    does not convert frequency.
-  - *derived* (`Coupling`, f_p = None): no constraint. Its implied pump
-    frequency |nu_b - nu_a| is reported, as the legacy chord column shows
-    it.
-- Grow a tree from the root. At each step take the eligible edge with the
-  lowest (class, document index), with classes ordered pumped < static <
-  bridge < derived. The tree uses a derived edge only if nothing else
-  reaches that mode. Then the frame is undetermined: the result is None and
-  an issue is raised (legacy fails in the same place).
-- Every non-tree pumped or static edge whose step disagrees with its
-  endpoints' sectors gives a **frame-inconsistency warning**. The warning
-  names the loop, the mismatch delta in GHz, and the edge that is being
-  solved as if it were resonant.
-
-**Measured against legacy:** identical frames, after the 12-decimal
-rounding, on **50 of the 51** computing jobs, including FPJA_PRA and the
-TUTORIAL_PARACIRCULATOR.
-
-The exception is **DTWPA_2_WIDE**. Its loop 10-12-14-13 carries pumps at
-12.0 and 12.12 GHz, so no frame is right:
-- the proposed rule keeps both pump conditions and treats a static 13-14
-  coupling as resonant across 0.12 GHz;
-- legacy's DFS keeps the static edges and treats the 12.0 pump as if it
-  were at 12.12.
-
-Both are detuning errors of the same size.
+The frames must come from the same tree legacy uses, because that tree is
+what decides which stored f_p values are inputs. The priority rule I
+proposed first reads every stored f_p as an input. It matched 50 of 51 jobs
+only by luck, and it is wrong on DTWPA_2_WIDE, where it uses the dead 12.0
+value. **Withdrawn.**
 
 **Options:**
-- **(a) the proposed rule (recommended).** Frames are a stated function of
-  the drawing, inconsistencies are reported, and there is one explained
-  gate exception (DTWPA_2_WIDE). Its plot will change when the GUI switches
-  engines.
-- **(b) reproduce legacy's DFS** (import `compute_spanning_tree` and the
-  accumulation as a shared leaf). Bit for bit everywhere, but the new engine
-  inherits a tree picked by set iteration.
-- **(c) explicit sectors in the document** (`Mode.sector`). Migration fills
-  it with legacy's frames, so every file is bit for bit by construction, and
-  rule (a) is the default for modes that have none.
-  - This is the natural end state: the drawn RWA becomes visible, editable
-    data, and it is what the "same resonator" tag (W2) and the sector glyphs
-    need.
-  - It has no consumer until the GUI holds the model (C1): until then, every
-    Show S snapshot re-migrates from the legacy state anyway.
+- **(b) legacy tree as a shared leaf (now recommended for milestone 1).**
+  `frames.py` calls autograph's `compute_spanning_tree` and the pump-sign
+  rule (the same root, edges and hub bridge links as `compute_job`). It then
+  carries integer sector vectors along the tree instead of float sums.
+  - Expected: bit for bit on all 51 computing jobs.
+  - Issues reported:
+    - **stale chord f_p**: a chord whose stored f_p is not None and differs
+      from the derived value (FPJA_PRA, DTWPA_2_WIDE, and others to be
+      listed). It is information only; S does not use it.
+    - a tree edge with no f_p: legacy's refusal, kept.
+- **(c) the tree, or the per-mode sectors, as document data at C1.** Then a
+  change of root cannot reshuffle which f_p are inputs. The root only picks
+  the sweep axis, and the tree changes only when the user edits topology,
+  re-rooting explicitly. Migration fills it from legacy's tree, so nothing
+  moves.
+  - Open sub-question for C1: should the GUI keep the user's tree when the
+    root changes (re-root the same tree), rather than rebuilding it by DFS?
+  - Re-rooting a fixed tree leaves every relative frame unchanged. That is
+    the behaviour the "derive chords" design implies.
 
-My recommendation: **(a) now, and (c) with C1.** For DTWPA_2_WIDE the gate
-asserts two things:
-- the inconsistency is reported;
-- with legacy's frames injected through a test-only override, S is bit for
-  bit.
-
-So the only difference is the frame choice, and it is pinned. If you would
-rather keep the plot, (b) costs about 20 lines and can be removed at C1.
+Recommendation: **(b) for milestone 1, (c) at C1**, plus a validation
+warning for stale chord values from now on.
 
 ## Gate (tests/test_engine_msuper.py, Qt-free)
 
@@ -285,18 +252,19 @@ rather keep the plot, (b) costs about 20 lines and can be removed at C1.
   - S `np.array_equal`;
   - port order equal under the map `port<k>` <-> `port:<k>` and
     `bext<n>` <-> `n`, with the same port labels.
-- DTWPA_2_WIDE: the exception described above (if option a).
+- Stale chord f_p values are reported (FPJA_PRA, DTWPA_2_WIDE) and S
+  ignores them.
 - Edits the files have not seen, built directly on the Document: TEUFELATOR
   at roots 4 and 6 (a conjugated root flips the sweep), a custom grid, an
   edited rate and frequency, a deleted mode (components recomputed), a loss
-  port, and an added frame-inconsistent edge (the warning fires and S is
-  unchanged).
+  port, and FPJA_PRA re-rooted at B (pins legacy's tree-dependent behaviour;
+  (c) fixes it at C1).
 - Non-lumped files are refused with the milestone-2 message. The package
   imports no Qt.
 
 ## Questions for JA
 
-- **M1, frames:** (a), (b) or (c) above. I recommend (a) now and (c) at C1.
+- **M1, frames:** (b) now, (c) at C1 (revised after JA's reply; (a) is withdrawn).
 - **M2, phase reference (F2):** for milestone 1, keep legacy's convention
   (the phase sits on the earlier mode in mode order). Bit for bit requires
   it.
