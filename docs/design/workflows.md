@@ -57,14 +57,18 @@ plays the role of the transfer function.
   or in the title bar, possibly a light/dark theme per workflow (which theme
   goes with which workflow is set in Settings).
 - Saving over a physical document with an abstract one (same name) warns.
-- **[open W1]** File naming:
-  - (a) one format with a `workflow` field in the document, `.pgraph` for
-    both;
-  - (b) a separate `.pmgraph` extension for physical documents.
-
-  Claude's lean is (a) for the data plus, if wanted, (b) only as a
-  file-dialog convention. A single loader and a single schema, with the
-  extension never being the source of truth. JA to decide.
+- **W1, file naming [decided]:** one format with a `workflow` field;
+  `.pgraph` for both (an optional `.pmgraph` dialog convention only, never
+  the source of truth). **Guardrails** on a physical -> abstract
+  conversion:
+  - The conversion never overwrites the physical file silently. The default
+    action is Save As with a derived name (e.g. `name_abstract.pgraph`).
+    Overwriting needs an explicit confirmation that says the physical
+    description will be lost.
+  - The converted document records where it came from
+    (`meta.converted_from`: path and content hash of the physical source).
+    The app can then say "this was generated from X". Conversion stays
+    one-way.
 
 ## RWA checking (the "RWA nanny")
 
@@ -91,10 +95,17 @@ of the *same* resonance. A graph today has no way to express that, so
 level 1 cannot reason about it in the abstract workflow. The physical
 workflow makes it natural: one resonance, plus a sector window that
 generates the images.
-- **[open W2]** Should the abstract workflow get an optional "same
-  resonator" tag on modes (`Mode.resonator`)? It would let a hand-drawn
-  graph declare sector images of one resonator, so the nanny can check them
-  there too.
+- **W2, "same resonator" tag [decided: yes].** Modes get an optional
+  `resonator` tag (resonator id plus sector index m) that marks drawn nodes
+  as sector images of one physical resonator.
+  - Ways to set it: the node parameters panel (a "Resonator" field), the
+    right-click menu on a selection ("Mark as one resonator..."), and/or a
+    grouping column in the S-parameter assignment panel.
+  - What the tag enables:
+    - the nanny can reason about images (e.g. w_P << gamma_0);
+    - a consistency check that freq_m = w_0 + m * w_P;
+    - optionally, frequencies auto-filled from (w_0, m, f_p), through the
+      constraint-group mechanism (members by id, decision L4).
 
 **Level 2: exact check** *(proposal)*.
 - Complete each drawn edge to its non-RWA form, g(t)(a + a^dag)(b + b^dag),
@@ -126,7 +137,31 @@ generates the images.
 - Transmission lines and other embedding circuits belong to the
   **physical workflow only**.
 
-## Physical-workflow pump model (later phase) **[open W3: how far to go]**
+## Physical-workflow pump model (later phase) **[W3: proposed depth, JA to confirm]**
+
+Proposed stopping point: levels 1-2 below are in, level 3 is out.
+
+1. **Linear.** w_k(phi_dc + dphi cos w_P t) ~ w_k + w_k' dphi cos w_P t
+   gives the pair rates g_jk at w_P. This is today's pumped-line anchor,
+   generalized.
+2. **Harmonics and the static shift.** Use the full transfer function
+   (user-supplied w_k(phi) or L(phi), with the SQUID form
+   L_J0 / |cos(pi phi / phi_0)| built in). Its Fourier series in w_P gives:
+   - the depth at n w_P. In M_super a harmonic of one tone is just a
+     coupling between sectors m and m + n, so this is cheap;
+   - the n = 0 term, a pump-induced static shift of every w_k (order
+     dphi^2). It must be included, or the resonances sit in the wrong
+     place at large dphi.
+3. **Out of scope (the real rabbit holes):**
+   - calibrating applied pump power to dphi (the pump's own circuit and
+     port);
+   - pump depletion;
+   - signal-power nonlinearity (Kerr). The model stays linear in the
+     signal;
+   - participations p_j for arbitrary embedding networks beyond what pole
+     residues give (lines already have them).
+
+Notes from the discussion:
 
 - **Inputs.** Modulated elements with a transfer function, e.g. w_k(phi) or
   w_k^2(phi), with phi(t) = phi_dc + dphi cos(w_P t).
