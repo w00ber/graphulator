@@ -11777,9 +11777,9 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
         Layer 0 step 3 (design note): the GUI state is snapshotted as a
         Document (what a save would write) and compiled by
-        model.legacy_job.compile_jobs, the same compiler scripts and the MCP
-        use, so the GUI cannot compute something its file does not say. The
-        connected components and the injection root are recomputed from the
+        model.legacy_job.compile_jobs, the same compiler scripts use (and
+        the planned MCP will), so the GUI cannot compute something its file
+        does not say. The connected components and the injection root are recomputed from the
         snapshot, not read from cached GUI state.
 
         If the model cannot represent the state, the jobs are built from the

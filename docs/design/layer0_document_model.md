@@ -612,6 +612,127 @@ itself. New tests:
 - 4.0 load and save;
 - S change below 1e-13 on the affected files.
 
+## Step 3, live state: design pass (for review, 18 Nov 2026)
+
+*Proposal only, no code yet. Sections tagged **[decide]** need JA's call.*
+
+### Where things stand
+
+The GUI's editable state is still the legacy layout:
+- `nodes` and `edges` are dicts that mix physics and style, and edges hold
+  references to the node dicts;
+- `scattering_assignments` is keyed by node id and `(from, to)`;
+- `ports`, and `line_resonators` with the twin as a second, synced line;
+- constraint groups keyed by *labels*;
+- whole-state undo snapshots (`_capture_state`).
+
+The model reaches the GUI only as a snapshot (`_model_document()`), taken at
+Show S, export and save (slices 1-4). Rough size of a switch, counted with
+grep over the GUI modules:
+
+| touch point | sites |
+|---|---|
+| `scattering_assignments` (55 of them writes) | 114 |
+| `nodes` / `edges` | 150 / 114 |
+| `line_resonators` / `ports` | 68 / 39 |
+| constraint groups | 44 |
+| `_save_state()` (undo points) | 58 |
+| edge -> node-dict references | 47 |
+| twin sync calls | 21 |
+
+### What live state buys, and what it does not
+
+It does **not** gate step 4. The M_super compiler needs a Document, and
+`_model_document()` already gives one for the live state at 1-6 ms. The
+MCP does not exist yet. When it does, it can work on files or on that same
+snapshot.
+
+What it does buy:
+1. **One representation.** This removes the snapshot, `_build_sparams_job`,
+   the GUI normalization that `legacy_job._load_state` re-implements, twin
+   sync, and `meta.migrated_from` on GUI saves.
+2. **4.0-only settings get a home.** Sector windows, `kept_poles` beyond
+   `f_max`, and `sector_views` have no slot in the legacy state today.
+   Slice 1 needed the `_model_carry` stash just to keep `solve.sectors`
+   alive from Open to Save. Every M_super-era GUI feature would need another
+   stash.
+3. **Decision 2 becomes real in the UI.** Today TL* is a line object that
+   can be selected and deleted. In the model it is a drawing of sector -1,
+   and removing the idler physics means removing the pump.
+4. **Edits can only produce what the model can represent.** The
+   model-failure fallbacks in Save and Show S then go away.
+
+### Options
+
+- **A. Big bang:** replace the dicts with Document objects everywhere at
+  once. Rejected. It touches ~600 sites in one change, with no oracle
+  between start and end.
+- **B. Write-through proxies:** `self.nodes` etc. become dict-like views
+  over the Document. Rejected. Identity semantics (selection lists, edge ->
+  node references, undo snapshots holding the same dicts) make the proxies
+  subtle, and they hide the cost rather than remove it.
+- **C. Physics first, one object kind per slice (recommended).** The
+  Document owns the physics. The GUI dicts keep only drawing state plus the
+  model id. Every physics edit goes through a small Qt-free edit API,
+  `model/edit.py`: plain functions on a Document, such as
+  `set_mode(doc, mid, freq=...)`, `set_coupling(...)`,
+  `set_line_param(...)`, `add_mode(...)`, `delete(...)`. Each returns a
+  change record (which ids changed, and whether the topology did). The GUI
+  turns the record into table and plot refreshes. The MCP and tests can
+  call the same functions.
+- **D. Status quo.** Keep the legacy state as the editable one and the
+  model as a snapshot, indefinitely. That stays viable until (2) bites.
+
+### Proposed slices under C
+
+Each slice keeps the snapshot path alive as its oracle until the slice's
+last commit.
+
+1. **C1, assignments:** move frequencies, rates, phases, f_p and B_ext
+   (the 55 writes, the tables, the dialogs) to `doc.modes`, `couplings`,
+   `pumped` and `attachments`, and the GUI reads them back from the doc.
+   Constraint groups are promoted to the model and keyed by object id, not
+   by label (labels can be duplicated; the old exporter had a
+   duplicate-label warning for this reason). **[decide L4]**
+2. **C2, lines:** physics params, load, pump and sections move to blocks,
+   `pumped` and `kept_poles`. The twin becomes `drawing.sector_views`, and
+   `sync_twin` is deleted. This is where decision 2 lands in the UI.
+   **[decide L3]**
+3. **C3, ports, attachments and taps:** move to planes and attachments.
+4. **C4, topology and undo:** add/delete for each kind goes through the
+   edit API. An undo point becomes (Document copy, drawing copy).
+   `_serialize_graph` becomes `to_file_dict` plus drawing. Then
+   `_build_sparams_job`, `legacy_job._load_state`'s GUI normalization and
+   the model-failure fallbacks are deleted, and `legacy_job` becomes a pure
+   model -> job compiler.
+
+**Gate for each slice:**
+- after a scripted edit sequence through the real widgets (tables,
+  dialogs, panels), the live Document equals `_model_document()` taken from
+  the remaining legacy dicts;
+- every existing GUI test still passes;
+- undo/redo round-trips the Document exactly.
+
+The bit-identical Show S gate stays in place throughout.
+
+### Questions for JA
+
+- **L1, order.** My recommendation: **step 4 (the M_super compiler) next,
+  then C1-C4**, starting each C slice when an M_super GUI feature needs
+  that object kind in the model (point 2 above). Step 4 does not depend on
+  live state, and it is where the physics payoff is. The alternative is C1
+  now: it is the cheapest slice, and it removes the `value / 1000` residue
+  at its source.
+- **L2, edit API shape.** Plain functions plus a change record (my
+  default: Qt-free and easy to call from the MCP), or an observable
+  Document that emits signals (more automatic, but it couples the model to
+  an event system)?
+- **L3, twin UI (C2).** Under decision 2, "delete TL*" hides the view.
+  Should the same context menu offer "Stop pumping" (remove the pump) next
+  to it, so the physics change is one click away and named honestly?
+- **L4, constraint groups (C1).** Promote them to the model, keyed by
+  object id (my default), or keep them verbatim in `legacy_frames`?
+
 ## Questions for JA (original, answered above)
 
 1. Dataclasses vs pydantic; keep `.pgraph` + 4.0 (12.2).
