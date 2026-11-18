@@ -98,7 +98,7 @@ from .para_core.interaction_state import InteractionMode, PlacementMode
 from .para_core.graph_state import capture_graph_state
 from .autograph import (GraphExtractor, GraphScatteringMatrix,
                         compute_hub_bridge_links)
-from .model.legacy_job import compute_job
+from .model.legacy_job import compile_jobs, compute_job
 
 logger = logging.getLogger(__name__)
 
@@ -6061,16 +6061,10 @@ class PropertiesPanel(QWidget):
         n_pts = int(self.freq_points_spin.value())
         f_start, f_stop = f_center - f_span / 2, f_center + f_span / 2
         f = np.linspace(f_start, f_stop, n_pts)
-        comps = (g.scattering_components if len(g.scattering_components) > 1
-                 else [None])
 
         def solve():
             out = []
-            for comp in comps:
-                job = g._build_sparams_job(comp, f, f_start, f_stop, n_pts,
-                                           multi_component=len(comps) > 1)
-                if job is None:
-                    continue
+            for job in g._sparams_jobs(f):
                 res = _compute_sparams_job(job)      # module-level worker fn
                 if res is not None:
                     out.append(res)
@@ -9221,6 +9215,19 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
     # does not reset them (4.0 files written by scripts may set them).
     _MODEL_ONLY_SOLVE = ("sectors", "sector_tol", "sector_max")
 
+    def _model_document(self, render=False):
+        """The live GUI state as a model Document (what a save would hold,
+        plus the 4.0-only settings carried from the opened file)."""
+        return self._apply_model_carry(model.from_legacy(self._serialize_graph(render=render)))
+
+    def _apply_model_carry(self, doc):
+        carry = getattr(self, '_model_carry', None)
+        if carry:
+            doc.units = dict(carry["units"])
+            for k in self._MODEL_ONLY_SOLVE:
+                setattr(doc.solve, k, copy.deepcopy(carry["solve"][k]))
+        return doc
+
     def _file_dict_from_state(self, data):
         """GUI state dict (pgraph 2.0/3.0 layout) -> a pgraph 4.0 file dict.
 
@@ -9230,11 +9237,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             return data
         try:
             doc = model.from_legacy(data)
-            carry = getattr(self, '_model_carry', None)
-            if carry:
-                doc.units = dict(carry["units"])
-                for k in self._MODEL_ONLY_SOLVE:
-                    setattr(doc.solve, k, copy.deepcopy(carry["solve"][k]))
+            self._apply_model_carry(doc)
             return model.to_file_dict(doc)
         except Exception:
             logger.exception("4.0 conversion failed; writing the legacy format")
@@ -9306,8 +9309,12 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             print(f"Error loading example: {e}")
             QMessageBox.warning(self, "Load Error", f"Could not load example:\n{e}")
 
-    def _serialize_graph(self):
-        """Serialize graph to dictionary for saving as .pgraph format"""
+    def _serialize_graph(self, render=True):
+        """Serialize graph to dictionary for saving as .pgraph format.
+
+        render=False skips the embedded SVG thumbnails: the physics snapshot
+        Show S compiles from (_model_document) does not need them, and
+        rendering is the slow part."""
         data = {
             "version": "2.0",  # New version for .pgraph format
             "format": "pgraph",
@@ -9552,7 +9559,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             data["notes_attachments"] = notes_attachments
 
         # Generate and embed SVG representation of the graph
-        svg_string = self._generate_svg_string(use_kron_canvas=False)
+        svg_string = self._generate_svg_string(use_kron_canvas=False) if render else None
         if svg_string:
             data["svg"] = svg_string
 
@@ -12306,23 +12313,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             freq_stop = freq_center + freq_span / 2
             f_root_s = np.linspace(freq_start, freq_stop, freq_points)
 
-            # Determine which components to compute
-            if len(self.scattering_components) > 1:
-                # Multiple components - compute for each
-                components_to_compute = self.scattering_components
-            else:
-                # Single component - use full graph
-                components_to_compute = [None]  # None means use full graph
-
             # Snapshot everything the worker needs (plain data, no GUI access)
-            jobs = []
-            for component in components_to_compute:
-                job = self._build_sparams_job(
-                    component, f_root_s, freq_start, freq_stop, freq_points,
-                    multi_component=len(components_to_compute) > 1
-                )
-                if job is not None:
-                    jobs.append(job)
+            jobs = self._sparams_jobs(f_root_s)
 
             if not jobs:
                 logger.info("No components with nodes to compute")
@@ -12342,9 +12334,42 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             logger.exception("Error preparing S-parameter computation")
             self._show_sparams_error(str(e))
 
+    def _sparams_jobs(self, f_root_s):
+        """The Show S job list for the live state, compiled from the model.
+
+        Layer 0 step 3 (design note): the GUI state is snapshotted as a
+        Document (what a save would write) and compiled by
+        model.legacy_job.compile_jobs, the same compiler scripts and the MCP
+        use, so the GUI cannot compute something its file does not say. The
+        connected components and the injection root are recomputed from the
+        snapshot, not read from cached GUI state.
+
+        If the model cannot represent the state, the jobs are built from the
+        live widgets instead (_build_sparams_job) and the failure is logged,
+        so Show S keeps working.
+        """
+        f_root_s = np.asarray(f_root_s)
+        tail = bool(getattr(self, 'line_tail_closure', True))
+        try:
+            return compile_jobs(self._model_document(), f_root_s=f_root_s,
+                                tail_closure=tail)
+        except Exception:
+            logger.exception("Model compile failed; building S jobs from the live state")
+        comps = self.scattering_components if len(self.scattering_components) > 1 else [None]
+        jobs = [self._build_sparams_job(c, f_root_s, f_root_s[0], f_root_s[-1], len(f_root_s),
+                                        multi_component=len(comps) > 1)
+                for c in comps]
+        return [j for j in jobs if j is not None]
+
     def _build_sparams_job(self, component, f_root_s, freq_start, freq_stop, freq_points,
                            multi_component=False):
-        """Build a self-contained computation job for one component.
+        """Build a self-contained computation job for one component from the
+        live widgets.
+
+        No longer the Show S path (that is _sparams_jobs, via the model). It
+        is kept as the fallback when the model cannot represent the state,
+        and as the oracle tests/test_gui_show_s_model.py compares the model
+        path against after live edits.
 
         Runs on the UI thread: reads the live graph, scattering assignments,
         and injection dropdown, and packages plain data for the worker.

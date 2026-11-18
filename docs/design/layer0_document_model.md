@@ -1,7 +1,7 @@
 # Layer 0: a Qt-free document model (design note, for review)
 
-*Status: proposal, 16 Nov 2026; steps 1-2 built 17 Nov (see "as built"
-sections near the end; step 2 has open quirks Q1-Q3). Sections tagged **[decide]**
+*Status: proposal, 16 Nov 2026; steps 1-2 built 17 Nov, step 3 slices 1-2
+built 17-18 Nov (see "as built" sections near the end). Sections tagged **[decide]**
 need JA's call (they map to HANDOFF §12). Everything else is a default I'll
 build unless told otherwise.*
 
@@ -460,6 +460,56 @@ compare against the same model-free reload instead of the file's view.
 **Note:** a GUI-saved 4.0 file records `meta.migrated_from` = the GUI's
 internal layout (2.0/3.0). That is accurate for now, since the GUI state
 still is that layout. It goes away when the GUI holds the model natively.
+
+## Step 3, slice 2 as built: Show S compiles from the model (18 Nov 2026)
+
+The GUI no longer builds its S jobs from its own widgets. Show S, the
+background worker path and the truncation check all call
+`Graphulator._sparams_jobs(f)`, which does
+`compile_jobs(_model_document(), f_root_s=f, tail_closure=live flag)`:
+- `_model_document()` is the live state as a Document: `_serialize_graph(
+  render=False)` (no SVG thumbnails; rendering is the only slow part of a
+  serialize) -> `from_legacy`, plus the 4.0-only settings carried from the
+  opened file. A save writes the same Document, so the GUI cannot compute
+  something its file would not reproduce.
+- The connected components and the injection root are recomputed from the
+  snapshot by the compiler, not read from the GUI's cached
+  `scattering_components`. The root is the combo's choice (it reaches the
+  model as `solve.root`), with the Q1 fallback.
+- The sweep grid is still the spin boxes' (`f` is passed in), so an edited,
+  unsaved sweep is what is solved.
+- If the model cannot represent the state, `_sparams_jobs` logs the error and
+  builds the jobs with the old live-widget builder (`_build_sparams_job`),
+  so Show S keeps working. That builder stays only as this fallback and as
+  the test oracle; it can go when the GUI holds the model natively.
+
+Cost: 1-6 ms per Show S on the shipped examples (snapshot + migrate +
+compile), against 1-15 ms for the solve itself at 401 points.
+
+Gate (`tests/test_gui_show_s_model.py`):
+- every shipped file, opened as File > Open does: model-path jobs equal the
+  live-builder jobs field by field, and S is bit-identical;
+- the same after live edits a file has not seen: an edited mode frequency and
+  coupling rate, an unsaved sweep, a different injection-combo choice
+  (TEUFELATOR root 4), a line's `f_max` with tail closure off, a deleted node
+  (components and stale `B_ext` recomputed), two lines in two components;
+- the truncation check's two solves go through the model (the doubled
+  `f_max` reaches the Document), and a compile failure falls back to the
+  live builder with a logged error.
+
+**Next in step 3 (proposed order):**
+1. Slice 3: the scattering-code export
+   (`_generate_scattering_calculation_code`, ~600 lines, the third
+   translator named in the Goal) reads the Document instead of the widgets.
+   Gate: the generated script, run, gives S bit-identical to Show S on every
+   shipped file.
+2. Slice 4: the rest of decision Q2. Quantize user-entered numbers (mode
+   freq, rates, FSR, ...) at migration and at GUI load together, re-baseline
+   the bit-identical gates once on the quantized values.
+3. Live state: the GUI holds a Document and its tables and dialogs edit it,
+   with the widgets as views. That removes the snapshot, the legacy
+   `_build_sparams_job`, and `meta.migrated_from` on GUI saves. This is the
+   large one and wants its own design pass before code.
 
 ## Questions for JA (original, answered above)
 
