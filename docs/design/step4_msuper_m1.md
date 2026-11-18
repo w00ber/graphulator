@@ -101,9 +101,14 @@ TUTORIAL_PARACIRCULATOR e3_1 (90 deg), FPJA_PRA and 4MODE_ISOLATOR. In those
 files the loop flux depends on node creation order, which is invisible on
 the canvas.
 
-**F3. Frame offsets are rounded to 12 decimals** (`round(acc, 12)`). This
-helps: integer sectors combined as m . f and the legacy float path sums can
-differ by an ulp, and the rounding makes them agree on every shipped job.
+**F3. Frame offsets are rounded to 12 decimals** (`round(acc, 12)`).
+Chords are closed with the rounded offsets, and the result is rounded again.
+This is a snap to the decimal grid, not a tolerance: with tones of at most
+a few decimals, it returns the double closest to the exact decimal sum,
+whatever the summation order. *(Corrected after JA's question.)* On the
+shipped files, integer sectors (m . f) and legacy's float path sums agree
+bit for bit even before rounding (215 of 215 mode frames), so the rounding
+is not what makes them agree.
 
 **F4. Tones at 0 Hz exist** (static edges stored as `Pumped`). They must
 not count as sector dimensions.
@@ -277,8 +282,8 @@ warning for stale chord values from now on.
   with no schema change. The clean schema would be
   `Coupling.frame = "static" | "derived"`, with no 0 Hz tones. Do that at
   C1, together with M2?
-- **M4, 12-decimal rounding (F3):** keep it for milestone 1. Drop it once
-  bit-for-bit against legacy is no longer the gate (nu = m . f exactly).
+- **M4, 12-decimal rounding (F3):** keep it for milestone 1. Later, keep a
+  snap rather than drop it, preferably to the tones' own decimal precision.
 - **M5, parallel edges:** sum them (physically right; no shipped file has
   them), or refuse with an issue?
 - **M6, multi-component root:** legacy ignores `solve.root` when there are
@@ -291,3 +296,54 @@ warning for stale chord values from now on.
 - The RWA check (it will reuse `frames.py`).
 - GUI wiring. Show S stays on the legacy engine. Switching it, or adding an
   "engine" setting, is a later slice once you have chosen M1.
+
+## Decisions (JA, 18 Nov 2026)
+
+- M1: option (b) now (the legacy tree as a shared leaf), (c) at C1.
+- M2-M6: the defaults above. That means:
+  - the legacy phase reference;
+  - no schema change;
+  - the 12-decimal snap;
+  - parallel edges summed, with a warning;
+  - legacy's multi-component root.
+
+## Milestone 1 as built (18 Nov 2026)
+
+`src/graphulator/engine/` (Qt-free):
+
+- `frames.py`: `assign_frames` calls autograph's `compute_spanning_tree` and
+  `compute_hub_bridge_links`. It uses the legacy int node keys and the
+  legacy edge order (`drawing.order["edges"]`), so the DFS picks the same
+  tree. It then carries integer sector vectors along the tree, with
+  nu = round(m . f, 12). It reports:
+  - tree edges without f_p (no result, as in legacy);
+  - stale chord values (info).
+- `msuper.py`: `compile_document(doc)` reads model objects directly, with no
+  `to_legacy`. It refuses non-lumped documents (`NotLumpedError`) and
+  returns one `MSuper` per component: rows (mode, sector, nu, f0, B_int,
+  conj), couplings, channels, root, frames and issues. It restates over the
+  model legacy's rules for components, the root, channel order and the
+  required parameters.
+- `kernel.py`: `scattering(ms, f)` and `M_stack(ms, f)`. The arithmetic is
+  written independently but repeats `GraphScatteringMatrix` operation by
+  operation (dtypes, order, frequency blocking).
+- `engine.solve(doc, f=None)` returns a list of `ComponentResult`
+  (S, port plane ids, port labels, root, msuper, issues).
+
+**Gate** (`tests/test_engine_msuper.py`, 81 tests). Passed on the first run
+of the compiler:
+
+- all 54 lumped shipped files match legacy bit for bit: S, port order and
+  labels, roots, component count, and which components have no result;
+- the 14 non-lumped files are refused;
+- edits the files have not seen: TEUFELATOR at roots 4 and 6, a custom grid,
+  edited frequencies/B_int/rates/phases, a deleted mode that splits a chain
+  into two components, and a loss port;
+- FPJA_PRA re-rooted at B, which pins the legacy tree dependence (F1);
+- stale chord values reported;
+- sectors are integer vectors with nu = m . f;
+- a tree edge without f_p gives no result;
+- parallel edges are summed;
+- no Qt import.
+
+Not done: GUI wiring (Show S stays on the legacy engine) and the RWA check.
