@@ -525,9 +525,10 @@ autograph API. One component gives `scattering_matrix` / `gsm`, several give
 
 **What changed in exported scripts (the old exporter disagreed with Show S):**
 - **Conjugated root.** Show S sweeps `-f` when the injection node is
-  conjugated; the old script did not, so its S was the other sector's (the
-  Lee-2013 export test compared sorted |S|^2 because of this). Now the
-  script flips like Show S.
+  conjugated; the old script did not, so its S was the other sector's.
+  Now the script flips like Show S. (This only bites a graph whose root is
+  a drawn conjugated node. Line-only graphs such as the Lee-2013 scenes have
+  no root, and the old export already matched them exactly.)
 - **Spanning tree.** The old script reused the GUI's cached tree; Show S
   recomputes it from the root with hub bridge links. The script now does
   the same.
