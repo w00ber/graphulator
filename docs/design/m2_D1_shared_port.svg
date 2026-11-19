@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1020" height="460" viewBox="0 0 1020 460" font-family="Helvetica, Arial, sans-serif">
+  <rect width="1020" height="460" fill="#ffffff"/>
+  <defs>
+    <g id="src">
+      <circle cx="0" cy="0" r="16" fill="#fff" stroke="#222" stroke-width="2"/>
+      <path d="M -9 0 q 4.5 -8 9 0 t 9 0" fill="none" stroke="#222" stroke-width="2"/>
+    </g>
+    <g id="gnd">
+      <line x1="-14" y1="0" x2="14" y2="0" stroke="#222" stroke-width="2"/>
+      <line x1="-9" y1="5" x2="9" y2="5" stroke="#222" stroke-width="2"/>
+      <line x1="-4" y1="10" x2="4" y2="10" stroke="#222" stroke-width="2"/>
+    </g>
+    <!-- vertical resistor, 50 tall, starting at 0 -->
+    <path id="resv" d="M0 0 v8 l8 4 l-16 8 l16 8 l-16 8 l16 8 l-8 4 v2" fill="none" stroke="#222" stroke-width="2"/>
+    <!-- horizontal resistor, 54 long -->
+    <path id="resh" d="M0 0 h8 l4 -8 l8 16 l8 -16 l8 16 l8 -16 l4 8 h6" fill="none" stroke="#222" stroke-width="2"/>
+  </defs>
+
+  <!-- ===== Panel A: node / parallel (new model) ===== -->
+  <text x="20" y="30" font-size="17" font-weight="bold" fill="#222">A. One node: lines side by side</text>
+  <text x="20" y="50" font-size="13" fill="#555">what the 4.0 file says (both ends name plane port0)</text>
+  <!-- source + Z0 -->
+  <use href="#gnd" x="60" y="380"/>
+  <line x1="60" y1="380" x2="60" y2="356" stroke="#222" stroke-width="2"/>
+  <use href="#src" x="60" y="340"/>
+  <line x1="60" y1="324" x2="60" y2="290" stroke="#222" stroke-width="2"/>
+  <use href="#resv" x="60" y="240" transform="rotate(180 60 265)"/>
+  <text x="76" y="270" font-size="13" fill="#222">Z0</text>
+  <line x1="60" y1="240" x2="60" y2="160" stroke="#222" stroke-width="2"/>
+  <line x1="60" y1="160" x2="150" y2="160" stroke="#222" stroke-width="2"/>
+  <circle cx="150" cy="160" r="5" fill="#222"/>
+  <text x="136" y="148" font-size="13" fill="#222">node</text>
+  <!-- line A -->
+  <line x1="150" y1="160" x2="150" y2="110" stroke="#222" stroke-width="2"/>
+  <line x1="150" y1="110" x2="190" y2="110" stroke="#222" stroke-width="2"/>
+  <rect x="190" y="96" width="130" height="28" rx="4" fill="#dbe8f7" stroke="#2a5d9f" stroke-width="2"/>
+  <text x="255" y="115" font-size="13" text-anchor="middle" fill="#2a5d9f">line A</text>
+  <circle cx="330" cy="110" r="4" fill="#fff" stroke="#222" stroke-width="2"/>
+  <text x="338" y="114" font-size="12" fill="#555">open</text>
+  <!-- line B -->
+  <line x1="150" y1="160" x2="150" y2="210" stroke="#222" stroke-width="2"/>
+  <line x1="150" y1="210" x2="190" y2="210" stroke="#222" stroke-width="2"/>
+  <rect x="190" y="196" width="130" height="28" rx="4" fill="#f7e3d3" stroke="#a65a1f" stroke-width="2"/>
+  <text x="255" y="215" font-size="13" text-anchor="middle" fill="#a65a1f">line B</text>
+  <circle cx="330" cy="210" r="4" fill="#fff" stroke="#222" stroke-width="2"/>
+  <text x="338" y="214" font-size="12" fill="#555">open</text>
+  <!-- shield/ground return -->
+  <line x1="255" y1="230" x2="255" y2="380" stroke="#999" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <line x1="60" y1="380" x2="255" y2="380" stroke="#999" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="20" y="420" font-size="14" fill="#222">port sees  Y = Y_A + Y_B</text>
+  <text x="20" y="440" font-size="13" fill="#555">(admittances add: parallel)</text>
+
+  <!-- ===== Panel B: series (legacy hub) ===== -->
+  <text x="365" y="30" font-size="17" font-weight="bold" fill="#222">B. Legacy port hub: lines in series</text>
+  <text x="365" y="50" font-size="13" fill="#555">what the hub column computes (TL_5's notes)</text>
+  <use href="#gnd" x="405" y="380"/>
+  <line x1="405" y1="380" x2="405" y2="356" stroke="#222" stroke-width="2"/>
+  <use href="#src" x="405" y="340"/>
+  <line x1="405" y1="324" x2="405" y2="290" stroke="#222" stroke-width="2"/>
+  <use href="#resv" x="405" y="240" transform="rotate(180 405 265)"/>
+  <text x="421" y="270" font-size="13" fill="#222">Z0</text>
+  <line x1="405" y1="240" x2="405" y2="140" stroke="#222" stroke-width="2"/>
+  <line x1="405" y1="140" x2="450" y2="140" stroke="#222" stroke-width="2"/>
+  <rect x="450" y="124" width="110" height="32" rx="4" fill="#dbe8f7" stroke="#2a5d9f" stroke-width="2"/>
+  <text x="505" y="145" font-size="13" text-anchor="middle" fill="#2a5d9f">Z_in(line A)</text>
+  <line x1="560" y1="140" x2="600" y2="140" stroke="#222" stroke-width="2"/>
+  <line x1="600" y1="140" x2="600" y2="200" stroke="#222" stroke-width="2"/>
+  <rect x="545" y="200" width="110" height="32" rx="4" fill="#f7e3d3" stroke="#a65a1f" stroke-width="2"/>
+  <text x="600" y="221" font-size="13" text-anchor="middle" fill="#a65a1f">Z_in(line B)</text>
+  <line x1="600" y1="232" x2="600" y2="380" stroke="#222" stroke-width="2"/>
+  <line x1="405" y1="380" x2="600" y2="380" stroke="#222" stroke-width="2"/>
+  <text x="365" y="420" font-size="14" fill="#222">port sees  Z = Z_A + Z_B</text>
+  <text x="365" y="440" font-size="13" fill="#555">(impedances add; line A's return is floating)</text>
+
+  <!-- ===== Panel C: modes on one port (D2) ===== -->
+  <text x="700" y="30" font-size="17" font-weight="bold" fill="#222">C. Two modes on one port</text>
+  <text x="700" y="50" font-size="13" fill="#555">CMT hub = Foster I: tanks in series</text>
+  <use href="#gnd" x="740" y="380"/>
+  <line x1="740" y1="380" x2="740" y2="356" stroke="#222" stroke-width="2"/>
+  <use href="#src" x="740" y="340"/>
+  <line x1="740" y1="324" x2="740" y2="290" stroke="#222" stroke-width="2"/>
+  <use href="#resv" x="740" y="240" transform="rotate(180 740 265)"/>
+  <text x="756" y="270" font-size="13" fill="#222">Z0</text>
+  <line x1="740" y1="240" x2="740" y2="120" stroke="#222" stroke-width="2"/>
+  <line x1="740" y1="120" x2="800" y2="120" stroke="#222" stroke-width="2"/>
+  <!-- tank 1: L || C between x=800 and x=880 at y=120 -->
+  <g stroke="#2e7d4f" stroke-width="2" fill="none">
+    <line x1="800" y1="120" x2="810" y2="120"/><line x1="810" y1="100" x2="810" y2="140"/>
+    <path d="M810 100 h12 q6 -10 12 0 q6 -10 12 0 q6 -10 12 0 h12"/>
+    <line x1="870" y1="100" x2="870" y2="140"/>
+    <line x1="810" y1="140" x2="835" y2="140"/><line x1="835" y1="130" x2="835" y2="150"/><line x1="845" y1="130" x2="845" y2="150"/><line x1="845" y1="140" x2="870" y2="140"/>
+    <line x1="870" y1="120" x2="930" y2="120"/>
+  </g>
+  <text x="840" y="168" font-size="13" text-anchor="middle" fill="#2e7d4f">mode 1</text>
+  <line x1="930" y1="120" x2="930" y2="200" stroke="#222" stroke-width="2"/>
+  <!-- tank 2 vertical-ish: horizontal at y=220 from 930 back to 850 -->
+  <g stroke="#2e7d4f" stroke-width="2" fill="none">
+    <line x1="930" y1="200" x2="930" y2="210"/>
+    <line x1="890" y1="210" x2="970" y2="210"/>
+    <path d="M890 210 v8 q-10 6 0 12 q-10 6 0 12 q-10 6 0 12 v8"/>
+    <line x1="970" y1="210" x2="970" y2="235"/><line x1="960" y1="235" x2="980" y2="235"/><line x1="960" y1="245" x2="980" y2="245"/><line x1="970" y1="245" x2="970" y2="272"/>
+    <line x1="890" y1="272" x2="970" y2="272"/>
+    <line x1="930" y1="272" x2="930" y2="282"/>
+  </g>
+  <text x="872" y="250" font-size="13" text-anchor="end" fill="#2e7d4f">mode 2</text>
+  <line x1="930" y1="282" x2="930" y2="380" stroke="#222" stroke-width="2"/>
+  <line x1="740" y1="380" x2="930" y2="380" stroke="#222" stroke-width="2"/>
+  <text x="700" y="420" font-size="14" fill="#222">port sees  z = (i/2) K^T M_iso^-1 K</text>
+  <text x="700" y="440" font-size="13" fill="#555">(one mode alone: y ∝ M_iso,jj, your D2 point)</text>
+</svg>
