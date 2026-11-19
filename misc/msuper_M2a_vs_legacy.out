@@ -1,0 +1,12 @@
+max_f |S11_legacy(f_max x s) - S11_M2a(legacy's two sectors)|, peak |S11|^2 [dB]
+two sectors = {-1..0}, or {0..1} for an up-conversion anchor (legacy twin at f + f_p)
+f_worst: where the x4 residual peaks; f_p: the pump; DC: the line has a free DC mode
+file                                            x1        x2        x4  f_worst    f_p    leg x1   2 sect     auto window  DC
+INTERMODE_LEE2013_CONVERSION.pgraph       4.45e-03  2.63e-03  1.47e-03   1.8382  3.843    -0.002   -0.002   -0.002 -5..4  no (L load)
+INTERMODE_LEE2013_DEGENERATE_AMP.pgraph   1.59e-02  9.24e-03  4.85e-03   1.8401  3.680     5.542    5.541    5.575 -3..2  no (L load)
+INTERMODE_LEE2013_NONDEGENERATE_AMP.pgra  2.74e-01  1.56e-01  7.61e-02   1.8400  7.523    20.904   20.894   22.315 -3..2  no (L load)
+LINE_PUMPED_AMP_AND_CONV.pgraph           1.19e-02  1.19e-02  1.19e-02   5.0000  4.500    -0.004   -0.013   -0.016 -3..2  yes
+LINE_PUMPED_LOADED.pgraph                 1.21e-05  3.85e-06  8.65e-06   7.0000  9.000     0.001    0.001    0.000 -3..2  no (L load)
+LINE_PUMPED_TERMINATION.pgraph            2.92e-03  4.21e-03  4.54e-03   7.0000  9.000     0.115    0.108    0.092 -4..3  yes
+TL_3_PUMPED_TERMINATION_AMPLIFIER.pgraph  3.31e-03  1.79e-03  1.69e-03   4.9688  9.000     0.074    0.083    0.061 -4..3  yes
+TL_4_INDUCTIVELY_LOADED_LINE.pgraph       5.20e-06  5.16e-06  4.55e-06   5.5000  8.000     0.001    0.001    0.000 -3..2  no (L load)

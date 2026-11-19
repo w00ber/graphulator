@@ -1,6 +1,6 @@
 # Step 4, milestone 2: embedding circuits and sector windows (design, for review)
 
-*Status: proposal, 18 Nov 2026. No code yet. **[decide]** items need JA's
+*Status: proposal 18 Nov 2026; decisions 19 Nov; M2a built 19 Nov (last section). **[decide]** items need JA's
 call. Numbers come from survey scripts run on the shipped files.
 *(speculation)* marks physics I have not tested.*
 
@@ -289,3 +289,125 @@ things on one port".
   default, with a toggle to power.
 - **D7:** pin e^{-i omega t}; fix the preamble of
   `pumped_line_termination.md`.
+
+## M2a as built (19 Nov 2026)
+
+`src/graphulator/engine/network.py` (Qt-free). `engine.solve(doc)` routes:
+- lumped documents go to milestone 1, unchanged;
+- physical documents (lines, L/C/R blocks, ports, element pumps, no modes)
+  go to the network, returning `NetworkResult`;
+- documents with modes and lines are refused with `NotSupportedError`,
+  naming 2b (CMT block on port planes: PORT_SHARED_2LINES) or 2c (taps:
+  TL_2, LINE_TAP_2NODES, NODE_2LINES_TAP).
+
+**Formulation, as implemented.** It is a modified nodal analysis per
+sector, chosen so that every matrix entry is entire in frequency:
+- one V per plane (KCL rows);
+- per line, (I1, I2) with the two ABCD rows V1 = A V2 + B I2 and
+  I1 = C V2 + D I2. A..D are cos/sin of the complex electrical length
+  t = (pi f / FSR + i alpha) frac, cascaded over the sections. There is no
+  cot/csc, so a line pole (f_m = n FSR) is not a division by zero;
+- one flux Phi per plane with an inductor or a pump, with the row
+  V + i omega Phi = 0. An inductor draws Phi/L, and the pump draws
+  (delta/2) e^{-+i phi} Phi_{m-+1}. A sector landing on DC is therefore
+  regular when a static L is present; without one (TL_3: 1/L0 = 0) it is a
+  true zero mode, and S is NaN at that point with a warning.
+- L and C blocks are read from `f_Z` against their line's Ztx
+  (`extras.load_of`): L = Ztx/(2 pi f_Z), C = 1/(2 pi f_Z Ztx). R is
+  numeric. `"matched"` R on a physical document is refused.
+- Components are planes joined by blocks; only components with a port are
+  solved. The order is the first port's plane order.
+- `NetworkResult`:
+  - `S` is the sector-0 block;
+  - `S_sectors[m]` holds out at (p, m), in at (q, 0);
+  - `photon(m)` is S sqrt(|f|/|f_m|);
+  - `label(p, q, m)` gives the D6 labels;
+  - `history` lists (window, metric) for the auto window.
+
+**Depth (D4).** `engine.pump_depth(doc, pumped)` converts the anchor:
+
+    delta = 4 pi rate sqrt(w_n C_n w_m C_m) / |u_n u_m|      (w = 2 pi f, physical units)
+
+- (n, m) is legacy's anchor pair (`clamp_mode`, `pump_partners`, the same
+  tie rule as `pump_anchor`).
+- u, C, f are LineResonator's loaded/stepped mode quantities.
+- TL_3 gives 6 pi^2 rate / Ztx. That is E0's 3 pi^2 rate / FSR times
+  2 FSR / Ztx (natural to physical), to 1e-14.
+- Not done: storing the depth in the model (see "Open").
+
+**Window (D5).**
+- With no pump the window is {0}.
+- An explicit [m_lo, m_hi] must contain 0.
+- `"auto"` grows {-1..0}, {-2..1}, ... up to `sector_max` sectors and stops
+  when the metric drops below `sector_tol`. The metric is the one proposed:
+  max |dS| over the smaller window's sectors divided by
+  max(max_f max_p ||S_pp^(0)|^2 - 1|, 1e-2). I read "G" as the reflection
+  gain: relative for a one-port amplifier, about absolute for a matched
+  multiport or for conversion.
+- On the cap it warns "not converged", adding "possibly beyond threshold"
+  when the peak |S| grew over the last three windows.
+- On the shipped files, auto stops at {-3..2} to {-5..4}.
+
+**Gates** (`tests/test_engine_network.py`, 50 tests, all passing):
+1. TL_1 against the closed form and against legacy (tail closure on): both
+   2e-14. TL_5 in parallel (Y_a + Y_b) against the closed form: 1e-14. A
+   two-port stepped line with unequal Z0 against the ABCD S formula; a
+   lossy line against complex theta; lossless unpumped |S| = 1.
+2. TL_3 against `hb_sectors` at {-1..0}, {-2..1}, {-3..2}, {-4..3} and
+   {-6..5}: 4e-14 away from line poles.
+   - Within 1e-3 FSR of a pole the oracle's cot/csc loses digits (1.7e-9 at
+     f = 6.0000001). That residual is the oracle's.
+   - E0's peak table is reproduced to its printed digits (dB and f) at
+     rates 0.05, 0.2, 0.8 and 1.6.
+3. All 8 pumped files against an HB written in the test. It has its own
+   ABCD cascade, its own mode roots (bisection on the real mode
+   condition), C_n by Gauss-Legendre and its own anchor rule.
+   - Depth agrees to 1e-14. S agrees to at most 2.7e-12 at {-1..0} and
+     {-3..2}; the worst case is the Lee nondegenerate amplifier, where
+     |S| reaches 7.
+   - The test's tolerance is 1e-10 max(1, max|S|).
+   - For scale: a 1e-6 change in depth moves S by 1e-8 to 1e-4, so the
+     gate discriminates.
+4. Manley-Rowe at 1e-12 on all 8 (all are lossless).
+5. Kept poles: f_max 14 -> 40 leaves S unchanged (1e-13). The full gate 3
+   (promoted poles) belongs to M2b.
+6. TL_3 at rate 3.2, capped at 8 sectors: warns "not converged".
+
+**Gate 5, reported** (`misc/msuper_M2a_vs_legacy.py`, `.out`). The
+comparison is legacy against M2a in legacy's own two sectors: {-1..0}, or
+{0..1} for an up-conversion anchor, since legacy puts that twin at
+f + f_p. The first version of the script compared Lee conversion at
+{-1..0} and showed an O(1) gap; that was my comparison, not physics.
+- **Loaded lines (Lee x3, TL_4, LINE_PUMPED_LOADED).** The gap roughly
+  halves each time legacy's f_max doubles (Lee nondegenerate: 0.27, 0.16,
+  0.076). That is the dropped pump-tail couplings: legacy pumps comb pairs
+  only, and its tail closure covers the port, not the pump.
+  - The Lee nondegenerate amplifier peaks at 20.9 dB in two sectors and
+    22.3 dB in the converged window.
+- **Unloaded lines (TL_3, LINE_PUMPED_TERMINATION,
+  LINE_PUMPED_AMP_AND_CONV).** A floor of 2e-3 to 1e-2 does not fall with
+  f_max. *(speculation)* It is the DC mode, which legacy's pump never
+  couples (tap_couplings drops n = 0). Consistent with that, the residual
+  peaks at the sweep edge where the idler frequency is closest to 0. Not
+  demonstrated.
+
+**D7.** The preamble of `docs/pumped_line_termination.md` now says
+e^{-i omega t}, and so does its section-7 remark.
+
+**Open (needs JA):**
+- **Storing the depth (D4).** The engine converts the anchor at compile
+  time. Storing `depth` on `Pumped` is a schema field, and it raises a
+  question for `to_legacy`: once the depth is edited, the stored
+  {rate, n_ref} is stale. Should export recompute the rate from the depth
+  (the inverse is the same formula), or keep the anchor as provenance
+  only? Until this is settled, `Pumped.extras["depth"]`, when present,
+  overrides the anchor (used for tests only).
+- **TL_5 (D1).** The engine gives the parallel answer. The legacy GUI
+  still shows the two-job split, and `test_two_lines_one_port_is_two_jobs`
+  still pins it. Rewriting TL_5's notes and dropping that test belongs to
+  the slice that switches Show S, or the notes would describe a plot the
+  GUI does not draw. Your call.
+- **Pump phase.** phi in 1/L(t) = 1/L0 + delta cos(omega_p t + phi) is
+  read from `Pumped.phase` in degrees. With one pump it is a gauge: |S| is
+  independent of it, and only conversion phases move. No gate pins it
+  against legacy's edge phase.

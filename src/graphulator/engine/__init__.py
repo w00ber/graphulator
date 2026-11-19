@@ -1,11 +1,16 @@
-"""The M_super engine (Qt-free). Step 4, milestone 1: lumped documents,
-solved exactly as drawn (docs/design/step4_msuper_m1.md).
+"""The M_super engine (Qt-free).
+
+- Milestone 1 (docs/design/step4_msuper_m1.md): lumped documents, solved
+  exactly as drawn; the legacy engine (model/legacy_job) is its oracle,
+  bit for bit.
+- Milestone 2a (docs/design/step4_msuper_m2.md): physical documents (lines,
+  L/C/R blocks, ports, element pumps) as an exact network over a sector
+  window (engine/network.py).
 
     from graphulator import engine
-    results = engine.solve(doc)          # one ComponentResult per component
-    systems = engine.compile_document(doc)
-
-The legacy engine (model/legacy_job) is its regression oracle.
+    results = engine.solve(doc)          # one result per component
+    systems = engine.compile_document(doc)     # lumped only
+    nets = engine.compile_network(doc)         # physical only
 """
 from __future__ import annotations
 
@@ -18,9 +23,12 @@ from ..model.schema import Document
 from ..model.validate import Issue
 from .kernel import M_stack, scattering
 from .msuper import Channel, MSuper, NotLumpedError, Row, compile_document
+from .network import Network, NetworkResult, NotSupportedError, classify, compile_network, pump_depth, solve_network
 
-__all__ = ["ComponentResult", "Channel", "MSuper", "NotLumpedError", "Row",
-           "M_stack", "compile_document", "scattering", "solve"]
+__all__ = ["ComponentResult", "Channel", "MSuper", "Network", "NetworkResult",
+           "NotLumpedError", "NotSupportedError", "Row", "M_stack", "classify",
+           "compile_document", "compile_network", "pump_depth", "scattering",
+           "solve", "solve_network"]
 
 
 @dataclass
@@ -34,8 +42,14 @@ class ComponentResult:
     issues: List[Issue] = field(default_factory=list)
 
 
-def solve(doc: Document, f=None) -> List[ComponentResult]:
-    """S per component over the grid f (default: the document's sweep)."""
+def solve(doc: Document, f=None):
+    """S per component over the grid f (default: the document's sweep).
+
+    Lumped documents give ComponentResult (milestone 1), physical ones
+    NetworkResult (milestone 2a). Raises NotSupportedError for documents
+    that need a later milestone (lumped modes with lines: 2b, taps: 2c)."""
+    if classify(doc) == "network":
+        return solve_network(doc, f)
     if f is None:
         from ..model.legacy_job import sweep_grid
         f = sweep_grid(doc)

@@ -81,8 +81,11 @@ def test_shipped_bit_for_bit(key):
 
 @pytest.mark.parametrize("key", NOT_LUMPED)
 def test_non_lumped_refused(key):
+    """The milestone-1 compiler refuses them; engine.solve routes them to
+    the milestone-2 network (tests/test_engine_network.py) or refuses them
+    with the milestone they need."""
     with pytest.raises(engine.NotLumpedError, match="milestone 2"):
-        engine.solve(M.load(DOCS[key]))
+        engine.compile_document(M.load(DOCS[key]))
 
 
 # ---------------------------------------------------------------------------

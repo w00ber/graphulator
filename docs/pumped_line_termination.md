@@ -18,8 +18,11 @@ $$
 \frac{1}{L(t)} = \frac{1}{L_0} + \delta\cos(\omega_p t).
 $$
 
-JAA conventions as everywhere in this project: $e^{+i\omega t}$, decaying poles in the
-lower half plane, $M$ diagonal $f_\mathrm{drive} \pm f_0 + \tfrac{i}{2}B$.
+JAA conventions as everywhere in this project: $e^{-i\omega t}$, decaying poles in the
+lower half plane, $M$ diagonal $f_\mathrm{drive} \pm f_0 + \tfrac{i}{2}B$. (An earlier
+version of this line said $e^{+i\omega t}$, which contradicts the other two: with
+$Z_\mathrm{ind} = -i\omega L$ and poles below the axis the time dependence is
+$e^{-i\omega t}$. Decision D7, docs/design/step4_msuper_m2.md.)
 
 ---
 
@@ -446,7 +449,7 @@ It is tempting — and it was the first proposal — to let the **sign** of that
 reactance pick the element type. Two reasons not to:
 
 1. **The project's sign convention is not the textbook one.** `cmtline_core`
-   declares `Z_ind = -1j*w*L` and `Z_cap = +1j/(w*C)` (JAA, $e^{+i\omega t}$),
+   declares `Z_ind = -1j*w*L` and `Z_cap = +1j/(w*C)` (JAA, $e^{-i\omega t}$),
    so here an *inductor* has negative reactance and a *capacitor* positive —
    the opposite of the usual reading. A bare signed field would be a standing
    trap. (The resonance condition above is of course convention-independent.)
