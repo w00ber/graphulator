@@ -413,3 +413,88 @@ e^{-i omega t}, and so does its section-7 remark.
 - **Window metric:** JA asked what it meant; explained in chat. Kept as
   built until a reply.
 - **Pump phase:** kept as specified (degrees, phi in cos(omega_p t + phi)).
+
+## M2b as built (19 Nov 2026)
+
+**Routing.**
+- Physical documents with lumped modes attached directly to planes now go
+  to the network. Of the shipped files this adds PORT_SHARED_2LINES.
+- Still refused:
+  - taps (M2c: TL_2, LINE_TAP_2NODES, NODE_2LINES_TAP);
+  - lumped modes together with element pumps;
+  - modes outside sector 0 (conjugated, or pumped away from the root) on a
+    document with blocks. Both of these are "later" in the build order.
+- Lumped documents still go to milestone 1 by default, bit for bit with
+  legacy. `solve_network(doc)` also accepts them; that is the M2 path for
+  gate 4.
+
+**CMT block (D2, D3).**
+- The modes of each milestone-1 component form one block. Its M_iso is
+  milestone 1's M without (i/2) K K^dag, so frames, conjugation and pumped
+  couplings all carry over unchanged.
+- It is stamped bordered, with j = sqrt(Z_ref) I:
+
+      M_iso a - K j = 0,        V / sqrt(Z_ref) - (i/2) K^dag a = 0
+
+  I joins the plane's KCL. M_iso is never inverted.
+- Z_ref is read from `units.z_ref` (default 50 ohm; nothing writes it yet).
+  Every attachment rate is a leak rate into Z_ref.
+- A port without Z0 is terminated in Z_ref, and a matched R is Z_ref. For
+  lumped documents this reduces exactly to milestone 1.
+- *Physics to check:* a lone mode on a port is y = -2i (f - f0)/(gamma
+  Z_ref), i.e. a shunt parallel tank. Away from f0 it is a low impedance
+  across the port: the CMT convention's "S = -1 off resonance". So on
+  PORT_SHARED_2LINES the two lines are visible only near the mode
+  (4.4 GHz); elsewhere the mode's block shorts the port. This follows from
+  D1 + D2, but it is the first file where it shows.
+
+**Kept poles (`promote=True`).**
+- `solve.kept_poles[line]` is either `{'f_max': F}` (DC when the line has
+  it, plus every pole with 0 < f_n <= F) or a list of indices (0 = DC).
+- The poles are those of the line together with its load block (absorbed
+  into the line element), so they are the loaded ones. Each pole:
+  - sits at p_n = f_n - i B/2, with B = 2 alpha FSR / pi;
+  - has residue R_n = (i/(4 pi C_n)) u_n u_n^T, twice that for DC
+    (autograph.LineResonator's u, C, f).
+- Lossy loaded lines are refused: their poles are not at f_n - i B/2
+  exactly.
+- Rows per pole: (f - p_n) a_n = u_n . I_in. The line's two rows then take
+  one of two equivalent forms, chosen point by point:
+  - within 0.01 FSR of a kept pole: V - sum R a - Z_rem I_in = 0. Z_rem is
+    the mean over a circle of radius 0.02 FSR (16 points), exact because
+    Z_rem is analytic there;
+  - elsewhere: the pole-free ABCD rows on V_l = V - sum R a +
+    sum R I_in/(f - p).
+- Why two forms: Z_rem keeps the poles that are not kept. The -f_n partners
+  land in sector -1, so the first version, which used impedance rows
+  everywhere, lost digits there: 7e-2 at an exact hit on TL_3. The ABCD
+  form blows up only at the kept poles, which is exactly where it is not
+  used.
+- Off by default. S is the same either way, and the plain ABCD rows have no
+  poles at all. The rows are the representation a future M_super tab and
+  mode-level couplings need.
+
+**Gates** (`tests/test_engine_m2b.py`, 81 tests; all 222 engine tests
+pass):
+- **Gate 4.** All 54 lumped files through the network match milestone 1 to
+  within 1e-13 max(1, max|S|). The median difference is 2e-15. The worst is
+  6.6e-12 on DELTA_AMP_WIDE, where |S| = 526 (54 dB), i.e. 1.3e-14
+  relative. A loss port (internal plane + matched R) matches to 1e-13.
+- **PORT_SHARED_2LINES** against Y_a + Y_b + 1/(Z0 z): 5e-15.
+- **Z_ref:** a lone mode reflects as in milestone 1 when Z0 = Z_ref, and as
+  the mismatched z/2 when Z0 = 2 Z_ref.
+- **Gate 3:**
+  - S is invariant when every pole below f_max is promoted, on all 11
+    network files and in every sector (the auto windows come out the same).
+  - Subsets [0], [3], [1,2,3], [2,5,9] on TL_1 (whose sweep hits pole 3
+    exactly) and on TL_3 (all sectors).
+  - Tolerance: 1e-11 max(1,|S|)^2. The worst case is 2.7e-12 on Lee
+    conversion, beside its barely loaded line mode (port Z0 = 38718 ohm).
+    The condition number of the equilibrated system there is 4e3 for both
+    forms, so this is rounding at the problem's conditioning; changing the
+    circle radius tenfold does not move it. Elsewhere the forms agree to
+    1e-15 to 1e-14.
+- **Residues and positions** of every kept pole (uniform, loaded, stepped,
+  two-line) against a contour integral of the exact impedance: 1e-9. Z_rem
+  stays bounded at f_n +- 1e-7 FSR. Uniform loss: the residues hold at
+  f_n - i alpha FSR / pi.

@@ -38,7 +38,11 @@ def _line_resonator(doc: Document, blk):
             end = next(e for e in ("x0", "xL") if blk.terminals.get(e) == b.terminals.get("a"))
             load = {"end": end, "type": {"L": "inductive", "C": "capacitive"}[b.type],
                     "f_Z": b.params["f_Z"]}
-    f_max = (doc.solve.kept_poles.get(blk.id) or {}).get("f_max", p["FSR"])
+    spec = doc.solve.kept_poles.get(blk.id) or {}
+    if isinstance(spec, dict):
+        f_max = spec.get("f_max", p["FSR"])
+    else:                                   # a list of pole indices: no f_max to clamp to
+        f_max = float(p["FSR"]) * (max([0] + [int(n) for n in spec]) + 64)
     return LineResonator(line_id=blk.id, FSR=float(p["FSR"]), Ztx=float(p["Ztx"]),
                          f_max=float(f_max), label=blk.label or blk.id,
                          alpha_uniform=float(p.get("alpha_uniform", 0.0)),

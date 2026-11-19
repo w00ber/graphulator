@@ -6,6 +6,9 @@
 - Milestone 2a (docs/design/step4_msuper_m2.md): physical documents (lines,
   L/C/R blocks, ports, element pumps) as an exact network over a sector
   window (engine/network.py).
+- Milestone 2b: lumped modes on such documents as one CMT block per
+  component, an impedance multiport on their planes; line poles promoted to
+  mode rows on request (solve_network(doc, promote=True)), S unchanged.
 
     from graphulator import engine
     results = engine.solve(doc)          # one result per component
@@ -45,9 +48,10 @@ class ComponentResult:
 def solve(doc: Document, f=None):
     """S per component over the grid f (default: the document's sweep).
 
-    Lumped documents give ComponentResult (milestone 1), physical ones
-    NetworkResult (milestone 2a). Raises NotSupportedError for documents
-    that need a later milestone (lumped modes with lines: 2b, taps: 2c)."""
+    Lumped documents give ComponentResult (milestone 1, bit for bit with
+    legacy), physical ones NetworkResult (milestone 2). Raises
+    NotSupportedError for documents that need a later milestone (taps: 2c;
+    lumped modes with element pumps: later)."""
     if classify(doc) == "network":
         return solve_network(doc, f)
     if f is None:

@@ -42,7 +42,7 @@ NETWORK = ["TL_1_OPEN_LINE_ON_A_PORT.pgraph", "TL_3_PUMPED_TERMINATION_AMPLIFIER
            "LINE_PUMPED_LOADED.pgraph", "LINE_PUMPED_TERMINATION.pgraph"]
 PUMPED = [k for k in NETWORK if M.load(FILES[k]).pumped]
 REFUSED = {"TL_2_MODE_TAPPED_ONTO_A_LINE.pgraph": "2c", "LINE_TAP_2NODES.pgraph": "2c",
-           "NODE_2LINES_TAP.pgraph": "2c", "PORT_SHARED_2LINES.pgraph": "2b"}
+           "NODE_2LINES_TAP.pgraph": "2c"}       # PORT_SHARED_2LINES: M2b, test_engine_m2b
 
 
 def load(name):

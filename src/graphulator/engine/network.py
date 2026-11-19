@@ -1,10 +1,15 @@
 """Physical documents as an exact circuit network over frequency sectors
-(step 4, milestone 2a; design note docs/design/step4_msuper_m2.md).
+(step 4, milestones 2a and 2b; design note docs/design/step4_msuper_m2.md).
 
-Scope (M2a): line blocks (uniform, stepped, uniform loss), L/C/R blocks,
-port planes with Z0, element pumps (a modulated 1/L at a plane), one pump
-tone, sector windows. Lumped modes on such documents (shared ports, taps)
-are milestones 2b/2c and are refused here.
+Scope:
+- M2a: line blocks (uniform, stepped, uniform loss), L/C/R blocks, port
+  planes with Z0, element pumps (a modulated 1/L at a plane), one pump
+  tone, sector windows.
+- M2b: the lumped modes as one CMT block per component, an impedance-type
+  multiport on the planes they attach to (decision D2); line poles promoted
+  to mode rows (kept poles), with S invariant.
+- Refused: taps (M2c) and lumped modes together with element pumps (later:
+  their sector images are the physical workflow's generate step).
 
 Convention: time dependence e^{-i omega t}, decaying poles in the lower half
 plane (decision D7), omega = 2 pi f with f in the document's frequency unit.
@@ -31,9 +36,44 @@ The pump's depth delta is the stored ``Pumped.depth`` (decision D4). A pump
 without one (a document built by hand) is converted from its legacy
 {rate, n_ref} anchor (model/pump_depth.py, gated in
 tests/test_engine_network.py).
+
+CMT block (D2, D3). The modes of one milestone-1 component, seen from the
+planes they attach to, are the multiport z = (i/2) K^dag M_iso^{-1} K in
+units of the document reference impedance Z_ref (``units.z_ref``, default
+50 ohm): every attachment rate is a leak rate into Z_ref. It is solved
+bordered, never inverting M_iso: with j_p = sqrt(Z_ref) I_p (the current
+into the block at plane p),
+
+    M_iso a - K j = 0,        V_p / sqrt(Z_ref) - (i/2) (K^dag a)_p = 0,
+
+and I_p joins the plane's KCL like any other element (D1). A lumped
+document is then the reflection of its own z on Z_ref terminations; that is
+an identity (Woodbury), gated against milestone 1 on every lumped file. A
+port without Z0 is terminated in Z_ref, a matched R is Z_ref.
+
+Kept poles. A line pole n promoted to a mode row splits the line's
+open-circuit impedance exactly, Z = Z_rem + sum_n R_n / (f - p_n) with
+p_n = f_n - i B_n / 2 and R_n = (i / (4 pi C_n)) u_n u_n^T (twice that for
+the DC pole, which has no -f partner); u_n are the mode's end amplitudes and
+C_n its mass (autograph.LineResonator; a load block of the line is absorbed
+into it, so the poles are the loaded ones). The line's two ABCD rows become
+
+    V - sum_n R_n a_n - Z_rem I_in = 0,     (f - p_n) a_n - u_n . I_in = 0,
+
+with Z_rem = Z - sum_n R_n / (f - p_n), evaluated as the mean over a small
+circle around f (Z_rem is analytic there, so the mean is exact and avoids
+the cancellation). That form is used only near a kept pole: Z_rem still has
+the poles that are not kept (the -f_n partners above all), and next to them
+impedance rows lose digits. Elsewhere the line keeps its pole-free ABCD rows,
+written on its own voltage V_l = V - sum_n R_n a_n + sum_n R_n I_in / (f - p_n),
+which is regular away from the kept poles. The two forms are the same
+equations. S does not depend on which poles are kept (gate 3); the rows are
+the representation the M_super tab and, later, mode-level couplings need.
+They are built only when asked for (``promote=True``).
 """
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -42,8 +82,11 @@ import numpy as np
 from ..model.pump_depth import anchor_depth
 from ..model.schema import Document
 from ..model.validate import Issue
+from .kernel import diagonal, f_axis, k_matrices, static_part
+from .msuper import MSuper, compile_document
 
-M2A = ("step 4, milestone 2a: lines, L/C/R blocks, ports and element pumps")
+M2B = ("step 4, milestone 2b: lines, L/C/R blocks, ports, element pumps, and "
+       "lumped modes attached directly to planes")
 
 
 class NotSupportedError(ValueError):
@@ -55,6 +98,29 @@ class NotSupportedError(ValueError):
 # ---------------------------------------------------------------------------
 
 @dataclass
+class KeptPole:
+    """One promoted line pole: a mode row (f - p) a = u . I_in."""
+    n: int
+    f0: float
+    B: float
+    u: Tuple[float, float]              # amplitude at (x0, xL), 1 at the open end
+    C: float                            # mode mass C_n (C_line for DC)
+
+    @property
+    def p(self) -> complex:
+        return self.f0 - 0.5j * self.B
+
+    @property
+    def c(self) -> complex:
+        """Residue scale: R = c u u^T (i/(4 pi C), doubled for DC)."""
+        return 1j * (2.0 if self.n == 0 else 1.0) / (4 * np.pi * self.C)
+
+    def residue(self) -> np.ndarray:
+        u = np.asarray(self.u)
+        return self.c * np.outer(u, u)
+
+
+@dataclass
 class LineEl:
     id: str
     x0: Optional[int]                   # plane index, None = ground
@@ -62,6 +128,29 @@ class LineEl:
     FSR: float
     alpha: float                        # one-way attenuation alpha*ell [Np]
     sections: Tuple[Tuple[float, float], ...]   # (Z, frac) from x0 to xL
+    load: Optional[Tuple[str, float]] = None    # absorbed shunt L: (end, 1/L)
+    poles: List[KeptPole] = field(default_factory=list)
+
+
+@dataclass
+class CMTBlock:
+    """The lumped modes of one milestone-1 component, as a multiport on the
+    planes of its channels (one column of K per plane)."""
+    ms: MSuper
+    planes: List[int]
+    K: np.ndarray                       # (N, P) complex
+    Zr: float
+
+    def M_iso(self, f) -> np.ndarray:
+        """(n_f, N, N): M without the port loading (i/2) K K^dag."""
+        n = len(self.ms.rows)
+        static = static_part(self.ms, np.zeros((n, 0), dtype=complex))
+        diag = diagonal(self.ms, f_axis(self.ms, np.asarray(f, dtype=float)))
+        out = np.empty((len(diag), n, n), dtype=complex)
+        out[...] = static
+        idx = np.arange(n)
+        out[:, idx, idx] += diag
+        return out
 
 
 @dataclass
@@ -102,12 +191,31 @@ class Network:
     ports: List[PortEl]
     flux: List[int]                     # planes with a flux unknown
     f_p: Optional[float]                # the pump tone (None: unpumped)
+    cmt: List[CMTBlock] = field(default_factory=list)
+    complete: bool = True               # False: a CMT block lacks parameters
     issues: List[Issue] = field(default_factory=list)
+
+    def layout(self) -> Dict[str, object]:
+        """Offsets of each unknown group inside one sector."""
+        o = len(self.planes)
+        lines = o
+        o += 2 * len(self.lines)
+        flux = o
+        o += len(self.flux)
+        poles = []
+        for ln in self.lines:
+            poles.append(o)
+            o += len(ln.poles)
+        cmt = []
+        for b in self.cmt:
+            cmt.append((o, o + len(b.ms.rows)))       # (a rows, block currents)
+            o += len(b.ms.rows) + len(b.planes)
+        return {"lines": lines, "flux": flux, "poles": poles, "cmt": cmt, "n": o}
 
     @property
     def n_sector(self) -> int:
         """Unknowns per sector."""
-        return len(self.planes) + 2 * len(self.lines) + len(self.flux)
+        return self.layout()["n"]
 
 
 # ---------------------------------------------------------------------------
@@ -120,8 +228,9 @@ def _has_modes(doc: Document) -> bool:
 
 
 def classify(doc: Document) -> str:
-    """'lumped' (milestone 1), 'network' (milestone 2a), or raise
-    NotSupportedError naming the milestone the document needs."""
+    """'lumped' (milestone 1: engine.solve keeps it bit for bit with legacy)
+    or 'network' (milestone 2); raises NotSupportedError naming the
+    milestone a document needs."""
     physical = [b for b in doc.blocks
                 if not (b.type == "R" and b.params.get("R") == "matched")]
     element_pumps = [p for p in doc.pumped if p.kind == "element"]
@@ -133,12 +242,18 @@ def classify(doc: Document) -> str:
             raise NotSupportedError(
                 "Lumped modes tapped onto lines (attachments " + ", ".join(taps)
                 + ") come in step 4, milestone 2c (taps, after the D3 "
-                "derivation); the engine has " + M2A + ".")
-        raise NotSupportedError(
-            "Lumped modes on a document with lines or blocks (the CMT block "
-            "as a z-multiport on port planes) come in step 4, milestone 2b; "
-            "the engine has " + M2A + ".")
+                "derivation); the engine has " + M2B + ".")
+        if element_pumps:
+            raise NotSupportedError(
+                "Lumped modes together with element pumps come after milestone 2 "
+                "(their sector images are the physical workflow's generate "
+                "step); the engine has " + M2B + ".")
     return "network"
+
+
+def z_ref(doc: Document) -> float:
+    """The document reference impedance (decision D3; units.z_ref, default 50)."""
+    return float(doc.units.get("z_ref", 50.0))
 
 
 def pump_depth(doc: Document, pumped) -> Tuple[float, Dict[str, object]]:
@@ -157,25 +272,88 @@ def _ref_impedance(doc: Document, b) -> float:
     return float(doc.by_id("blocks")[lid].params["Ztx"])
 
 
-def compile_network(doc: Document) -> List[Network]:
-    """A physical Document -> one Network per connected component with ports."""
-    if classify(doc) != "network":
-        raise NotSupportedError("not a physical document (use the milestone-1 path)")
+def _line_poles(doc: Document, blk, spec, absorbed) -> List[KeptPole]:
+    """The kept poles of a line (with its absorbed load), from
+    solve.kept_poles: {'f_max': F} keeps DC (when the line has one) and every
+    pole with 0 < f_n <= F; a list keeps those indices (0 = DC)."""
+    from ..model.pump_depth import _line_resonator
+    p = blk.params
+    if absorbed is not None and float(p.get("alpha_uniform", 0.0)) != 0.0:
+        raise NotSupportedError(
+            f"line {blk.id}: kept poles of a lossy loaded line (its poles are "
+            "not at f_n - i B/2 exactly)")
+    res = _line_resonator(doc, blk)
+    if absorbed is None:
+        res.load = None
+    alpha = float(p.get("alpha_uniform", 0.0))
+    B = 2.0 * alpha * res.FSR / np.pi
+    if isinstance(spec, dict):
+        F = float(spec.get("f_max", 0.0))
+        ns = [] if res._skip_dc else [0]
+        n = 1
+        while res.mode_freq(n) <= F:
+            ns.append(n)
+            n += 1
+    else:
+        ns = sorted(int(x) for x in spec)
+    out = []
+    for n in ns:
+        if n == 0:
+            if res._skip_dc:
+                raise NotSupportedError(f"line {blk.id}: an inductive load leaves no DC pole")
+            out.append(KeptPole(0, 0.0, B, (1.0, 1.0), res.C_line))
+        else:
+            out.append(KeptPole(n, res.mode_freq(n), B,
+                                (res.mode_profile(n, "x0"), res.mode_profile(n, "xL")),
+                                res.mode_mass(n)))
+    return out
+
+
+def _cmt_blocks(doc: Document, physical: bool) -> List[MSuper]:
+    """The milestone-1 components of the document's lumped part."""
+    if not _has_modes(doc):
+        return []
+    sub = copy.deepcopy(doc)
+    sub.blocks = [b for b in sub.blocks if b.type == "R" and b.params.get("R") == "matched"]
+    sub.pumped = [p for p in sub.pumped if p.kind == "coupling"]
+    mss = compile_document(sub)
+    if physical:
+        for ms in mss:
+            off = [r.mode for r in ms.rows if r.conj or (r.nu not in (None, 0.0))]
+            if off or ms.root_conj:
+                raise NotSupportedError(
+                    "lumped modes outside sector 0 (conjugated, or pumped away from "
+                    f"the root: {', '.join(off) or ms.root}) on a document with "
+                    "lines or blocks come after milestone 2; the engine has " + M2B + ".")
+    return mss
+
+
+def compile_network(doc: Document, promote: bool = False) -> List[Network]:
+    """A Document -> one Network per connected component with ports.
+
+    Physical documents are what engine.solve sends here; lumped ones are
+    accepted too (the M2 path for gate 4). promote=True builds the kept
+    poles of solve.kept_poles as mode rows."""
+    physical = classify(doc) == "network"
     planes = [p.id for p in doc.planes]
     pidx = {p: i for i, p in enumerate(planes)}
+    Zr = z_ref(doc)
 
     def node(pid):
         return None if pid is None else pidx[pid]
 
     nonzero = [t for t in doc.tones if t.f != 0]
-    used = {p.tone for p in doc.pumped}
+    used = {p.tone for p in doc.pumped if p.kind == "element"}
     if any(t.f == 0 for t in doc.tones if t.id in used):
         raise NotSupportedError("an element pump on a 0 Hz tone")
     if len({t.id for t in nonzero} & used) > 1:
         raise NotSupportedError("more than one pump tone (a 2-D sector window) "
-                                "is not in milestone 2a")
+                                "is not in milestone 2")
 
+    loads = {b.extras.get("load_of"): b for b in doc.blocks
+             if b.type == "L" and "load_of" in b.extras}
     lines, lumped, pumps, issues = [], [], [], []
+    absorbed_ids = set()
     for b in doc.blocks:
         if b.type == "line":
             p = b.params
@@ -185,20 +363,37 @@ def compile_network(doc: Document) -> List[Network]:
                 sec = tuple((float(s["Z"]), float(s["frac"]) / tot) for s in secs)
             else:
                 sec = ((float(p["Ztx"]), 1.0),)
-            lines.append(LineEl(b.id, node(b.terminals.get("x0")), node(b.terminals.get("xL")),
-                                float(p["FSR"]), float(p.get("alpha_uniform", 0.0)), sec))
-        elif b.type in ("L", "C"):
+            ln = LineEl(b.id, node(b.terminals.get("x0")), node(b.terminals.get("xL")),
+                        float(p["FSR"]), float(p.get("alpha_uniform", 0.0)), sec)
+            spec = doc.solve.kept_poles.get(b.id)
+            if promote and spec:
+                ld = loads.get(b.id)
+                absorbed = None
+                if ld is not None and ld.terminals.get("b") is None:
+                    end = next(e for e in ("x0", "xL")
+                               if b.terminals.get(e) == ld.terminals.get("a"))
+                    absorbed = (end, 2 * np.pi * float(ld.params["f_Z"]) / float(p["Ztx"]))
+                    absorbed_ids.add(ld.id)
+                ln.load = absorbed
+                ln.poles = _line_poles(doc, b, spec, absorbed)
+            lines.append(ln)
+    for b in doc.blocks:
+        if b.type == "line" or b.id in absorbed_ids:
+            continue
+        if b.type in ("L", "C"):
             if "f_Z" not in b.params:
                 raise NotSupportedError(f"block {b.id} ({b.type}): only f_Z is supported")
-            Zr, fz = _ref_impedance(doc, b), float(b.params["f_Z"])
-            # L = Zr / (2 pi f_Z), C = 1 / (2 pi f_Z Zr)
-            val = 2 * np.pi * fz / Zr if b.type == "L" else 1.0 / (2 * np.pi * fz * Zr)
+            Zb, fz = _ref_impedance(doc, b), float(b.params["f_Z"])
+            # L = Zb / (2 pi f_Z), C = 1 / (2 pi f_Z Zb)
+            val = 2 * np.pi * fz / Zb if b.type == "L" else 1.0 / (2 * np.pi * fz * Zb)
             lumped.append(LumpedEl(b.id, b.type, node(b.terminals.get("a")),
                                    node(b.terminals.get("b")), val))
         elif b.type == "R":
             R = b.params.get("R")
+            if R == "matched":
+                R = Zr
             if not isinstance(R, (int, float)):
-                raise NotSupportedError(f"block {b.id}: R = {R!r} on a physical document")
+                raise NotSupportedError(f"block {b.id}: R = {R!r}")
             lumped.append(LumpedEl(b.id, "R", node(b.terminals.get("a")),
                                    node(b.terminals.get("b")), 1.0 / float(R)))
         else:
@@ -224,14 +419,19 @@ def compile_network(doc: Document) -> List[Network]:
         pumps.append(PumpEl(p.id, pidx[p.plane], delta, np.deg2rad(p.phase or 0.0),
                             tones[p.tone].f, info))
 
-    ports = []
-    for pl in doc.planes:
-        if pl.kind == "port":
-            if pl.Z0 is None:
-                raise NotSupportedError(f"port {pl.id} has no Z0")
-            ports.append(PortEl(pidx[pl.id], pl.id, pl.label, float(pl.Z0)))
+    cmts = []
+    for ms in _cmt_blocks(doc, physical):
+        if not ms.channels:
+            continue
+        _, K_full = k_matrices(ms)
+        chans = [c for c in ms.channels if c.monitored] + [c for c in ms.channels
+                                                            if not c.monitored]
+        cmts.append(CMTBlock(ms, [pidx[c.plane] for c in chans], K_full, Zr))
 
-    # components: planes joined by blocks (ground is not a node)
+    ports = [PortEl(pidx[pl.id], pl.id, pl.label, float(pl.Z0) if pl.Z0 is not None else Zr)
+             for pl in doc.planes if pl.kind == "port"]
+
+    # components: planes joined by blocks and CMT blocks (ground is not a node)
     parent = list(range(len(planes)))
 
     def find(x):
@@ -244,10 +444,17 @@ def compile_network(doc: Document) -> List[Network]:
         if a is not None and b is not None:
             parent[find(a)] = find(b)
 
+    used_planes = set()
     for ln in lines:
         join(ln.x0, ln.xL)
+        used_planes |= {ln.x0, ln.xL}
     for el in lumped:
         join(el.a, el.b)
+        used_planes |= {el.a, el.b}
+    for cb in cmts:
+        for q in cb.planes[1:]:
+            join(cb.planes[0], q)
+        used_planes |= set(cb.planes)
     groups: Dict[int, List[int]] = {}
     for i in range(len(planes)):
         groups.setdefault(find(i), []).append(i)
@@ -256,26 +463,32 @@ def compile_network(doc: Document) -> List[Network]:
     for g in groups.values():
         gs = set(g)
         gports = [p for p in ports if p.plane in gs]
-        if not gports:
+        if not gports or not (gs & used_planes):
             continue
         loc = {old: new for new, old in enumerate(g)}
 
         def lo(x):
             return None if x is None else loc[x]
 
-        glines = [LineEl(ln.id, lo(ln.x0), lo(ln.xL), ln.FSR, ln.alpha, ln.sections)
+        glines = [LineEl(ln.id, lo(ln.x0), lo(ln.xL), ln.FSR, ln.alpha, ln.sections,
+                         ln.load, ln.poles)
                   for ln in lines if (ln.x0 in gs or ln.xL in gs)]
         glump = [LumpedEl(el.id, el.kind, lo(el.a), lo(el.b), el.value)
                  for el in lumped if (el.a in gs or el.b in gs)]
         gpumps = [PumpEl(pu.id, loc[pu.plane], pu.delta, pu.phase, pu.f_p, pu.anchor)
                   for pu in pumps if pu.plane in gs]
+        gcmt = [CMTBlock(cb.ms, [loc[q] for q in cb.planes], cb.K, cb.Zr)
+                for cb in cmts if cb.planes[0] in gs]
         flux = sorted({x for el in glump if el.kind == "L" for x in (el.a, el.b)
                        if x is not None} | {pu.plane for pu in gpumps})
+        gissues = [i for i in issues if any(i.path == pu.id for pu in gpumps)]
+        for cb in gcmt:
+            gissues += cb.ms.issues
         out.append(Network(
             index=len(out), planes=[planes[i] for i in g], lines=glines, lumped=glump,
             pumps=gpumps, ports=[PortEl(loc[p.plane], p.id, p.label, p.Z0) for p in gports],
-            flux=flux, f_p=(gpumps[0].f_p if gpumps else None),
-            issues=[i for i in issues if any(i.path == pu.id for pu in gpumps)]))
+            flux=flux, f_p=(gpumps[0].f_p if gpumps else None), cmt=gcmt,
+            complete=all(cb.ms.complete for cb in gcmt), issues=gissues))
     out.sort(key=lambda n: min(planes.index(n.planes[p.plane]) for p in n.ports))
     for i, n in enumerate(out):
         n.index = i
@@ -287,30 +500,84 @@ def compile_network(doc: Document) -> List[Network]:
 # ---------------------------------------------------------------------------
 
 def line_abcd(ln: LineEl, f: np.ndarray):
-    """ABCD of the line from x0 to xL at linear frequency f (array):
+    """ABCD of the line from x0 to xL at (real or complex) linear frequency f:
     the cascade of [[cos t, -i Z sin t], [-i sin t / Z, cos t]] over the
     sections, t = (pi f / FSR + i alpha) frac (e^{-i omega t} convention:
-    the loss puts the poles at n FSR - i alpha FSR / pi)."""
-    theta = np.pi * np.asarray(f, dtype=float) / ln.FSR + 1j * ln.alpha
-    A = np.ones_like(theta)
-    B = np.zeros_like(theta)
-    C = np.zeros_like(theta)
-    D = np.ones_like(theta)
+    the loss puts the poles at n FSR - i alpha FSR / pi). An absorbed load
+    (kept poles only) is a shunt [[1, 0], [Y_L, 1]] at its end."""
+    f = np.asarray(f)
+    theta = np.pi * f / ln.FSR + 1j * ln.alpha
+    A = np.ones_like(theta, dtype=complex)
+    B = np.zeros_like(theta, dtype=complex)
+    C = np.zeros_like(theta, dtype=complex)
+    D = np.ones_like(theta, dtype=complex)
     for Z, frac in ln.sections:
         t = theta * frac
         c, s = np.cos(t), np.sin(t)
         a, b, cc, d = c, -1j * Z * s, -1j * s / Z, c
         A, B, C, D = A * a + B * cc, A * b + B * d, C * a + D * cc, C * b + D * d
+    if ln.load is not None:
+        end, invL = ln.load
+        Y = 1j * invL / (2 * np.pi * f)             # 1 / (-i omega L)
+        if end == "x0":
+            A, B, C, D = A, B, C + Y * A, D + Y * B
+        else:
+            A, B, C, D = A + B * Y, B, C + D * Y, D
     return A, B, C, D
+
+
+def line_z(ln: LineEl, f) -> np.ndarray:
+    """Open-circuit impedance matrix (n_f, 2, 2), currents into both
+    terminals: Z = (1/C) [[A, 1], [1, D]]."""
+    A, _, C, D = line_abcd(ln, f)
+    Z = np.empty(np.shape(A) + (2, 2), dtype=complex)
+    Z[..., 0, 0] = A / C
+    Z[..., 0, 1] = Z[..., 1, 0] = 1.0 / C
+    Z[..., 1, 1] = D / C
+    return Z
+
+
+#: the circle (in units of FSR) on which Z_rem is averaged near a kept pole
+POLE_RADIUS = 0.02
+POLE_POINTS = 16
+
+
+def z_rem(ln: LineEl, f) -> np.ndarray:
+    """Z minus the kept poles, (n_f, 2, 2). Within POLE_RADIUS FSR / 2 of a
+    kept pole it is the mean over a circle of radius POLE_RADIUS FSR around
+    f: exact for a function analytic in the disc (the trapezoid rule on a
+    circle converges geometrically), and far enough from the pole that the
+    subtraction keeps its digits."""
+    f = np.asarray(f, dtype=float)
+
+    def direct(z):
+        Zm = line_z(ln, z)
+        for kp in ln.poles:
+            Zm = Zm - kp.residue() / (z - kp.p)[..., None, None]
+        return Zm
+
+    if not ln.poles:
+        return line_z(ln, f)
+    r = POLE_RADIUS * ln.FSR
+    near = np.zeros(len(f), bool)
+    for kp in ln.poles:
+        near |= np.abs(f - kp.p) < r / 2
+    out = np.empty((len(f), 2, 2), dtype=complex)
+    if np.any(~near):
+        out[~near] = direct(f[~near])
+    if np.any(near):
+        ring = r * np.exp(2j * np.pi * np.arange(POLE_POINTS) / POLE_POINTS)
+        pts = f[near][:, None] + ring[None, :]
+        out[near] = direct(pts).mean(axis=1)
+    return out
 
 
 def _assemble(net: Network, f: np.ndarray, sectors: Sequence[int]):
     """(A, rhs): A (n_f, n, n), rhs (n_f, n, P) for one block of frequencies."""
     nf = len(f)
-    np_ = len(net.planes)
-    nl = len(net.lines)
+    lay = net.layout()
     fidx = {p: i for i, p in enumerate(net.flux)}
-    n1 = net.n_sector
+    n1 = lay["n"]
     K = len(sectors)
     n = K * n1
     P = len(net.ports)
@@ -322,9 +589,9 @@ def _assemble(net: Network, f: np.ndarray, sectors: Sequence[int]):
     for s, m in enumerate(sectors):
         o = s * n1
         V = lambda p: o + p                                   # noqa: E731
-        I1 = lambda k: o + np_ + 2 * k                         # noqa: E731
-        I2 = lambda k: o + np_ + 2 * k + 1                     # noqa: E731
-        PH = lambda p: o + np_ + 2 * nl + fidx[p]              # noqa: E731
+        I1 = lambda k: o + lay["lines"] + 2 * k                # noqa: E731
+        I2 = lambda k: o + lay["lines"] + 2 * k + 1            # noqa: E731
+        PH = lambda p: o + lay["flux"] + fidx[p]               # noqa: E731
         fm = f + m * f_p
         wm = 2 * np.pi * fm
         # ports
@@ -332,23 +599,82 @@ def _assemble(net: Network, f: np.ndarray, sectors: Sequence[int]):
             A[:, V(pt.plane), V(pt.plane)] += 1.0 / pt.Z0
             if m == 0:
                 rhs[:, V(pt.plane), q] = 2.0 / np.sqrt(pt.Z0)
-        # lines
+        # lines: KCL takes +I1 at x0 and -I2 at xL (I2 flows out at xL)
         for k, ln in enumerate(net.lines):
-            a_, b_, c_, d_ = line_abcd(ln, fm)
             if ln.x0 is not None:
                 A[:, V(ln.x0), I1(k)] += 1.0
             if ln.xL is not None:
                 A[:, V(ln.xL), I2(k)] -= 1.0
             r1, r2 = I1(k), I2(k)            # constitutive rows reuse the current indices
-            if ln.x0 is not None:
-                A[:, r1, V(ln.x0)] += 1.0
-            if ln.xL is not None:
-                A[:, r1, V(ln.xL)] -= a_
-            A[:, r1, I2(k)] -= b_
-            A[:, r2, I1(k)] += 1.0
-            if ln.xL is not None:
-                A[:, r2, V(ln.xL)] -= c_
-            A[:, r2, I2(k)] -= d_
+            if not ln.poles:
+                a_, b_, c_, d_ = line_abcd(ln, fm)
+                if ln.x0 is not None:
+                    A[:, r1, V(ln.x0)] += 1.0
+                if ln.xL is not None:
+                    A[:, r1, V(ln.xL)] -= a_
+                A[:, r1, I2(k)] -= b_
+                A[:, r2, I1(k)] += 1.0
+                if ln.xL is not None:
+                    A[:, r2, V(ln.xL)] -= c_
+                A[:, r2, I2(k)] -= d_
+                continue
+            # kept poles. Near one (|f - p| < r/2): V - sum R a - Z_rem I_in = 0
+            # with I_in = (I1, -I2). Elsewhere: the ABCD rows on the line's own
+            # voltage V_l = V - sum R a + sum R I_in / (f - p), which has no
+            # pole there (Z_rem keeps the poles that are not kept).
+            near = np.zeros(nf, bool)
+            for kp in ln.poles:
+                near |= np.abs(fm - kp.p) < POLE_RADIUS * ln.FSR / 2
+            terms = (ln.x0, ln.xL)
+            ra = [o + lay["poles"][k] + j for j in range(len(ln.poles))]
+
+            def vl(t):
+                """V_l at terminal t as {column: coefficient (n_f,)}."""
+                c = {}
+                if terms[t] is not None:
+                    c[V(terms[t])] = np.ones(nf, complex)
+                for j, kp in enumerate(ln.poles):
+                    c[ra[j]] = c.get(ra[j], 0) - kp.c * kp.u[t] * np.ones(nf)
+                    w = kp.c * kp.u[t] / (fm - kp.p)
+                    c[I1(k)] = c.get(I1(k), 0) + w * kp.u[0]
+                    c[I2(k)] = c.get(I2(k), 0) - w * kp.u[1]
+                return c
+
+            def put(row, coeffs, mask):
+                for col, v in coeffs.items():
+                    v = np.broadcast_to(v, (nf,))
+                    A[mask, row, col] += v[mask]
+
+            far = ~near
+            if np.any(far):
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    a_, b_, c_, d_ = line_abcd(ln, fm)
+                    v0, v1 = vl(0), vl(1)
+                row1 = dict(v0)
+                for col, v in v1.items():
+                    row1[col] = row1.get(col, 0) - a_ * v
+                row1[I2(k)] = row1.get(I2(k), 0) - b_
+                row2 = {I1(k): np.ones(nf, complex)}
+                for col, v in v1.items():
+                    row2[col] = row2.get(col, 0) - c_ * v
+                row2[I2(k)] = row2.get(I2(k), 0) - d_
+                put(r1, row1, far)
+                put(r2, row2, far)
+            if np.any(near):
+                Zr = z_rem(ln, fm[near])
+                full = np.zeros((nf, 2, 2), complex)
+                full[near] = Zr
+                for row, t in ((r1, 0), (r2, 1)):
+                    c = {I1(k): -full[:, t, 0], I2(k): full[:, t, 1]}
+                    if terms[t] is not None:
+                        c[V(terms[t])] = np.ones(nf)
+                    for j, kp in enumerate(ln.poles):
+                        c[ra[j]] = -kp.c * kp.u[t] * np.ones(nf)
+                    put(row, c, near)
+            for j, kp in enumerate(ln.poles):
+                A[:, ra[j], ra[j]] = fm - kp.p
+                A[:, ra[j], I1(k)] -= kp.u[0]
+                A[:, ra[j], I2(k)] += kp.u[1]
         # lumped
         for el in net.lumped:
             ends = [(el.a, 1.0), (el.b, -1.0)]
@@ -373,7 +699,20 @@ def _assemble(net: Network, f: np.ndarray, sectors: Sequence[int]):
             for dm, ph in ((-1, np.exp(-1j * pu.phase)), (+1, np.exp(1j * pu.phase))):
                 if m + dm in sidx:
                     oc = sidx[m + dm] * n1
-                    A[:, V(pu.plane), oc + np_ + 2 * nl + fidx[pu.plane]] += 0.5 * pu.delta * ph
+                    A[:, V(pu.plane), oc + lay["flux"] + fidx[pu.plane]] += 0.5 * pu.delta * ph
+        # CMT blocks (sector 0 only; refused elsewhere at compile time):
+        # M_iso a - K j = 0, V/sqrt(Zr) - (i/2) K^dag a = 0, j = sqrt(Zr) I
+        for (oa, oi), cb in zip(lay["cmt"], net.cmt):
+            N = len(cb.ms.rows)
+            ra = o + oa + np.arange(N)
+            A[:, ra[:, None], ra[None, :]] = cb.M_iso(fm)
+            sq = np.sqrt(cb.Zr)
+            for c, pl in enumerate(cb.planes):
+                ri = o + oi + c
+                A[:, ra, ri] = -cb.K[:, c] * sq
+                A[:, ri, V(pl)] = 1.0 / sq
+                A[:, ri, ra] = -0.5j * np.conj(cb.K[:, c])
+                A[:, V(pl), ri] += 1.0
     return A, rhs
 
 
@@ -472,19 +811,27 @@ class NetworkResult:
         return f"{who}:0" if m == 0 else f"{who}:({m},0)"
 
 
-def solve_network(doc: Document, f=None) -> List[NetworkResult]:
-    """S per component of a physical document over the grid f (default: the
-    document's sweep), in the window doc.solve.sectors."""
+def solve_network(doc: Document, f=None, promote: bool = False) -> List[NetworkResult]:
+    """S per component over the grid f (default: the document's sweep), in
+    the window doc.solve.sectors. promote=True carries solve.kept_poles as
+    mode rows (S is the same; see the module docstring). A component whose
+    CMT block lacks parameters has S = None, as in milestone 1."""
     if f is None:
         from ..model.legacy_job import sweep_grid
         f = sweep_grid(doc)
     f = np.asarray(f, dtype=float)
     st = doc.solve
     out = []
-    for net in compile_network(doc):
+    for net in compile_network(doc, promote=promote):
         issues = list(net.issues)
         history = []
         converged = True
+        if not net.complete:
+            out.append(NetworkResult(
+                index=net.index, S=None, S_sectors={}, sectors=[0], f=f, f_p=net.f_p,
+                ports=[p.id for p in net.ports], port_labels=[p.label for p in net.ports],
+                network=net, issues=issues))
+            continue
         if not net.pumps:
             window = [0]
             S, sing = solve_window(net, f, window)
