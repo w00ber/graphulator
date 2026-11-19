@@ -233,29 +233,59 @@ the "inverse tap profile" left open by layer-0 decision 3.
   plane `port0`, a node.
 - **The pumped-termination note's time convention** (see D7).
 
-## Questions for JA
+## Decisions (JA, 19 Nov 2026)
 
-- **D1, shared planes:** a plane is a node, and everything on it is in
-  parallel (my recommendation: it is what a circuit drawing means, and
-  nodal analysis needs no special case). The legacy hub/series meaning
-  would become an explicit element if wanted. TL_5's notes would then be
-  rewritten, and its plot changes from "two separate lines" to "two lines
-  in parallel".
-- **D2, the CMT block is an impedance-type multiport,**
-  z = (i/2) K^dag M_iso^{-1} K. This is legacy-exact for lumped documents.
-  The alternative, admittance type, differs by S -> -S on a lone port
-  (a reference-plane choice) but physically on shared planes. I recommend
-  the impedance type.
-- **D3, taps:** derive the inverse tap profile in M2c, gated against
-  cmtline_core; refuse tap files until then. Also: what reference
-  impedance should a *new* attachment to an internal plane use? Z_tx of
-  the line, a per-plane field, or should such attachments always go
-  through an explicit C/L element?
-- **D4, pump depth:** compute delta from the anchor in the engine; keep
-  the schema as is.
-- **D5, windows:** the convergence metric for conversion, one tone only,
-  and the threshold warning.
-- **D6, S output:** (port, sector) channels; default display of the
-  sector-0 block plus the photon-flux conversion blocks.
-- **D7:** pin e^{-i omega t} and fix the preamble of
+Figure: `m2_D1_shared_port.png`. It shows the three readings of "several
+things on one port".
+
+- **D1, shared points: side by side (A in the figure).** Real circuit
+  elements (lines, loads) that meet at a point are in parallel: one node,
+  and their admittances add.
+  - The modes attached at a point form one block, internally in Foster I
+    form (C in the figure). That block sits on the node like any other
+    element.
+  - The legacy hub's series reading (B) is dropped for lines.
+  - TL_5 and PORT_SHARED_2LINES change. TL_5's notes must be rewritten,
+    and the test that pins its two-job split goes.
+- **D2, modes attach as an impedance:** z = (i/2) K^T M_iso^{-1} K is the
+  graph's z-matrix.
+  - A lone mode looks like an admittance, y proportional to M_iso,jj; modes
+    sharing a point add as impedances.
+  - The code solves the combined system and never inverts M_iso alone.
+- **D3, rates are enough, all quoted against one reference impedance.**
+  - A mode can attach to several lines with different Z_tx, so the
+    document has a single reference impedance Z_ref. Every impedance is
+    scaled to it, and every attachment rate means "the leak rate into
+    Z_ref".
+  - No coupling-element values are needed. The coupling type
+    (capacitive/inductive) still sets how the coupling varies with
+    frequency.
+  - Open detail (mine): when a port's own Z0 differs from Z_ref, the
+    engine accounts for the mismatch. Lumped documents have no port Z0, so
+    milestone 1 is unaffected.
+  - Proposed home: `units.z_ref`, default 50 ohm. A schema addition.
+  - Still owed: converting legacy n_ref-anchored tap rates into this
+    convention, gated against `cmtline_core`.
+- **D4, the depth is the stored quantity (physical workflow only).**
+  - The model stores the modulation depth delta(1/L).
+  - A rate the user types on a reference pair is converted to a depth
+    through the transfer function; the engine flags a rate it cannot
+    reach.
+  - Editing FSR, the load and so on keeps the depth, and the displayed
+    rate follows.
+  - Migration converts the legacy {rate, n_ref} anchor to a depth once the
+    conversion is gated (M2a), and the anchor is kept as provenance. This
+    replaces layer-0 decision 3's "hold the anchor" for pumps.
+  - Abstract pumped edges keep their drawn rate.
+- **D5, sectors:** the user steps the window up or down by hand, and
+  "auto" grows it until the answer converges, as proposed.
+- **D6, trace labels use S_jk order (k scatters into j); no "S" in labels:**
+  - `P1:0`: P1 reflection, same sector;
+  - `P1:(-1,0)`: P1 in at sector 0, out at sector -1;
+  - `(P1,P2):0`: P2 into P1, same sector;
+  - `(P1,P2):(-1,0)`: P2 sector 0 into P1 sector -1.
+
+  Traces are toggled by choosing ports and sectors. Photon flux is the
+  default, with a toggle to power.
+- **D7:** pin e^{-i omega t}; fix the preamble of
   `pumped_line_termination.md`.
