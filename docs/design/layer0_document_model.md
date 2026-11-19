@@ -235,8 +235,9 @@ Deviations from the text above, all for exact round-trip:
 - `Sweep` stores `center/span/points` as the GUI does (start/stop derived);
   the oldest files' start/stop form is kept verbatim.
 - Line pumps keep a `legacy_anchor {rate, n_ref, coupling, end}` like taps
-  (3a); `depth = delta(1/L)` is computed by the engine, not stored, until the
-  anchor inverse is gated for loaded/stepped lines.
+  (3a). Since step-4 M2a (decision D4), `depth = delta(1/L)` is stored on
+  `Pumped`, filled from the anchor at migration; export recomputes the rate
+  from it (model/pump_depth.py).
 - A line end is the port plane it terminates on, else an internal plane
   `line<id>.<end>`; more than one port on one end is rejected.
 - Unmonitored ports (loss hubs) -> internal plane + `R` block with

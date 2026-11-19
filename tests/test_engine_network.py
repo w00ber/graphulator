@@ -288,8 +288,9 @@ def test_unpumped_lossless_unitary(name):
 
 def _tl3(rate=None, window=None):
     doc = load("TL_3_PUMPED_TERMINATION_AMPLIFIER.pgraph")
-    if rate is not None:
+    if rate is not None:                       # the depth is what is stored (D4)
         doc.pumped[0].legacy_anchor["rate"] = rate
+        doc.pumped[0].depth = engine.pump_depth(doc, doc.pumped[0])[0]
     if window is not None:
         doc.solve.sectors = list(window)
     return doc
@@ -394,6 +395,56 @@ def test_explicit_window_without_zero_refused():
 def test_conversion_label():
     (r,) = engine.solve(_tl3(window=(-1, 0)), [4.0])
     assert r.label(0, 0, -1) == "TL:(-1,0)"
+
+
+# ---------------------------------------------------------------------------
+# D4: the depth is the stored quantity, the legacy rate follows it
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name", PUMPED)
+def test_migration_stores_the_depth(name):
+    doc = load(name)
+    p = doc.pumped[0]
+    assert p.depth == engine.pump_depth(doc, p)[0]
+    assert M.to_legacy(doc) == M.to_legacy(M.from_legacy(M.to_legacy(doc)))
+    raw = M.to_legacy(doc)
+    (line,) = [ln for ln in raw["line_resonators"] if ln.get("pump")]
+    assert line["pump"]["rate"] == p.legacy_anchor["rate"]       # unedited: verbatim
+
+
+def test_edit_keeps_the_depth_and_the_rate_follows(tmp_path):
+    doc = load("LINE_PUMPED_LOADED.pgraph")
+    p = doc.pumped[0]
+    d0, r0 = p.depth, p.legacy_anchor["rate"]
+    (s0,) = engine.solve(doc)
+    doc.by_id("blocks")["line0"].params["FSR"] *= 1.01          # edit the line
+    assert p.depth == d0
+    (s1,) = engine.solve(doc)
+    assert not np.allclose(s1.S, s0.S)
+    raw = M.to_legacy(doc)
+    (line,) = [ln for ln in raw["line_resonators"] if ln.get("pump")]
+    assert line["pump"]["rate"] != r0
+    back = M.from_legacy(raw)                                    # the GUI's save path
+    assert abs(back.pumped[0].depth / d0 - 1) < 1e-14
+    M.save(doc, tmp_path / "x.pgraph")
+    assert M.load(tmp_path / "x.pgraph").pumped[0].depth == d0
+
+
+def test_edited_depth_exports_its_rate():
+    doc = load("TL_3_PUMPED_TERMINATION_AMPLIFIER.pgraph")
+    p = doc.pumped[0]
+    p.depth *= 2
+    (line,) = [ln for ln in M.to_legacy(doc)["line_resonators"] if ln.get("pump")]
+    assert abs(line["pump"]["rate"] / 0.1 - 1) < 1e-14
+
+
+def test_hand_built_pump_without_depth_uses_the_anchor():
+    doc = load("TL_3_PUMPED_TERMINATION_AMPLIFIER.pgraph")
+    (r0,) = engine.solve(doc)
+    doc.pumped[0].depth = None
+    (r1,) = engine.solve(doc)
+    assert np.array_equal(r0.S, r1.S)
+    assert any("no stored depth" in i.msg for i in r1.issues)
 
 
 # ---------------------------------------------------------------------------

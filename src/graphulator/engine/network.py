@@ -27,17 +27,10 @@ KCL at a port plane adds V/Z0 and the Norton source 2 a / sqrt(Z0) (sector 0
 only); the outgoing power wave is b = V / sqrt(Z0) - a [sector 0], V / sqrt(Z0)
 [other sectors]. Elements meeting at a plane are in parallel (decision D1).
 
-The pump's depth delta is converted from the legacy {rate, n_ref} anchor
-(decision D4) by ``pump_depth``:
-
-    rate = g_nm / pi,   g_nm = delta u_n u_m / (4 sqrt(omega_n C_n omega_m C_m))
-
-with u, C, omega the (loaded, stepped) line mode quantities of
-autograph.LineResonator at the anchor pair (n_ref, m_ref) that the legacy
-macro uses (legacy_job.pump_anchor). In natural units this is
-docs/pumped_line_termination.md sec. 6, rate = (2 FSR / pi) g_nat.
-Provisional, until D4's schema field: a pump whose extras hold "depth" uses
-that value as is.
+The pump's depth delta is the stored ``Pumped.depth`` (decision D4). A pump
+without one (a document built by hand) is converted from its legacy
+{rate, n_ref} anchor (model/pump_depth.py, gated in
+tests/test_engine_network.py).
 """
 from __future__ import annotations
 
@@ -46,8 +39,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from ..autograph import LineResonator
-from ..model.legacy_job import clamp_mode, pump_partners
+from ..model.pump_depth import anchor_depth
 from ..model.schema import Document
 from ..model.validate import Issue
 
@@ -149,53 +141,10 @@ def classify(doc: Document) -> str:
     return "network"
 
 
-def _line_resonator(doc: Document, blk) -> LineResonator:
-    """The legacy line object for mode quantities (pump anchor only)."""
-    p = blk.params
-    load = None
-    for b in doc.blocks:
-        if b.extras.get("load_of") == blk.id:
-            end = next(e for e in ("x0", "xL") if blk.terminals.get(e) == b.terminals.get("a"))
-            load = {"end": end, "type": {"L": "inductive", "C": "capacitive"}[b.type],
-                    "f_Z": b.params["f_Z"]}
-    f_max = (doc.solve.kept_poles.get(blk.id) or {}).get("f_max", p["FSR"])
-    return LineResonator(line_id=blk.id, FSR=float(p["FSR"]), Ztx=float(p["Ztx"]),
-                         f_max=float(f_max), label=blk.label or blk.id,
-                         alpha_uniform=float(p.get("alpha_uniform", 0.0)),
-                         load=load, sections=p.get("sections"))
-
-
 def pump_depth(doc: Document, pumped) -> Tuple[float, Dict[str, object]]:
-    """delta(1/L) of an element pump, from its legacy {rate, n_ref} anchor.
-
-    Returns (delta, info); info names the anchor pair, its family and the
-    mode quantities used. Raises ValueError when the anchor cannot be
-    converted (no anchor, a non-inductive pump, a mode with no amplitude at
-    the pumped end: a rate that no depth reaches)."""
-    an = pumped.legacy_anchor or {}
-    if an.get("rate") is None or an.get("line") is None:
-        raise ValueError(f"pump {pumped.id}: no depth and no legacy anchor to convert")
-    if (an.get("coupling") or "inductive") != "inductive" or pumped.param != "1/L":
-        raise ValueError(f"pump {pumped.id}: only a modulated 1/L is supported")
-    blk = doc.by_id("blocks")[an["line"]]
-    res = _line_resonator(doc, blk)
-    end = an["end"]
-    f_p = doc.by_id("tones")[pumped.tone].f
-    n = clamp_mode(res, an.get("n_ref") or 1, res.label, "pump")
-    partners = pump_partners(res, n, f_p)
-    rank = {"amplification": 0, "down-conversion": 1, "up-conversion": 2}
-    best = min(partners, key=lambda q: (abs(q["detune"]), rank[q["family"]]))
-    m = int(best["m"])
-    u_n, u_m = res.mode_profile(n, end), res.mode_profile(m, end)
-    if u_n == 0.0 or u_m == 0.0:
-        raise ValueError(f"pump {pumped.id}: the anchor pair ({n}, {m}) has no "
-                         f"amplitude at {end}; no depth reaches rate {an['rate']}")
-    w_n, w_m = 2 * np.pi * res.mode_freq(n), 2 * np.pi * res.mode_freq(m)
-    C_n, C_m = res.mode_mass(n), res.mode_mass(m)
-    delta = 4.0 * np.pi * float(an["rate"]) * np.sqrt(w_n * C_n * w_m * C_m) / abs(u_n * u_m)
-    return float(delta), {"n_ref": n, "m_ref": m, "family": best["family"],
-                          "u": (u_n, u_m), "C": (C_n, C_m), "f": (w_n / 2 / np.pi,
-                                                                  w_m / 2 / np.pi)}
+    """delta(1/L) of an element pump from its legacy {rate, n_ref} anchor
+    (model.pump_depth.anchor_depth): (delta, info about the anchor pair)."""
+    return anchor_depth(doc, pumped)
 
 
 def _ref_impedance(doc: Document, b) -> float:
@@ -259,18 +208,21 @@ def compile_network(doc: Document) -> List[Network]:
     for p in doc.pumped:
         if p.kind != "element":
             continue
-        if p.extras.get("depth") is not None:
-            delta, info = float(p.extras["depth"]), {}
+        if p.depth is not None:
+            delta, info = float(p.depth), {}
         else:
-            delta, info = pump_depth(doc, p)
+            try:
+                delta, info = anchor_depth(doc, p)
+            except ValueError as e:
+                raise NotSupportedError(str(e)) from e
+            issues.append(Issue("info", p.id,
+                                f"no stored depth: delta(1/L) = {delta:.12g} from the "
+                                f"legacy anchor (rate {p.legacy_anchor.get('rate')} at "
+                                f"pair ({info['n_ref']}, {info['m_ref']}), {info['family']})"))
+        if p.param != "1/L":
+            raise NotSupportedError(f"pump {p.id}: only a modulated 1/L is supported")
         pumps.append(PumpEl(p.id, pidx[p.plane], delta, np.deg2rad(p.phase or 0.0),
                             tones[p.tone].f, info))
-        issues.append(Issue("info", p.id,
-                            f"depth delta(1/L) = {delta:.12g} from the legacy anchor "
-                            f"(rate {p.legacy_anchor.get('rate')} at pair "
-                            f"({info.get('n_ref')}, {info.get('m_ref')}), "
-                            f"{info.get('family')})" if info else
-                            f"depth delta(1/L) = {delta:.12g}"))
 
     ports = []
     for pl in doc.planes:

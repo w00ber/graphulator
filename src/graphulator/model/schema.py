@@ -15,8 +15,9 @@ Deviations from the design note (recorded there):
   derived property.
 - Sweep keeps ``center/span/points`` as the GUI's spin boxes hold them,
   quantized to their display precision (decision Q2; start/stop derived).
-- Line pumps keep their legacy ``{rate, n_ref}`` anchor (like taps, decision
-  3a) until the anchor -> depth inverse is gated for loaded/stepped lines.
+- Element pumps store their depth (decision D4, model/pump_depth.py) and
+  keep the legacy ``{rate, n_ref}`` anchor as provenance; export recomputes
+  the rate from the depth.
 """
 from __future__ import annotations
 
@@ -168,8 +169,10 @@ class Attachment(_Base):
 class Pumped(_Base):
     """A modulated thing. kind 'coupling': a parametric mode-mode edge (a, b,
     rate, phase). kind 'element': a modulated element at a plane (param '1/L'
-    or 'C', on top of an optional static block), anchored by legacy_anchor
-    {rate, n_ref} until the depth inverse is gated."""
+    or 'C', on top of an optional static block) with depth delta:
+    1/L(t) = 1/L0 + delta cos(omega_p t + phase), omega = 2 pi f in the
+    document's units. legacy_anchor {line, end, rate, n_ref, coupling} is the
+    legacy line pump it came from (provenance; decision D4)."""
     id: str
     kind: str
     tone: str
@@ -180,6 +183,7 @@ class Pumped(_Base):
     plane: Optional[str] = None
     block: Optional[str] = None
     param: Optional[str] = None
+    depth: Optional[float] = None
     legacy_anchor: Optional[Dict[str, Any]] = None
     extras: Dict[str, Any] = field(default_factory=dict)
 

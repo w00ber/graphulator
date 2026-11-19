@@ -30,6 +30,7 @@ from __future__ import annotations
 import copy
 from typing import Any, Dict, List
 
+from .pump_depth import fill_depths, legacy_rate
 from .quantize import quantize_sweep
 from .snap import snap_document
 from .schema import (Attachment, Block, Coupling, Document, Drawing, Mode,
@@ -316,7 +317,7 @@ def from_legacy(d: Dict[str, Any]) -> Document:
         if sc.get("tail_closure") is not None:                      # decision Q3
             doc.solve.tail_closure = bool(sc["tail_closure"])
         doc.solve.legacy_frames = {k: v for k, v in sc.items() if k not in SCATTER_KNOWN}
-    return snap_document(doc)                   # decision Q2 (option A)
+    return fill_depths(snap_document(doc))      # decisions Q2 (option A), D4
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +452,7 @@ def to_legacy(doc: Document) -> Dict[str, Any]:
         pu = pumps.get(blk.id)
         if pu is not None:
             an = pu.legacy_anchor
-            l["pump"] = {"end": an["end"], "f_p": tones[pu.tone], "rate": an["rate"],
+            l["pump"] = {"end": an["end"], "f_p": tones[pu.tone], "rate": legacy_rate(doc, pu),
                          "phase": pu.phase, "n_ref": an["n_ref"], "coupling": an["coupling"],
                          **pu.extras}
             if blk.id in twin_of_block:

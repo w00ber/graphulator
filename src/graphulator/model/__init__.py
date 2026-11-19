@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Union
 
 from .migrate import MigrationError, from_legacy, to_legacy
+from .pump_depth import fill_depths
 from .quantize import quantize_sweep
 from .snap import PRECISION, snap_document
 from .schema import (
@@ -46,7 +47,7 @@ __all__ = ["Attachment", "Block", "Coupling", "Document", "Drawing", "Issue",
 def from_dict(d: Dict[str, Any]) -> Document:
     """Any supported pgraph dict -> Document."""
     if str(d.get("version")) == VERSION:
-        return snap_document(Document.from_dict(d))     # decision Q2 (option A)
+        return fill_depths(snap_document(Document.from_dict(d)))   # decisions Q2, D4
     return from_legacy(d)                               # snaps too
 
 

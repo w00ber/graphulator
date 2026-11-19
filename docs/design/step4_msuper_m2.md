@@ -394,20 +394,22 @@ f + f_p. The first version of the script compared Lee conversion at
 **D7.** The preamble of `docs/pumped_line_termination.md` now says
 e^{-i omega t}, and so does its section-7 remark.
 
-**Open (needs JA):**
-- **Storing the depth (D4).** The engine converts the anchor at compile
-  time. Storing `depth` on `Pumped` is a schema field, and it raises a
-  question for `to_legacy`: once the depth is edited, the stored
-  {rate, n_ref} is stale. Should export recompute the rate from the depth
-  (the inverse is the same formula), or keep the anchor as provenance
-  only? Until this is settled, `Pumped.extras["depth"]`, when present,
-  overrides the anchor (used for tests only).
-- **TL_5 (D1).** The engine gives the parallel answer. The legacy GUI
-  still shows the two-job split, and `test_two_lines_one_port_is_two_jobs`
-  still pins it. Rewriting TL_5's notes and dropping that test belongs to
-  the slice that switches Show S, or the notes would describe a plot the
-  GUI does not draw. Your call.
-- **Pump phase.** phi in 1/L(t) = 1/L0 + delta cos(omega_p t + phi) is
-  read from `Pumped.phase` in degrees. With one pump it is a gauge: |S| is
-  independent of it, and only conversion phases move. No gate pins it
-  against legacy's edge phase.
+**JA on the open items (19 Nov):**
+- **D4 storage: recompute the rate. Done.**
+  - `Pumped.depth` is a schema field (model/pump_depth.py).
+  - Migration and loading a 4.0 file without a depth fill it in from the
+    anchor. The anchor stays as provenance.
+  - `to_legacy` writes the rate recomputed from the depth. When the depth
+    is still exactly what the stored anchor rate gives, it writes the stored
+    rate verbatim, so unedited files round-trip bit for bit.
+  - Editing the line keeps the depth (the S curve moves, the exported rate
+    follows); see `test_edit_keeps_the_depth_and_the_rate_follows`.
+  - The engine uses `depth`. A hand-built pump with no depth is converted
+    from its anchor, with an info issue.
+  - Not done yet (GUI slice): the GUI still holds the legacy rate, so an
+    FSR edit in the GUI keeps the rate, and the depth is recomputed on save.
+    Keeping the depth there belongs with the live-state work.
+- **TL_5 (D1):** do it with the Show S switch.
+- **Window metric:** JA asked what it meant; explained in chat. Kept as
+  built until a reply.
+- **Pump phase:** kept as specified (degrees, phi in cos(omega_p t + phi)).
