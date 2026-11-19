@@ -498,3 +498,63 @@ pass):
   two-line) against a contour integral of the exact impedance: 1e-9. Z_rem
   stays bounded at f_n +- 1e-7 FSR. Uniform loss: the residues hold at
   f_n - i alpha FSR / pi.
+
+## M2c: the D3 derivation (for review, 19 Nov 2026)
+
+Script: `misc/msuper_M2c_tap_physics.py` (`.out`). The circuit is TL_2's
+line with its direct port attachment removed, a lossless tank tapped at x0
+through Cc, at the legacy rate 0.05 at n_ref = 3.
+
+**What a capacitive tap is, seen from the plane.** Exactly:
+
+    Y_tap = -i w Cs + i w w1^2 Cb / (w^2 - w1^2),   Cs = Cc Cd/(Cc+Cd),  Cb = Cc^2/(Cc+Cd),  w1^2 = 1/(Ld (Cd+Cc))
+
+- That is a shunt capacitor Cs plus a Foster pole pair (+-w1, equal
+  residues), i.e. a series-LC branch from the plane to ground. Adding the
+  exact Cs to the pole pair reproduces the exact circuit to 1e-12 at every
+  device impedance.
+- It is admittance-type: open away from resonance. It is the dual of the
+  M2b block, which is impedance-type and shorts the plane away from
+  resonance. Using the M2b form for this tap is wrong by |dS| = 2.
+- The pole pair is fixed by (f1, gamma), with gamma = Z_ref w1^2 Cb / 2 pi
+  the leak rate into Z_ref: rates are enough for it, as D3 says.
+- Cs is not fixed by (f1, gamma). At fixed gamma, Cc is proportional to
+  sqrt(Cd), i.e. it falls with the device impedance Z_d = sqrt(Ld/Cd).
+  Dropping Cs costs:
+
+| Z_d [ohm] | 5 | 25 | 125 | 625 | 3125 |
+|---|---|---|---|---|---|
+| Cs w1 Z_ref | 0.067 | 0.030 | 0.013 | 0.0057 | 0.0024 |
+| max dS, pole pair only | 0.27 | 0.12 | 0.053 | 0.023 | 0.0096 |
+
+  The error is first order in the coupling amplitude, ~ sqrt(gamma/f) x
+  sqrt(Z_ref/Z_d). It is mostly a broadband phase of the line's response:
+  the resonance position agrees with the exact circuit to < 1e-4 GHz at
+  every Z_d.
+- The counter-rotating partner (pole pair against one RWA pole) changes S
+  by 4e-4 here, less than Cs unless Z_d is very high.
+
+**Legacy is not an oracle for taps.** On this circuit its resonance moves
+with f_max: 4.3985 GHz at f_max = 9, 4.3933 GHz at f_max = 36. The exact
+circuit gives 4.4001 GHz. *(speculation, consistent with this)* The
+capacitive profile g_n ~ sqrt(n) makes the comb's dispersive shift sum
+g_n^2/(f_d - f_n) grow linearly with N. The oracle has to be the exact
+circuit, as the note already said.
+
+**Inductive tap** (cmtline_core's flux coupling, kL in the inverse
+inductance matrix): derived, not yet checked numerically. It should be
+
+    y = (i/2) gamma [1/(f - f1) + 1/(f + f1) - 2/f]
+
+That is the same pole pair plus a shunt-inductor term whose size is fixed
+by gamma, so no element value is needed.
+
+**Anchor conversion (proposed).** gamma = rate^2 2 pi Z_ref C_n / u_n^2 at
+n_ref, which gives legacy's splitting with mode n_ref at resonance.
+
+**Decisions needed (JA):** see the chat of 19 Nov. The questions:
+- the tap form;
+- Cs: drop it, or store something to make it exact;
+- the partner pole;
+- direct attachments on physical documents (impedance or admittance type);
+- the anchor rule.
