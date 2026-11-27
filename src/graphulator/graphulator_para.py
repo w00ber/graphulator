@@ -8725,29 +8725,47 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         return None
 
     def _populate_test_menu(self):
-        """Populate File -> Test with the bundled test scenes."""
+        """Populate File -> Test with the bundled test scenes.
+
+        Scenes directly in examples/test_scenes are listed first; each
+        subfolder (one validation campaign, e.g. MSUPER_1_SHOW_S) becomes a
+        submenu, recursively. Each scene's notes say what to try."""
         self.test_menu.clear()
-        scene_files = []
         scenes_dir = self._get_test_scenes_dir()
+        added = 0
         if scenes_dir:
             try:
-                scene_files = sorted(
-                    f for f in Path(scenes_dir).iterdir()
-                    if f.name.endswith('.pgraph'))
+                added = self._add_scene_menu_entries(self.test_menu, Path(scenes_dir))
             except (FileNotFoundError, OSError) as exc:
                 logger.warning("Could not list test scenes from %s: %s",
                                scenes_dir, exc)
-        if not scene_files:
+        if not added:
             empty = QAction("(No test scenes available)", self)
             empty.setEnabled(False)
             self.test_menu.addAction(empty)
-            return
-        for scene_file in scene_files:
+
+    def _add_scene_menu_entries(self, menu, folder):
+        """Add folder's .pgraph files, then a submenu per subfolder that has
+        any. Returns the number of scenes added."""
+        entries = sorted(folder.iterdir(), key=lambda p: p.name)
+        n = 0
+        for scene_file in (p for p in entries if p.is_file() and p.name.endswith('.pgraph')):
             action = QAction(scene_file.stem, self)
             action.setToolTip(f"Load test scene: {scene_file.name}")
             action.triggered.connect(
                 lambda checked, f=scene_file: self._load_example(f))
-            self.test_menu.addAction(action)
+            menu.addAction(action)
+            n += 1
+        subdirs = [p for p in entries if p.is_dir() and not p.name.startswith(('.', '_'))]
+        if subdirs and n:
+            menu.addSeparator()
+        for sub in subdirs:
+            submenu = QMenu(sub.name, menu)
+            k = self._add_scene_menu_entries(submenu, sub)
+            if k:
+                menu.addMenu(submenu)
+                n += k
+        return n
 
     def _populate_examples_menu(self):
         """Populate the Examples submenu with example graphs from package resources"""
@@ -12192,7 +12210,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         logger.info(f"S-matrix computed successfully for {len(all_sparams_data)} component(s)")
         if payload.get('fallback'):
             self._status_message("M_super engine cannot solve this document ("
-                                 + payload['fallback'].split('.')[0]
+                                 + payload['fallback'].split(':')[0]
                                  + "); showing the legacy engine", 8000)
         else:
             warns = [msg for level, _, msg in self.sparams_engine_issues

@@ -259,11 +259,14 @@ def _load_state(data: Dict[str, Any]) -> _State:
                 'pos': tuple(nd['pos']), 'conj': nd.get('conj', False)}
         st.nodes.append(node)
         node_ids.add(nd['node_id'])
-        if 'freq' in nd or 'B_int' in nd or 'B_ext' in nd:
+        if ('freq' in nd or 'B_int' in nd or 'B_ext' in nd
+                or nd.get('Z_d') is not None):
             entry = sa.setdefault(nd['node_id'], {})
             for k in ('freq', 'B_int', 'B_ext'):
                 if k in nd:
                     entry[k] = nd[k]
+            if nd.get('Z_d') is not None:      # as the GUI loader keeps it
+                entry['Z_d'] = float(nd['Z_d'])
 
     for ed in data.get('edges', []):
         if ed['from_node_id'] not in node_ids or ed['to_node_id'] not in node_ids:

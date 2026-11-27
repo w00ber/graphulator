@@ -71,7 +71,7 @@ def assert_matches_legacy(doc, f=None):
 # ---------------------------------------------------------------------------
 
 def test_lumped_set():
-    assert len(LUMPED) == 54 and len(NOT_LUMPED) == 14
+    assert len(LUMPED) == 55 and len(NOT_LUMPED) == 22
 
 
 @pytest.mark.parametrize("key", LUMPED)

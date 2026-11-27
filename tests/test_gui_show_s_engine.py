@@ -29,10 +29,12 @@ if hasattr(os, "geteuid") and os.geteuid() == 0:
 from tests.test_gui_show_s_model import _grid, _open, win  # noqa: E402,F401
 from tests.test_model_legacy_job import FILES, IDS, PG  # noqa: E402
 
-TAPS_NEED_ZD = ("LINE_TAP_2NODES", "NODE_2LINES_TAP")
+TAPS_NEED_ZD = ("LINE_TAP_2NODES", "NODE_2LINES_TAP", "ZD_a_TAP_NEEDS_Z_D")
 # Legacy splits these into separate jobs per line; the engine solves the
 # shared port as one network (decision D1).
-SPLIT_DIFFERS = ("TL_5_TWO_LINES_ONE_PORT",)
+SPLIT_DIFFERS = ("TL_5_TWO_LINES_ONE_PORT", "S1e_SHARED_PORT")
+# The engine refuses these (inductive taps); Show S falls back to legacy.
+REFUSED = ("S1f_INDUCTIVE_TAP_FALLBACK",)
 
 
 def _solve(win):
@@ -63,6 +65,10 @@ def test_engine_payload_matches_legacy_bookkeeping(win, path):
         pytest.skip("empty scene")
     f, eng, leg = _solve(win)
     name = os.path.splitext(os.path.basename(path))[0]
+    if name in REFUSED:
+        assert eng["engine"] == "legacy" and "Inductive" in eng["fallback"]
+        assert [_meta(r) for r in eng["results"]] == [_meta(r) for r in leg]
+        return
     assert eng["engine"] == "msuper" and eng["fallback"] is None
     res = eng["results"]
     if name in TAPS_NEED_ZD:
@@ -192,7 +198,9 @@ def _zd_spins(win):
 
 @pytest.mark.parametrize("name", TAPS_NEED_ZD)
 def test_z_d_field_makes_the_tap_scene_solve(win, name):
-    _open(win, os.path.join(SCENES, name + ".pgraph"))
+    import glob
+    (path,) = glob.glob(os.path.join(SCENES, "**", name + ".pgraph"), recursive=True)
+    _open(win, path)
     need = win._modes_needing_z_d()
     assert need
     with contextlib.redirect_stdout(io.StringIO()):
@@ -233,3 +241,40 @@ def test_direct_port_needs_no_z_d(win):
     """TL_2's tapped mode also sits on a port, which fixes its C_d."""
     _open(win, os.path.join(PG, "TL_2_MODE_TAPPED_ONTO_A_LINE.pgraph"))
     assert win._modes_needing_z_d() == set()
+
+
+# ---------------------------------------------------------------------------
+# File > Test: campaign subfolders become submenus
+# ---------------------------------------------------------------------------
+
+def test_test_menu_has_campaign_submenus(win):
+    from pathlib import Path
+    win._populate_test_menu()
+    menus = {a.menu().title(): a.menu() for a in win.test_menu.actions() if a.menu()}
+    assert {"MSUPER_1_SHOW_S", "MSUPER_2_Z_D"} <= set(menus)
+    top = [a.text() for a in win.test_menu.actions() if not a.menu() and not a.isSeparator()]
+    assert "LINE_TAP_2NODES" in top
+    for title, menu in menus.items():
+        names = sorted(a.text() for a in menu.actions() if not a.isSeparator())
+        files = sorted(p.stem for p in (Path(win._get_test_scenes_dir()) / title).glob("*.pgraph"))
+        assert names == files
+
+
+def test_campaign_scenes_have_notes():
+    import glob
+    import json
+    for f in glob.glob(os.path.join(SCENES, "MSUPER_*", "*.pgraph")):
+        with open(f, encoding="utf-8") as fh:
+            notes = json.load(fh).get("notes", "")
+        assert "**Try" in notes and "**Expect" in notes, f
+
+
+def test_z_d_scene_loads_with_z_d_and_solves(win):
+    _open(win, os.path.join(SCENES, "MSUPER_2_Z_D", "ZD_b_TAP_Z_D_SET.pgraph"))
+    assert [v.get("Z_d") for v in win.scattering_assignments.values() if "Z_d" in v] == [125.0]
+    _, eng, _ = _solve(win)
+    (r,) = eng["results"]
+    f = _grid(win)
+    phase = np.unwrap(np.angle(r["S"][:, 0, 0]))
+    f_res = f[np.argmax(np.abs(np.gradient(phase, f)))]
+    assert abs(f_res - 4.4) < 2e-4               # the mode as drawn
