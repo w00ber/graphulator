@@ -66,8 +66,19 @@ jobs:
         if: runner.os == 'Linux'
         run: xvfb-run -a python -m pytest tests/
 
-      - name: Run tests (macOS/Windows, GUI tests skip without a display)
-        if: runner.os != 'Linux'
+      - name: Run tests (macOS, offscreen Qt)
+        if: runner.os == 'macOS'
         env:
           QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests/
+
+      # Qt's offscreen platform on Windows finds no fonts unless pointed at
+      # them: every glyph renders as a box of fallback width and widget sizes
+      # come out ~15% too wide (the ports-panel width test read 792 px; with
+      # the system fonts 680, native Windows 11 669).
+      - name: Run tests (Windows, offscreen Qt with the system fonts)
+        if: runner.os == 'Windows'
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QPA_FONTDIR: C:\Windows\Fonts
         run: python -m pytest tests/
