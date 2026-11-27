@@ -31,9 +31,19 @@ from graphulator.model.legacy_job import compile_jobs, compute_job, sweep_grid  
 from tests.snap_helpers import snap_legacy  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+def _file_version(path):
+    import json as _json
+    with open(path, encoding="utf-8") as fh:
+        return str(_json.load(fh).get("version"))
+
+
 FILES = sorted(glob.glob(os.path.join(ROOT, "examples", "**", "*.pgraph"), recursive=True)
                + glob.glob(os.path.join(ROOT, "src", "graphulator", "examples", "**", "*.pgraph"),
                            recursive=True))
+# The legacy-format (2.0/3.0) shipped files: what these migration gates are
+# about. 4.0 scenes (saved by the app, e.g. MSUPER_3_RWA/R3c) are covered by
+# tests/test_gui_show_s_engine.py.
+FILES = [f for f in FILES if _file_version(f) in ("2.0", "3.0")]
 IDS = [os.path.relpath(f, ROOT) for f in FILES]
 PG = os.path.join(ROOT, "examples", "pgraphs")
 

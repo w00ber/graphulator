@@ -130,6 +130,10 @@ def solve_for_gui(doc: Document, f) -> Dict[str, Any]:
     Raises engine.NotSupportedError (or TapError) when the engine cannot
     represent the document; the GUI falls back to legacy then."""
     from . import solve
+    from .rwa import rwa_check
     results = solve(doc, f)
     issues = [(i.level, i.path, i.msg) for r in results for i in r.issues]
-    return {"results": payloads(doc, results, f), "issues": issues}
+    rwa = rwa_check(doc, f, results)
+    if rwa is not None and rwa.matters:
+        issues.append(("warning" if not rwa.images else "info", "solve.images", rwa.summary()))
+    return {"results": payloads(doc, results, f), "issues": issues, "rwa": rwa}

@@ -24,9 +24,19 @@ from graphulator.model.quantize import quantize, quantize_sweep
 from tests.snap_helpers import snap_legacy
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+def _file_version(path):
+    import json as _json
+    with open(path, encoding="utf-8") as fh:
+        return str(_json.load(fh).get("version"))
+
+
 FILES = sorted(glob.glob(os.path.join(ROOT, "examples", "**", "*.pgraph"), recursive=True)
                + glob.glob(os.path.join(ROOT, "src", "graphulator", "examples", "**", "*.pgraph"),
                            recursive=True))
+# The legacy-format (2.0/3.0) shipped files: what these migration gates are
+# about. 4.0 scenes (saved by the app, e.g. MSUPER_3_RWA/R3c) are covered by
+# tests/test_gui_show_s_engine.py.
+FILES = [f for f in FILES if _file_version(f) in ("2.0", "3.0")]
 IDS = [os.path.relpath(f, ROOT) for f in FILES]
 # shipped tap files with no direct port on the tapped mode: Z_d is unset
 TAPS_WITHOUT_ZD = {"LINE_TAP_2NODES.pgraph", "NODE_2LINES_TAP.pgraph"}

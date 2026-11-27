@@ -50,8 +50,8 @@ def load(name):
 def test_counts():
     # the three tap scenes joined the network set in milestone 2c; the
     # validation campaigns (examples/test_scenes/MSUPER_*) add 1 lumped and
-    # 7 network scenes, and one the engine refuses on purpose (inductive tap)
-    assert len(LUMPED) == 55 and len(NETWORK) == 21
+    # 10 network scenes, and one the engine refuses on purpose (inductive tap)
+    assert len(LUMPED) == 55 and len(NETWORK) == 24
     assert [os.path.basename(k) for k, v in KINDS.items() if v == "refused"] == [
         "S1f_INDUCTIVE_TAP_FALLBACK.pgraph"]
 

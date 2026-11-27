@@ -1243,6 +1243,19 @@ class PropertiesPanel(QWidget):
             "Unchecked, you see the raw truncated comb.")
         self.tail_closure_check.toggled.connect(self._on_tail_closure_toggled)
         ports_title_row.addWidget(self.tail_closure_check)
+        # M_super engine: keep each mode's -f image pole (exact tank) or
+        # delete it (the RWA). Document setting solve.images; default on
+        # for physical documents.
+        self.images_check = QCheckBox("keep image poles (no RWA)")
+        self.images_check.setChecked(True)
+        self._images_tooltip = (
+            "M_super engine: keep each mode's -f partner pole, which makes a "
+            "parallel tank exact. Unchecked = the rotating-wave approximation "
+            "(the image node deleted). After each Show S the engine also "
+            "solves the other way and reports what the RWA costs here.")
+        self.images_check.setToolTip(self._images_tooltip)
+        self.images_check.toggled.connect(self._on_images_toggled)
+        ports_title_row.addWidget(self.images_check)
         self.truncation_check_button = QPushButton("Check truncation (2\u00d7 f_max)")
         self.truncation_check_button.setToolTip(
             "Re-solve every component with all lines' f_max doubled and "
@@ -5349,6 +5362,10 @@ class PropertiesPanel(QWidget):
             self.tail_closure_check.setChecked(
                 bool(getattr(g, 'line_tail_closure', True)))
             self.tail_closure_check.blockSignals(False)
+        if hasattr(self, 'images_check'):
+            self.images_check.blockSignals(True)
+            self.images_check.setChecked(g._model_solve('images') is not False)
+            self.images_check.blockSignals(False)
 
         node_by_id = {n['node_id']: n for n in g.nodes}
         row = 0
@@ -6115,6 +6132,25 @@ class PropertiesPanel(QWidget):
                     self.ports_param_layout.addWidget(lab, row, 0, 1, 4)
                     row += 1
         return row
+
+    def _on_images_toggled(self, checked):
+        """solve.images: True keeps the image poles, False is the RWA."""
+        self.graphulator._set_model_solve('images', bool(checked))
+        self._schedule_scattering_update()
+
+    def _show_rwa_report(self, rwa):
+        """Put the last RWA check on the checkbox (tooltip, and a warning
+        sign when the RWA is in use and costs more than the tolerance)."""
+        if not hasattr(self, 'images_check'):
+            return
+        text = "keep image poles (no RWA)"
+        tip = self._images_tooltip
+        if rwa is not None:
+            tip += "\n\nLast Show S: " + rwa.summary()
+            if rwa.matters and not rwa.images:
+                text = "\u26a0 " + text
+        self.images_check.setText(text)
+        self.images_check.setToolTip(tip)
 
     def _on_tail_closure_toggled(self, checked):
         g = self.graphulator
@@ -8795,12 +8831,29 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
     # Document fields the GUI's legacy state has no slot for. They are kept
     # from the file that was opened and put back on save, so Open -> Save
     # does not reset them (4.0 files written by scripts may set them).
-    _MODEL_ONLY_SOLVE = ("sectors", "sector_tol", "sector_max")
+    _MODEL_ONLY_SOLVE = ("sectors", "sector_tol", "sector_max", "images")
 
     def _model_document(self, render=False):
         """The live GUI state as a model Document (what a save would hold,
         plus the 4.0-only settings carried from the opened file)."""
         return self._apply_model_carry(model.from_legacy(self._serialize_graph(render=render)))
+
+    def _set_model_solve(self, key, value):
+        """Set a 4.0-only solve option (one of _MODEL_ONLY_SOLVE) from the
+        GUI: it lives in the carry, so Show S and the next save both see it."""
+        if getattr(self, '_model_carry', None) is None:
+            doc = model.from_legacy(self._serialize_graph())
+            self._model_carry = {
+                "units": dict(doc.units),
+                "solve": {k: copy.deepcopy(getattr(doc.solve, k)) for k in self._MODEL_ONLY_SOLVE},
+            }
+        self._model_carry["solve"][key] = value
+
+    def _model_solve(self, key, default=None):
+        carry = getattr(self, '_model_carry', None)
+        if carry is None:
+            return default
+        return carry["solve"].get(key, default)
 
     def _apply_model_carry(self, doc):
         carry = getattr(self, '_model_carry', None)
@@ -12213,10 +12266,15 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                                  + payload['fallback'].split(':')[0]
                                  + "); showing the legacy engine", 8000)
         else:
-            warns = [msg for level, _, msg in self.sparams_engine_issues
-                     if level in ('warning', 'error')]
+            warns = [msg for level, path, msg in self.sparams_engine_issues
+                     if level in ('warning', 'error') or path == 'solve.images']
             if warns:
-                self._status_message("; ".join(warns[:2]), 8000)
+                self._status_message("; ".join(warns[:2]), 15000)
+        rwa = payload.get('rwa')
+        self.sparams_rwa_report = rwa
+        panel = getattr(self, 'properties_panel', None)
+        if panel is not None and hasattr(panel, '_show_rwa_report'):
+            panel._show_rwa_report(rwa)
 
     def _update_sparams_checkboxes(self):
         """Update checkboxes for S-parameter selection.

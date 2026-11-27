@@ -720,3 +720,30 @@ is written as the node's `Z_d` key in 2.0/3.0 dicts, and migrates to
 drawing). Gates in `tests/test_gui_show_s_engine.py`: both tap scenes solve
 (finite, |S| <= 1) once Z_d is typed; Z_d survives a 4.0 save and reload;
 TL_2 (direct port) asks for none.
+
+## The RWA flag (27 Nov 2026)
+
+`engine/rwa.py`. After every engine Show S on a physical document with CMT
+modes, `rwa_check` solves again with `solve.images` flipped and reports:
+
+- **Measured cost:** max |S_images - S_rwa| over the sweep and every drawn
+  channel, with where and which trace. No rule of thumb in between.
+- **Predicted, per tapped mode:** the pull d = f_drawn - f_bare and the image
+  shift d^2 / (2 f_bare), which explains the measured cost (v38 sec. 3.7).
+
+Flag: |dS| > `RWA_TOL` = 0.01. With images kept it is an info line ("the RWA
+would change S by ..."); with the RWA in use it is a warning, and the
+Ports & Lines checkbox **keep image poles (no RWA)** shows a warning sign.
+The checkbox sets `solve.images` (now carried by the GUI like the sector
+settings, so it is saved in the 4.0 file); the last report is its tooltip.
+Lumped documents get no report (RWA by construction, milestone 1).
+
+Measured on the shipped scenes (`examples/test_scenes/MSUPER_3_RWA`):
+- A tank on a port (TL_2, gamma_p = 0.1, f0 = 4.4): |dS| = 0.0136 at the
+  sweep edge, against 1/2Q_ext = 0.011 (sec. 3.6: first order, largest off
+  resonance).
+- A tapped mode (Z_d 1 to 625 ohm): the measured resonance shift equals
+  d^2/2f0 to 1 % (-0.046, -0.231, -1.184 MHz at 25, 125, 625 ohm, linewidth
+  0.73 MHz); |dS| 0.0098 to 2.0. On a lossless one-port |dS| ~ 2 sin(2 delta/kappa),
+  so a shift of a third of a linewidth already gives |dS| ~ 1.
+- The tolerance is a choice (JA to confirm): 0.01 flags TL_2's 1/2Q_ext.

@@ -278,3 +278,80 @@ def test_z_d_scene_loads_with_z_d_and_solves(win):
     phase = np.unwrap(np.angle(r["S"][:, 0, 0]))
     f_res = f[np.argmax(np.abs(np.gradient(phase, f)))]
     assert abs(f_res - 4.4) < 2e-4               # the mode as drawn
+
+
+# ---------------------------------------------------------------------------
+# The RWA flag (engine/rwa.py): image poles on/off, and what deleting costs
+# ---------------------------------------------------------------------------
+
+RWA = os.path.join(SCENES, "MSUPER_3_RWA")
+
+
+def test_rwa_report_predicted_shift_and_cost():
+    from graphulator import model
+    from graphulator.engine.gui_payload import solve_for_gui
+    from graphulator.model.legacy_job import sweep_grid
+    doc = model.load(os.path.join(RWA, "R3b_TAP_PULL_SETS_RWA_COST.pgraph"))
+    out = solve_for_gui(doc, sweep_grid(doc))
+    r = out["rwa"]
+    assert r.images and r.matters
+    (m,) = r.modes
+    assert m.image_shift == pytest.approx(-m.pull ** 2 / (2 * m.f_bare))
+    assert m.image_shift * 1e3 == pytest.approx(-0.0457, rel=2e-2)
+    assert any(p == "solve.images" and lvl == "info" for lvl, p, _ in out["issues"])
+    doc.solve.images = False
+    out = solve_for_gui(doc, sweep_grid(doc))
+    assert out["rwa"].images is False
+    assert any(p == "solve.images" and lvl == "warning" for lvl, p, _ in out["issues"])
+
+
+def test_rwa_measured_shift_matches_prediction():
+    """Deleting the image moves the dressed resonance by d^2/2f0 (sec. 3.7)."""
+    from graphulator import engine, model
+    from graphulator.engine.rwa import mode_pulls
+    doc = model.load(os.path.join(RWA, "R3c_SAVED_WITH_RWA_BREAKS.pgraph"))
+    f = np.linspace(4.39, 4.41, 20001)
+    res = {}
+    for img in (True, False):
+        doc.solve.images = img
+        (r,) = engine.solve(doc, f)
+        g = np.gradient(np.unwrap(np.angle(r.S[:, 0, 0])), f)
+        res[img] = f[np.argmax(np.abs(g))]
+    (m,) = mode_pulls(doc)
+    assert res[True] == pytest.approx(4.4, abs=1e-4)
+    assert res[False] - res[True] == pytest.approx(m.image_shift, rel=2e-2)
+
+
+def test_no_rwa_report_without_modes_or_on_lumped():
+    from graphulator import model
+    from graphulator.engine.gui_payload import solve_for_gui
+    from graphulator.model.legacy_job import sweep_grid
+    for p in (os.path.join(PG, "TL_3_PUMPED_TERMINATION_AMPLIFIER.pgraph"),
+              os.path.join(SCENES, "MSUPER_1_SHOW_S", "S1a_LUMPED_UNCHANGED.pgraph")):
+        doc = model.load(p)
+        assert solve_for_gui(doc, sweep_grid(doc))["rwa"] is None
+
+
+def test_images_checkbox_drives_the_document(win, tmp_path):
+    from graphulator import model
+    _open(win, os.path.join(RWA, "R3c_SAVED_WITH_RWA_BREAKS.pgraph"))
+    panel = win.properties_panel
+    panel._update_scattering_ports_table()
+    assert panel.images_check.isChecked() is False          # from the file
+    assert win._model_document().solve.images is False
+    _, eng, _ = _solve(win)
+    with contextlib.redirect_stdout(io.StringIO()):
+        win._on_sparams_finished(win._sparams_generation,
+                                 {**eng, "f_root_s": _grid(win)})
+    assert panel.images_check.text().startswith("⚠")
+    assert "RWA in use" in panel.images_check.toolTip()
+    panel.images_check.setChecked(True)
+    assert win._model_document().solve.images is True
+    p = tmp_path / "rwa.pgraph"
+    model.save(win._model_document(), p)
+    assert model.load(p).solve.images is True
+    _, eng, _ = _solve(win)
+    with contextlib.redirect_stdout(io.StringIO()):
+        win._on_sparams_finished(win._sparams_generation,
+                                 {**eng, "f_root_s": _grid(win)})
+    assert not panel.images_check.text().startswith("⚠")
