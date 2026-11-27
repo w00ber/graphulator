@@ -5568,10 +5568,16 @@ class PropertiesPanel(QWidget):
             self._refresh_comb_notes()      # also re-ranges the n spinboxes
 
     def _add_line_physics_row(self, line, row):
+        """Two rows: the line itself (FSR, Ztx, loss), then the modelling
+        and termination choices (f_max, port Z0). One wide strip did not
+        fit a half-window pane on Windows."""
         from .para_features.explicit_ports import ALPHA_TOOLTIP
         g = self.graphulator
-        hbox = QHBoxLayout()
-        hbox.setSpacing(6)
+        line_row = QHBoxLayout()
+        line_row.setSpacing(6)
+        model_row = QHBoxLayout()
+        model_row.setSpacing(6)
+        hbox = line_row
 
         def add(label, key, lo, hi, decimals, step, tip, width=78):
             lab = QLabel(label)
@@ -5594,27 +5600,35 @@ class PropertiesPanel(QWidget):
              "against (L = Ztx/2\u03c0f_Z)."
              if line.get('sections') else "Line characteristic impedance"),
             width=64)
-        add("f_max", 'f_max', 1e-9, 1e12, 3, 1.0,
-            "Comb extent: the modes kept explicitly (N pairs). The modes "
-            "beyond are closed into the port analytically when the tail "
-            "closure is on, so N need only span the couplings that matter.")
-        add("Z0", 'Z0_port', 1e-6, 1e6, 1, 1.0, "Port termination impedance",
-            width=64)
         # Internal loss as a RATE, like every other rate in the app, rather
         # than as the attenuation alpha*l it is stored as -- which also
         # retires the alpha that collided with the pump's alpha below. The
         # map B_int = (2/pi) alpha FSR is exact and linear, so this is a
         # change of units and not of model; note it therefore TRACKS FSR.
-        self._add_line_loss_spin(hbox, line)
-        hbox.addStretch()
+        self._add_line_loss_spin(line_row, line)
+        line_row.addStretch()
         edit_btn = QPushButton("Edit\N{HORIZONTAL ELLIPSIS}")
         edit_btn.setMaximumWidth(60)
         edit_btn.setToolTip("Label, tap coupling types, end load, impedance "
                             "steps, target resonance and appearance")
         edit_btn.clicked.connect(lambda _=False, l=line: g._edit_line(l))
-        hbox.addWidget(edit_btn)
+        line_row.addWidget(edit_btn)
+
+        hbox = model_row
+        add("Z0", 'Z0_port', 1e-6, 1e6, 1, 1.0, "Port termination impedance",
+            width=64)
+        add("f_max", 'f_max', 1e-9, 1e12, 3, 1.0,
+            "Comb extent: the modes kept explicitly (N pairs). The modes "
+            "beyond are closed into the port analytically when the tail "
+            "closure is on, so N need only span the couplings that matter.")
+        model_row.addStretch()
+
+        rows = QVBoxLayout()
+        rows.setSpacing(4)
+        rows.addLayout(line_row)
+        rows.addLayout(model_row)
         holder = QWidget()
-        holder.setLayout(hbox)
+        holder.setLayout(rows)
         self.ports_param_layout.addWidget(holder, row, 0, 1, 4)
         return row + 1
 
