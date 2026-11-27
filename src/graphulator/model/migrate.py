@@ -52,7 +52,7 @@ class MigrationError(ValueError):
     pass
 
 
-NODE_PHYS = ("node_id", "label", "freq", "B_int", "B_ext", "conj")
+NODE_PHYS = ("node_id", "label", "freq", "B_int", "B_ext", "conj", "Z_d")
 EDGE_PHYS = ("from_node_id", "to_node_id", "f_p", "rate", "phase", "from_to")
 PORT_PHYS = ("label", "monitored", "attachments")
 ATT_STYLE = ("color", "linewidth_mult", "label", "label_size_mult")
@@ -136,6 +136,9 @@ def from_legacy(d: Dict[str, Any]) -> Document:
             doc.attachments.append(Attachment(id=pid, mode=mid, plane=pid, rate=float(bext)))
         elif "B_ext" in n:
             m.extras["B_ext"] = bext
+        if n.get("Z_d") is not None:
+            # the LC impedance of a tapped mode as drawn (ohms; model/taps.py)
+            m.extras["Z_d"] = float(n["Z_d"])
         doc.modes.append(m)
 
     # -- edges ----------------------------------------------------------------

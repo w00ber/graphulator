@@ -706,3 +706,17 @@ The conversion off-diagonals (non-conjugate partner sector) come out with
 the opposite sign to legacy's; |S| and every diagonal agree. Flipping the
 sign of the idler channel's amplitude flips both off-diagonals and nothing
 else, so it is a convention, not physics. Left as the engine has it.
+
+## Z_d in the GUI (27 Nov 2026)
+
+The Scattering tab's node table gets a **Z_d [ohm]** column for the modes
+that need it: tapped onto a line through a coupling capacitor and not
+attached directly to a plane (`Graphulator._modes_needing_z_d`, from
+`taps.tap_groups` and `taps._direct` on the model snapshot). Unset, it shows
+grey and stores nothing, so the plot keeps the missing-Z_d error (decision
+Q5: nothing guessed). The value lives in `scattering_assignments[node]['Z_d']`,
+is written as the node's `Z_d` key in 2.0/3.0 dicts, and migrates to
+`Mode.extras['Z_d']` (`NODE_PHYS` now includes it, so it is physics, not
+drawing). Gates in `tests/test_gui_show_s_engine.py`: both tap scenes solve
+(finite, |S| <= 1) once Z_d is typed; Z_d survives a 4.0 save and reload;
+TL_2 (direct port) asks for none.

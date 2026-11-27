@@ -170,3 +170,66 @@ def test_worker_end_to_end(win):
         win._on_sparams_finished(win._sparams_generation, payload)
     assert win.sparams_data["port_ids"] == ["port:0", "port:1"]
     assert win.sparams_engine_used == "msuper"
+
+
+# ---------------------------------------------------------------------------
+# Z_d: the LC impedance a tapped mode needs (model/taps.py, decision Q5)
+# ---------------------------------------------------------------------------
+
+SCENES = os.path.join(os.path.dirname(PG), "test_scenes")
+
+
+def _zd_spins(win):
+    from PySide6.QtWidgets import QDoubleSpinBox
+    lay = win.properties_panel.nodes_param_layout
+    out = {}
+    for i in range(lay.count()):
+        w = lay.itemAt(i).widget()
+        if isinstance(w, QDoubleSpinBox) and w.property("param_name") == "Z_d":
+            out[w.property("node_id")] = w
+    return out
+
+
+@pytest.mark.parametrize("name", TAPS_NEED_ZD)
+def test_z_d_field_makes_the_tap_scene_solve(win, name):
+    _open(win, os.path.join(SCENES, name + ".pgraph"))
+    need = win._modes_needing_z_d()
+    assert need
+    with contextlib.redirect_stdout(io.StringIO()):
+        win.properties_panel._update_scattering_node_table()
+    spins = _zd_spins(win)
+    assert set(spins) == need
+    for nid, w in spins.items():
+        assert w.property("user_assigned") is False
+        w.setValue(125.0)                          # what a user typing does
+    assert all(win.scattering_assignments[n]["Z_d"] == 125.0 for n in need)
+    _, eng, _ = _solve(win)
+    assert eng["results"] and not [i for i in eng["issues"] if i[0] == "error"]
+    S = eng["results"][0]["S"]
+    assert np.all(np.isfinite(S))
+    # passive, lossless network: |S| <= 1
+    assert np.nanmax(np.abs(S)) <= 1 + 1e-9
+
+
+def test_z_d_round_trips_through_save_and_load(win, tmp_path):
+    from graphulator import model
+    _open(win, os.path.join(SCENES, "LINE_TAP_2NODES.pgraph"))
+    nid = sorted(win._modes_needing_z_d())[0]
+    win.scattering_assignments.setdefault(nid, {})["Z_d"] = 625.0
+    doc = win._model_document()
+    assert doc.by_id("modes")[f"n{nid}"].extras["Z_d"] == 625.0
+    assert "Z_d" not in doc.drawing.nodes[f"n{nid}"]
+    p = tmp_path / "tap.pgraph"
+    model.save(doc, p)
+    back = model.load(p)
+    assert back.by_id("modes")[f"n{nid}"].extras["Z_d"] == 625.0
+    import json
+    with contextlib.redirect_stdout(io.StringIO()):
+        win._deserialize_graph(win._state_dict_from_file(json.loads(p.read_text())))
+    assert win.scattering_assignments[nid]["Z_d"] == 625.0
+
+
+def test_direct_port_needs_no_z_d(win):
+    """TL_2's tapped mode also sits on a port, which fixes its C_d."""
+    _open(win, os.path.join(PG, "TL_2_MODE_TAPPED_ONTO_A_LINE.pgraph"))
+    assert win._modes_needing_z_d() == set()

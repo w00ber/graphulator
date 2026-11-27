@@ -5144,6 +5144,18 @@ class PropertiesPanel(QWidget):
             bext_header.setStyleSheet("font-weight: bold;")
             self.nodes_param_layout.addWidget(bext_header, row, 3, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        # Z_d: only for modes tapped onto a line through a coupling
+        # capacitor with nothing else fixing their LC impedance (model/taps.py)
+        tapped = self.graphulator._modes_needing_z_d()
+        if tapped:
+            zd_header = QLabel("Z_d [\u03a9]")
+            zd_header.setStyleSheet("font-weight: bold;")
+            zd_header.setToolTip(
+                "LC impedance sqrt(L/C) of a tapped mode as drawn. With the tap "
+                "rate it fixes the coupling capacitor; the M_super engine needs "
+                "it to solve the tap exactly.")
+            self.nodes_param_layout.addWidget(zd_header, row, 4, alignment=Qt.AlignmentFlag.AlignCenter)
+
         # Add node parameter rows
         for i, node in enumerate(node_list):
             row = i + 1
@@ -5260,11 +5272,35 @@ class PropertiesPanel(QWidget):
                 # Empty cell for nodes without self-loop
                 self.nodes_param_layout.addWidget(QLabel("—"), row, 3, alignment=Qt.AlignmentFlag.AlignCenter)
 
+            if node_id in tapped:
+                zd_spin = FineControlSpinBox()
+                zd_spin.setRange(0.01, 1.0e6)
+                zd_spin.setDecimals(2)
+                zd_spin.setSingleStep(1.0)
+                zd_spin.setMaximumWidth(config.FREQ_SPINBOX_WIDTH)
+                zd_spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+                zd_spin.setProperty('node_id', node_id)
+                zd_spin.setProperty('param_name', 'Z_d')
+                zd_spin.setProperty('obj_type', 'node')
+                zd_spin.setProperty('obj_label', node['label'])
+                if assignments.get('Z_d') is not None:
+                    zd_spin.setValue(assignments['Z_d'])
+                    zd_spin.setProperty('user_assigned', True)
+                else:
+                    zd_spin.setValue(50.0)
+                    zd_spin.setStyleSheet("color: lightgray;")
+                    zd_spin.setProperty('user_assigned', False)
+                zd_spin.setToolTip("ohms: sqrt(L/C) of this mode as drawn (required for its tap)")
+                zd_spin.valueChanged.connect(lambda val, nid=node_id, widget=zd_spin: self._on_node_param_changed(nid, 'Z_d', val, widget))
+                zd_spin.editingFinished.connect(lambda nid=node_id, widget=zd_spin: self._on_node_param_changed(nid, 'Z_d', widget.value(), widget))
+                self.nodes_param_layout.addWidget(zd_spin, row, 4)
+
         # Set column stretch factors to prevent label column from expanding
         self.nodes_param_layout.setColumnStretch(0, 0)  # Node labels: no stretch (stay narrow)
         self.nodes_param_layout.setColumnStretch(1, 1)  # freq spinbox: can stretch
         self.nodes_param_layout.setColumnStretch(2, 1)  # B_int spinbox: can stretch
         self.nodes_param_layout.setColumnStretch(3, 1)  # B_ext spinbox: can stretch
+        self.nodes_param_layout.setColumnStretch(4, 1 if tapped else 0)  # Z_d spinbox
 
         # Add stretch at the bottom
         self.nodes_param_layout.setRowStretch(row + 1, 1)
@@ -8904,6 +8940,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     node_data['freq'] = scattering_params['freq']
                 if 'B_int' in scattering_params:
                     node_data['B_int'] = scattering_params['B_int']
+                if scattering_params.get('Z_d') is not None:
+                    node_data['Z_d'] = scattering_params['Z_d']
                 if 'B_ext' in scattering_params:
                     # Only save B_ext if node has a self-loop; otherwise set to None
                     if has_self_loop:
@@ -9173,7 +9211,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             max_node_id = max(max_node_id, node_data["node_id"])
 
             # Load scattering parameters if present
-            if 'freq' in node_data or 'B_int' in node_data or 'B_ext' in node_data:
+            if ('freq' in node_data or 'B_int' in node_data or 'B_ext' in node_data
+                    or node_data.get('Z_d') is not None):
                 node_obj_id = _node_key(node)
                 if node_obj_id not in self.scattering_assignments:
                     self.scattering_assignments[node_obj_id] = {}
@@ -9183,6 +9222,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     self.scattering_assignments[node_obj_id]['B_int'] = node_data['B_int']
                 if 'B_ext' in node_data:
                     self.scattering_assignments[node_obj_id]['B_ext'] = node_data['B_ext']
+                if node_data.get('Z_d') is not None:
+                    self.scattering_assignments[node_obj_id]['Z_d'] = float(node_data['Z_d'])
 
         # Update counters
         self.node_counter = len(self.nodes)
@@ -11861,6 +11902,19 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         except Exception as e:
             logger.exception("Error preparing S-parameter computation")
             self._show_sparams_error(str(e))
+
+    def _modes_needing_z_d(self):
+        """Node ids of modes tapped onto a line through a coupling capacitor
+        and not attached directly to a plane: the M_super engine needs their
+        LC impedance Z_d (model/taps.py, decision Q5)."""
+        try:
+            from .model.taps import _direct, tap_groups
+            doc = self._model_document()
+        except Exception:
+            logger.debug("Z_d check: model snapshot failed", exc_info=True)
+            return set()
+        nid = {mid: st.get('node_id') for mid, st in doc.drawing.nodes.items()}
+        return {nid.get(m) for m in tap_groups(doc) if not _direct(doc, m)} - {None}
 
     def _sparams_use_engine(self):
         """Show S solves with the M_super engine unless the user switched to
