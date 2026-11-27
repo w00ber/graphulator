@@ -98,4 +98,8 @@ def validate(doc: Document) -> List[Issue]:
                     and abs(((n * fsr - doc.sweep.start) / df) - round((n * fsr - doc.sweep.start) / df)) < 1e-9]
             if hits:
                 warn(f"blocks/{b.id}", f"sweep lands on line pole(s) f = n*FSR, n = {hits[:5]}: nudge the grid")
+
+    # taps whose LC mode impedance nothing fixes (milestone 2c, decision Q5)
+    from .taps import tap_issues
+    out += tap_issues(doc)
     return out

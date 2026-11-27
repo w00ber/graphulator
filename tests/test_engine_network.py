@@ -41,8 +41,10 @@ NETWORK = ["TL_1_OPEN_LINE_ON_A_PORT.pgraph", "TL_3_PUMPED_TERMINATION_AMPLIFIER
            "INTERMODE_LEE2013_NONDEGENERATE_AMP.pgraph", "LINE_PUMPED_AMP_AND_CONV.pgraph",
            "LINE_PUMPED_LOADED.pgraph", "LINE_PUMPED_TERMINATION.pgraph"]
 PUMPED = [k for k in NETWORK if M.load(FILES[k]).pumped]
-REFUSED = {"TL_2_MODE_TAPPED_ONTO_A_LINE.pgraph": "2c", "LINE_TAP_2NODES.pgraph": "2c",
-           "NODE_2LINES_TAP.pgraph": "2c"}       # PORT_SHARED_2LINES: M2b, test_engine_m2b
+# Tap documents were refused until milestone 2c (test_engine_m2c). The two
+# without a direct port need the user's Z_d and solve to S = None until then.
+TAPPED = {"TL_2_MODE_TAPPED_ONTO_A_LINE.pgraph": True, "LINE_TAP_2NODES.pgraph": False,
+          "NODE_2LINES_TAP.pgraph": False}
 
 
 def load(name):
@@ -464,10 +466,14 @@ def test_kept_poles_do_not_change_s():
 # refusals and hygiene
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("name", sorted(REFUSED))
-def test_mode_documents_refused(name):
-    with pytest.raises(engine.NotSupportedError, match="milestone " + REFUSED[name]):
-        engine.solve(load(name))
+@pytest.mark.parametrize("name", sorted(TAPPED))
+def test_tap_documents_solve_or_ask_for_z_d(name):
+    rs = engine.solve(load(name))
+    if TAPPED[name]:
+        assert all(r.S is not None for r in rs)
+    else:
+        assert all(r.S is None for r in rs)
+        assert any("LC mode impedance" in i.msg for r in rs for i in r.issues)
 
 
 def test_no_qt_import():

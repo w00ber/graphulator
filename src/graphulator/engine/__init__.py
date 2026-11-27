@@ -9,6 +9,9 @@
 - Milestone 2b: lumped modes on such documents as one CMT block per
   component, an impedance multiport on their planes; line poles promoted to
   mode rows on request (solve_network(doc, promote=True)), S unchanged.
+- Milestone 2c: capacitive taps as a coupling capacitor in Sigma_0 plus the
+  tank on its own node (model/taps.py), and each mode's -f image pole on
+  physical documents (solve.images), so a tapped tank is solved exactly.
 
     from graphulator import engine
     results = engine.solve(doc)          # one result per component
@@ -50,8 +53,8 @@ def solve(doc: Document, f=None):
 
     Lumped documents give ComponentResult (milestone 1, bit for bit with
     legacy), physical ones NetworkResult (milestone 2). Raises
-    NotSupportedError for documents that need a later milestone (taps: 2c;
-    lumped modes with element pumps: later)."""
+    NotSupportedError for documents that need a later milestone (inductive
+    taps; lumped modes with element pumps)."""
     if classify(doc) == "network":
         return solve_network(doc, f)
     if f is None:

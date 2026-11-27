@@ -215,7 +215,10 @@ class SolveSettings(_Base):
     the lumped sector frame); used when it is a port mode of the shown
     component, else the first port mode is (decision Q1). legacy_frames: the
     spanning-tree / constraint-group state the legacy engine uses for lumped
-    sectors (HANDOFF sec. 6), kept verbatim."""
+    sectors (HANDOFF sec. 6), kept verbatim. images: give each lumped mode
+    its -f partner pole in the M_super network (the reality completion of
+    the RWA; None = on for physical documents, off for lumped ones, which
+    stay bit for bit with legacy)."""
     sectors: Union[str, List[int]] = "auto"
     sector_tol: float = 1e-3
     sector_max: int = 16
@@ -223,6 +226,7 @@ class SolveSettings(_Base):
     tail_closure: Optional[bool] = None
     root: Optional[str] = None
     legacy_frames: Optional[Dict[str, Any]] = None
+    images: Optional[bool] = None
     extras: Dict[str, Any] = field(default_factory=dict)
 
 

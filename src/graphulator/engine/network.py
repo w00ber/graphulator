@@ -8,8 +8,13 @@ Scope:
 - M2b: the lumped modes as one CMT block per component, an impedance-type
   multiport on the planes they attach to (decision D2); line poles promoted
   to mode rows (kept poles), with S invariant.
-- Refused: taps (M2c) and lumped modes together with element pumps (later:
-  their sector images are the physical workflow's generate step).
+- M2c: capacitive taps as circuit elements: the coupling capacitor C_c is
+  a C block in Sigma_0 and the tank attaches to its own node in the
+  impedance (Foster I) form, gamma = 1/(2 pi Z_ref C_d) (model/taps.py).
+  Each lumped mode carries its -f image pole by default on physical
+  documents (solve.images; CMTBlock.M_rows), which makes a tank exact.
+- Refused: inductive taps, and lumped modes together with element pumps
+  (later: their sector images are the physical workflow's generate step).
 
 Convention: time dependence e^{-i omega t}, decaying poles in the lower half
 plane (decision D7), omega = 2 pi f with f in the document's frequency unit.
@@ -81,6 +86,7 @@ import numpy as np
 
 from ..model.pump_depth import anchor_depth
 from ..model.schema import Document
+from ..model.taps import TapError, freq_scale, resolve_taps
 from ..model.validate import Issue
 from .kernel import diagonal, f_axis, k_matrices, static_part
 from .msuper import MSuper, compile_document
@@ -140,6 +146,39 @@ class CMTBlock:
     planes: List[int]
     K: np.ndarray                       # (N, P) complex
     Zr: float
+    images: bool = False                # add each mode's -f partner (reality completion)
+
+    @property
+    def n(self) -> int:
+        """Rows of the block: N, or 2N with the image rows."""
+        return len(self.ms.rows) * (2 if self.images else 1)
+
+    @property
+    def K_rows(self) -> np.ndarray:
+        """K over the block's rows: [K; conj K] with the images."""
+        return np.vstack([self.K, np.conj(self.K)]) if self.images else self.K
+
+    def M_rows(self, f) -> np.ndarray:
+        """(n_f, n, n): M_iso, and with the images blockdiag(M_iso, 2f - conj M_iso).
+
+        The image block is f + conj(H) for M_iso = f - H: its z is
+        conj(z_main(-f)), so z(-f) = conj z(f) holds for the sum (a real
+        network). For one mode it is the exact Foster pair of a parallel
+        tank, (i/2) gamma [1/(f - f0) + 1/(f + f0)]. Drawn mode-mode edges
+        get their conjugates among the images and no counter-rotating
+        cross terms (those are the RWA checker's level 2)."""
+        M = self.M_iso(f)
+        if not self.images:
+            return M
+        N = M.shape[1]
+        fa = np.asarray(f, dtype=float).reshape(-1)
+        out = np.zeros((M.shape[0], 2 * N, 2 * N), dtype=complex)
+        out[:, :N, :N] = M
+        img = -np.conj(M)
+        idx = np.arange(N)
+        img[:, idx, idx] += 2 * fa[:, None]
+        out[:, N:, N:] = img
+        return out
 
     def M_iso(self, f) -> np.ndarray:
         """(n_f, N, N): M without the port loading (i/2) K K^dag."""
@@ -208,8 +247,8 @@ class Network:
             o += len(ln.poles)
         cmt = []
         for b in self.cmt:
-            cmt.append((o, o + len(b.ms.rows)))       # (a rows, block currents)
-            o += len(b.ms.rows) + len(b.planes)
+            cmt.append((o, o + b.n))                  # (a rows, block currents)
+            o += b.n + len(b.planes)
         return {"lines": lines, "flux": flux, "poles": poles, "cmt": cmt, "n": o}
 
     @property
@@ -237,12 +276,11 @@ def classify(doc: Document) -> str:
     if not physical and not element_pumps:
         return "lumped"
     if _has_modes(doc):
-        taps = [a.id for a in doc.attachments if a.element is not None]
-        if taps:
+        inductive = [a.id for a in doc.attachments if a.element not in (None, "C")]
+        if inductive:
             raise NotSupportedError(
-                "Lumped modes tapped onto lines (attachments " + ", ".join(taps)
-                + ") come in step 4, milestone 2c (taps, after the D3 "
-                "derivation); the engine has " + M2B + ".")
+                "Inductive taps (attachments " + ", ".join(inductive) + ") are not in "
+                "milestone 2c: their exact form is derived but not checked numerically.")
         if element_pumps:
             raise NotSupportedError(
                 "Lumped modes together with element pumps come after milestone 2 "
@@ -335,6 +373,11 @@ def compile_network(doc: Document, promote: bool = False) -> List[Network]:
     accepted too (the M2 path for gate 4). promote=True builds the kept
     poles of solve.kept_poles as mode rows."""
     physical = classify(doc) == "network"
+    try:
+        doc, tap_issues, tap_incomplete = resolve_taps(doc)
+    except TapError as e:
+        raise NotSupportedError(str(e)) from e
+    images = physical if doc.solve.images is None else bool(doc.solve.images)
     planes = [p.id for p in doc.planes]
     pidx = {p: i for i, p in enumerate(planes)}
     Zr = z_ref(doc)
@@ -381,11 +424,17 @@ def compile_network(doc: Document, promote: bool = False) -> List[Network]:
         if b.type == "line" or b.id in absorbed_ids:
             continue
         if b.type in ("L", "C"):
-            if "f_Z" not in b.params:
-                raise NotSupportedError(f"block {b.id} ({b.type}): only f_Z is supported")
-            Zb, fz = _ref_impedance(doc, b), float(b.params["f_Z"])
-            # L = Zb / (2 pi f_Z), C = 1 / (2 pi f_Z Zb)
-            val = 2 * np.pi * fz / Zb if b.type == "L" else 1.0 / (2 * np.pi * fz * Zb)
+            if b.type in b.params:
+                # an element value in henries / farads -> document units
+                # (omega = 2 pi f with f in the document's unit; L stored as 1/L)
+                x = float(b.params[b.type]) * freq_scale(doc)
+                val = 1.0 / x if b.type == "L" else x
+            elif "f_Z" in b.params:
+                Zb, fz = _ref_impedance(doc, b), float(b.params["f_Z"])
+                # L = Zb / (2 pi f_Z), C = 1 / (2 pi f_Z Zb)
+                val = 2 * np.pi * fz / Zb if b.type == "L" else 1.0 / (2 * np.pi * fz * Zb)
+            else:
+                raise NotSupportedError(f"block {b.id} ({b.type}): needs {b.type} or f_Z")
             lumped.append(LumpedEl(b.id, b.type, node(b.terminals.get("a")),
                                    node(b.terminals.get("b")), val))
         elif b.type == "R":
@@ -426,7 +475,7 @@ def compile_network(doc: Document, promote: bool = False) -> List[Network]:
         _, K_full = k_matrices(ms)
         chans = [c for c in ms.channels if c.monitored] + [c for c in ms.channels
                                                             if not c.monitored]
-        cmts.append(CMTBlock(ms, [pidx[c.plane] for c in chans], K_full, Zr))
+        cmts.append(CMTBlock(ms, [pidx[c.plane] for c in chans], K_full, Zr, images))
 
     ports = [PortEl(pidx[pl.id], pl.id, pl.label, float(pl.Z0) if pl.Z0 is not None else Zr)
              for pl in doc.planes if pl.kind == "port"]
@@ -477,18 +526,22 @@ def compile_network(doc: Document, promote: bool = False) -> List[Network]:
                  for el in lumped if (el.a in gs or el.b in gs)]
         gpumps = [PumpEl(pu.id, loc[pu.plane], pu.delta, pu.phase, pu.f_p, pu.anchor)
                   for pu in pumps if pu.plane in gs]
-        gcmt = [CMTBlock(cb.ms, [loc[q] for q in cb.planes], cb.K, cb.Zr)
+        gcmt = [CMTBlock(cb.ms, [loc[q] for q in cb.planes], cb.K, cb.Zr, cb.images)
                 for cb in cmts if cb.planes[0] in gs]
         flux = sorted({x for el in glump if el.kind == "L" for x in (el.a, el.b)
                        if x is not None} | {pu.plane for pu in gpumps})
         gissues = [i for i in issues if any(i.path == pu.id for pu in gpumps)]
+        gmodes = {r.mode for cb in gcmt for r in cb.ms.rows}
+        gissues += [i for i in tap_issues
+                    if i.path.split("/", 1)[-1] in gmodes or i.path.split("/", 1)[-1] in tap_incomplete]
         for cb in gcmt:
             gissues += cb.ms.issues
         out.append(Network(
             index=len(out), planes=[planes[i] for i in g], lines=glines, lumped=glump,
             pumps=gpumps, ports=[PortEl(loc[p.plane], p.id, p.label, p.Z0) for p in gports],
             flux=flux, f_p=(gpumps[0].f_p if gpumps else None), cmt=gcmt,
-            complete=all(cb.ms.complete for cb in gcmt), issues=gissues))
+            complete=all(cb.ms.complete for cb in gcmt) and not tap_incomplete,
+            issues=gissues))
     out.sort(key=lambda n: min(planes.index(n.planes[p.plane]) for p in n.ports))
     for i, n in enumerate(out):
         n.index = i
@@ -703,15 +756,15 @@ def _assemble(net: Network, f: np.ndarray, sectors: Sequence[int]):
         # CMT blocks (sector 0 only; refused elsewhere at compile time):
         # M_iso a - K j = 0, V/sqrt(Zr) - (i/2) K^dag a = 0, j = sqrt(Zr) I
         for (oa, oi), cb in zip(lay["cmt"], net.cmt):
-            N = len(cb.ms.rows)
-            ra = o + oa + np.arange(N)
-            A[:, ra[:, None], ra[None, :]] = cb.M_iso(fm)
+            ra = o + oa + np.arange(cb.n)
+            A[:, ra[:, None], ra[None, :]] = cb.M_rows(fm)
+            Kr = cb.K_rows
             sq = np.sqrt(cb.Zr)
             for c, pl in enumerate(cb.planes):
                 ri = o + oi + c
-                A[:, ra, ri] = -cb.K[:, c] * sq
+                A[:, ra, ri] = -Kr[:, c] * sq
                 A[:, ri, V(pl)] = 1.0 / sq
-                A[:, ri, ra] = -0.5j * np.conj(cb.K[:, c])
+                A[:, ri, ra] = -0.5j * np.conj(Kr[:, c])
                 A[:, V(pl), ri] += 1.0
     return A, rhs
 

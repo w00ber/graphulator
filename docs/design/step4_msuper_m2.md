@@ -558,3 +558,97 @@ n_ref, which gives legacy's splitting with mode n_ref at resonance.
 - the partner pole;
 - direct attachments on physical documents (impedance or admittance type);
 - the anchor rule.
+
+## M2c decisions (JA, 26-27 Nov 2026)
+
+The five questions above were asked from this note alone. JA's theory
+(CMT-Theory repo; `cmt_msuper_lectures` v38, 23 Nov) had already settled
+the form, and the tap reduces to it:
+
+- **Q1, the tap form: impedance (Foster I, "B") everywhere.** A mode
+  attaches to a node as a parallel tank; its K entry is sqrt(gamma) with
+  gamma = 1/(2 pi Z_ref C), C the mode's own pole residue (its tank
+  capacitance), independent of whatever circuit sits between the node and
+  the ports.
+- **Q2, Cs: no approximation.** The coupling capacitor C_c is a circuit
+  element in Sigma_0 between the tank's node and the line end. Cs is not a
+  separate quantity: it is what C_c in series with C_d looks like from the
+  plane. This overrides D3's "no coupling-element values" for taps.
+- **Q3, the partner pole: a user option, with an RWA flag.** On by default
+  for physical documents (`solve.images`). See "M2c as built" for the number
+  the RWA checker should use.
+- **Q4, direct attachments: B,** as M2b already does. Anything physically
+  between a mode and a plane (a coupling C or L) is a Sigma_0 element.
+- **Q5, legacy anchors.** A tap's rate at n_ref converts to C_c given the
+  tank's capacitance. A direct port attachment fixes it; otherwise the file
+  is a validation error asking for the LC mode impedance Z_d = sqrt(L/C).
+  Nothing is guessed.
+
+## M2c as built (27 Nov 2026)
+
+`model/taps.py` rewrites a document's capacitive taps before the network
+is compiled (`resolve_taps`); `engine/network.py` builds C blocks from an
+element value and gives each CMT block its image rows.
+
+**The rewrite, per tapped mode** (frequency f1 as drawn, w1 = 2 pi f1):
+- The mode as drawn is the tank with every coupling capacitor to ground:
+  C_sum = C_d + sum_k C_c,k, L_d = 1 / (w1^2 C_sum).
+- Each tap's legacy rate is its coupling to line mode n_ref at resonance
+  (weak-coupling capacitance matrix, CMT-Theory `better_derivation.md`
+  sec. 7.2):
+
+      rate_k = w1 C_c,k u_k / (2 pi sqrt(C_sum C_n,k))
+
+  u_k and C_n,k are the line's loaded/stepped mode amplitude at the tapped
+  end and mode capacitance at n_ref. For one tap this is the M2c anchor
+  gamma = rate^2 2 pi Z_ref C_n / u^2 above (gated).
+- C_sum from: (1) a direct attachment (the legacy port coupling, rate
+  gamma_p): that plane is the tank's node and C_d = 1/(2 pi Z_ref gamma_p),
+  then sqrt(C_sum) solves a quadratic; (2) `Mode.extras['Z_d']`, read as the
+  impedance of the mode as drawn, Z_d = sqrt(L_d / C_sum), so
+  C_sum = 1/(w1 Z_d); (3) otherwise an error (`tap_issues`, also reported by
+  `validate`), and the component's S is None.
+- The rewritten mode sits at the bare frequency f0 = 1/(2 pi sqrt(L_d C_d)),
+  attached to its node (the direct plane, or a new internal plane
+  `<mode>.node`) at gamma_d = 1/(2 pi Z_ref C_d). Each tap becomes a C
+  block (farads in `params['C']`). The resolved values are kept in
+  `Mode.extras['tap_resolved']` of the rewritten copy.
+- Inductive taps are refused.
+
+**Images.** `CMTBlock.M_rows` is blockdiag(M_iso, 2f - conj M_iso), with K
+rows [K; conj K]. For M_iso = f - H the image block is f + conj(H), so its
+z is conj(z_main(-f)) and the sum obeys z(-f) = conj z(f). For one mode
+this is the parallel tank's Foster pair, (i/2) gamma [1/(f-f0) + 1/(f+f0)],
+exact. Drawn mode-mode edges get their conjugates among the images and no
+counter-rotating cross terms (the RWA checker's level 2). Default: on for
+physical documents, off for lumped ones (milestone 1 stays bit for bit).
+
+**The RWA-checker number for an embedded mode.** The 1/2Q rule (v38 sec.
+3.6) with the physical Q is the wrong yardstick behind Sigma_0. On TL_2's
+tap Q = 4.4 GHz / 2 MHz = 2200, yet dropping the image is O(1) wrong at
+large Z_d. What sets it is the pull d = f1 - f0 that C_c gives the tank:
+deleting the image moves the dressed resonance by d^2/(2 f0) (v38 sec. 3.7,
+level attraction with the image). Measured against that prediction to
+< 1 % (Z_d 5 to 3125 ohm; gated at 125 and 625 ohm):
+
+| Z_d [ohm] | d [MHz] | d^2/2f0 [MHz] | in linewidths |
+|---|---|---|---|
+| 5 | -15 | 0.025 | 0.01 |
+| 125 | -76 | 0.64 | 0.32 |
+| 3125 | -406 | 17.1 | 8.5 |
+
+Proposed level-1 flag: (d^2 / 2 f0) / gamma > eps.
+
+**Gates** (`tests/test_engine_m2c.py`, 20 tests): S against an independent
+nodal solve of the physical circuit (line two-ports, series C_c, shunt
+tanks) with the element values the rewrite reports: one tap at Z_d 5 to
+3125 ohm, TL_2 as shipped (two ports; the direct port fixes C_d), two
+modes on one line end, one mode on two lines. All within 1e-10 (the
+oracle's own cos/sin near the line poles sets the floor). Also: the anchor
+relations, the image-deletion shift, images off for lumped documents, the
+missing-Z_d error, inductive taps refused, schema round trip of the
+rewritten document.
+
+**Shipped files.** TL_2 solves (its direct port fixes C_d). LINE_TAP_2NODES
+and NODE_2LINES_TAP report the missing-Z_d error until Z_d is set;
+`tests/test_model_roundtrip.py` expects that error for those two files.

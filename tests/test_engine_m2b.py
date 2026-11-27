@@ -7,7 +7,8 @@ Gates (docs/design/step4_msuper_m2.md):
   algebra (bordered system vs M^-1), so the gate is to rounding:
   1e-13 max(1, max|S|), relative because the gain files reach |S| = 526.
 - PORT_SHARED_2LINES (D1, D2): two lines and a mode in parallel on one port,
-  against the closed form Y = Y_a + Y_b + 1 / (Z0 z), z = (i/2) gamma / (f - f0).
+  against the closed form Y = Y_a + Y_b + 1 / (Z0 z), z = (i/2) gamma / (f - f0)
+  (plus (i/2) gamma / (f + f0) with the M2c image poles).
 - 3: S does not depend on the kept poles (none, a few, all below f_max),
   through pole hits and in every sector; the kept poles' residues are the
   line's own (an independent contour integral of the exact impedance), so the
@@ -47,11 +48,9 @@ def load(name):
 
 
 def test_counts():
-    assert len(LUMPED) == 54 and len(NETWORK) == 11
-    assert sorted(k for k, v in KINDS.items() if v == "refused") == sorted(
-        os.path.relpath(FILES[n], ROOT) for n in
-        ("TL_2_MODE_TAPPED_ONTO_A_LINE.pgraph", "LINE_TAP_2NODES.pgraph",
-         "NODE_2LINES_TAP.pgraph"))
+    # the three tap scenes joined the network set in milestone 2c
+    assert len(LUMPED) == 54 and len(NETWORK) == 14
+    assert not [k for k, v in KINDS.items() if v == "refused"]
 
 
 # ---------------------------------------------------------------------------
@@ -78,8 +77,9 @@ def test_lumped_through_network_equals_m1(key):
 
 
 def test_loss_port_is_a_matched_resistor():
-    from graphulator.model.migrate import from_legacy
     import json
+
+    from graphulator.model.migrate import from_legacy
     with open(os.path.join(ROOT, "examples", "test_scenes", "PORT_2NODES_STACK.pgraph")) as fh:
         d = json.load(fh)
     d["ports"].append({"port_id": 1, "label": "L", "monitored": False, "pos": [0, 0],
@@ -95,17 +95,23 @@ def test_loss_port_is_a_matched_resistor():
 # D1/D2 on a physical file
 # ---------------------------------------------------------------------------
 
-def test_port_shared_2lines_closed_form():
+@pytest.mark.parametrize("images", [False, True])
+def test_port_shared_2lines_closed_form(images):
+    """With images (the M2c default on physical documents) the lone mode is
+    its exact Foster pair; without, the RWA pole of M2b."""
     doc = load("PORT_SHARED_2LINES.pgraph")
+    doc.solve.images = images
     (r,) = engine.solve(doc)
     f = r.f
     Y = -1j * np.tan(np.pi * f / 1.5) / 65 - 1j * np.tan(np.pi * f / 2.0) / 65
     z = 0.5j * 0.2 / (f - 4.4)                      # the lone mode: B_int 0, rate 0.2
+    if images:
+        z = z + 0.5j * 0.2 / (f + 4.4)
     Y = Y + 1 / (50 * z)
     S = (1 - 50 * Y) / (1 + 50 * Y)
     assert np.max(np.abs(r.S[:, 0, 0] - S)) < 1e-12
     (net,) = r.network,
-    assert len(net.cmt) == 1 and net.cmt[0].Zr == 50.0
+    assert len(net.cmt) == 1 and net.cmt[0].Zr == 50.0 and net.cmt[0].images == images
 
 
 def test_rates_are_quoted_against_z_ref():
@@ -159,9 +165,17 @@ def _invariant(doc, f=None):
     return r1
 
 
+def _zd_missing(doc):
+    from graphulator.model.taps import tap_issues
+    return [i.path.split("/", 1)[1] for i in tap_issues(doc)]
+
+
 @pytest.mark.parametrize("key", NETWORK)
 def test_kept_poles_below_f_max_leave_s_unchanged(key):
-    r = _invariant(M.load(os.path.join(ROOT, key)))
+    doc = M.load(os.path.join(ROOT, key))
+    for mode in _zd_missing(doc):
+        doc.by_id("modes")[mode].extras["Z_d"] = 50.0   # any Z_d completes the tank
+    r = _invariant(doc)
     assert sum(len(ln.poles) for ln in r.network.lines) > 0
 
 

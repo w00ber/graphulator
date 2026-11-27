@@ -12,7 +12,6 @@ sweep, which is stored as its spin boxes hold it (decision Q2: center/span
 quantized to the display precision; the oldest start/stop form becomes
 center/span, as the GUI loader converts it).
 """
-import copy
 import glob
 import json
 import os
@@ -29,6 +28,8 @@ FILES = sorted(glob.glob(os.path.join(ROOT, "examples", "**", "*.pgraph"), recur
                + glob.glob(os.path.join(ROOT, "src", "graphulator", "examples", "**", "*.pgraph"),
                            recursive=True))
 IDS = [os.path.relpath(f, ROOT) for f in FILES]
+# shipped tap files with no direct port on the tapped mode: Z_d is unset
+TAPS_WITHOUT_ZD = {"LINE_TAP_2NODES.pgraph", "NODE_2LINES_TAP.pgraph"}
 
 
 def _raw(path):
@@ -61,7 +62,12 @@ def test_examples_found():
 def test_migrates_without_errors(path):
     doc = M.load(path)
     errors = [i for i in M.validate(doc) if i.level == "error"]
-    assert not errors, errors
+    # Taps whose mode impedance no file fixes are an error by decision
+    # (milestone 2c, Q5: ask for Z_d, guess nothing).
+    tapped = [i for i in errors if "LC mode impedance" in i.msg]
+    if os.path.basename(path) in TAPS_WITHOUT_ZD:
+        assert tapped, "expected the missing-Z_d error"
+    assert not [i for i in errors if i not in tapped], errors
 
 
 @pytest.mark.parametrize("path", FILES, ids=IDS)
