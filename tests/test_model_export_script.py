@@ -106,6 +106,18 @@ def test_multicomponent_and_selected_traces():
 
 def test_full_script_runs_with_plotting():
     import matplotlib.pyplot as plt
+    # The script ends in plt.show(). Once an earlier test has imported
+    # PySide6, matplotlib picks QtAgg and show() enters the Qt event loop and
+    # never returns (the suite hung here); render off screen instead.
+    backend = plt.get_backend()
+    plt.switch_backend("Agg")
+    try:
+        _run_plotting_scripts(plt)
+    finally:
+        plt.switch_backend(backend)
+
+
+def _run_plotting_scripts(plt):
     for name in ("5MODE_CHEBY.pgraph", "TL_5_TWO_LINES_ONE_PORT.pgraph"):
         code = scattering_script(M.load(os.path.join(PG, name)))
         logging.disable(logging.WARNING)
