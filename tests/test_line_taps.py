@@ -21,7 +21,6 @@ import numpy as np
 import pytest
 
 from graphulator.autograph import LineResonator
-
 from tests import cmtline_core as core
 
 
@@ -92,7 +91,6 @@ def test_tap_profile_reference_is_exact_for_weak_elements():
     """The residual vs the reference vanishes with the element strength
     (it is loading of the comb by the finite Cc, not a profile error)."""
     N = 6
-    line = LineResonator(**dict(LINE, f_max=N * 1.5 - 0.1))
     for n in range(2, N + 1):
         exact = np.sqrt(n)
         g6 = _abasis_tap_couplings(N, tap='capacitive')

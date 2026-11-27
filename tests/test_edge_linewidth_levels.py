@@ -122,6 +122,7 @@ def test_the_properties_panel_applies_a_thinner_level(win):
 
 def test_a_multi_selection_applies_a_thinner_level(win):
     from PySide6.QtWidgets import QComboBox
+
     from graphulator import graphulator_config as config
 
     nodes = [add_node(win, f'N{i}', (3.0 * i, 0.0)) for i in range(3)]
@@ -163,6 +164,7 @@ def test_para_offers_the_thinner_levels_too(para):
 def test_a_thin_edge_reaches_the_exported_code(win):
     """A level nothing can draw or export is not a level."""
     from PySide6.QtWidgets import QApplication
+
     from graphulator import graphulator_config as config
 
     a, b = add_node(win, 'A', (0.0, 0.0)), add_node(win, 'B', (4.0, 0.0))

@@ -108,7 +108,8 @@ def test_a_palette_color_still_exports_by_its_palette_name(win):
 
 
 def test_palette_key_matches_colors_not_spellings():
-    from graphulator import code_export, graphulator_config as config
+    from graphulator import code_export
+    from graphulator import graphulator_config as config
 
     assert code_export.palette_key('#cd5c5c', config) == 'RED'
     assert code_export.palette_key('indianred', config) == 'RED'

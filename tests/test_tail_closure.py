@@ -165,7 +165,7 @@ def test_closed_lossy_comb_equals_lossy_abcd():
     """Uniform loss: the kept poles sit at f_n - i B/2 and the tail is
     evaluated at the same complex argument; against ABCD with a complex
     electrical length (test_uniform_loss's reference)."""
-    from tests.test_uniform_loss import s11_lab_lossy, ALPHA
+    from tests.test_uniform_loss import ALPHA, s11_lab_lossy
     S = _S([_open_line(3, alpha=ALPHA)]).S[:, 0, 0]
     exact = s11_lab_lossy(W, Z0, ALPHA)
     # B_int = (2/pi) alpha FSR is the LEADING-order map of a uniform
@@ -251,7 +251,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if hasattr(os, "geteuid") and os.geteuid() == 0:
     os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
 
-from tests.test_gui_hubs import para                            # noqa: E402,F401
+from tests.test_gui_hubs import para  # noqa: E402,F401
 
 
 def test_closure_shrinks_the_pumped_comb_error_at_low_N(para):
@@ -260,8 +260,9 @@ def test_closure_shrinks_the_pumped_comb_error_at_low_N(para):
     drops is the tail modes' pump coupling, second order in the pump rate.
     So the error must fall substantially -- and what is left is the number
     a user should know when they pick f_max on a pumped line."""
-    from graphulator.graphulator_para import _compute_sparams_job
     import sys
+
+    from graphulator.graphulator_para import _compute_sparams_job
     sys.path.insert(0, os.path.dirname(__file__))
     import cmtline_core as core_
     gp, win, config = para

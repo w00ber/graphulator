@@ -8,9 +8,8 @@ as a channel; the reduced S keeps its damping inside M but drops the column.
 import numpy as np
 import pytest
 
-from tests.hub_matrix_helpers import (build_static_extractor, hub_from_column,
-                                      random_symmetric)
 from graphulator import autograph
+from tests.hub_matrix_helpers import build_static_extractor, hub_from_column, random_symmetric
 
 N_MODES = 5
 OMEGA_SWEEP = np.linspace(-6.0, 6.0, 121)

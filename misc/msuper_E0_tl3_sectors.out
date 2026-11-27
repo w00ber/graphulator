@@ -1,0 +1,69 @@
+GATE 1: this oracle at sectors {0,-1} vs cmtline_core.hb_signal_idler
+  (comb N + 2 tail tanks, LJ = 1e4 static, Cd = 1e-8; same circuit as
+   test_pump_rate_normalization_matches_oracle). Residual should fall with N.
+  N=  12: max|dS_ss| = 1.30e-05   max|d|S_is|| = 1.64e-07
+  N=  48: max|dS_ss| = 2.62e-06   max|d|S_is|| = 6.59e-09
+  N= 192: max|dS_ss| = 2.63e-06   max|d|S_is|| = 6.38e-09
+  oracle peak |S_ss|^2 = 3.1804 (5.02 dB)
+  two-sector Manley-Rowe residual 2.7e-15
+
+TL_3 parameters (from the .pgraph):
+  FSR=1.5  Ztx=65.0  Z0_port=50.0  f_max=9.0  load=None  pump end=x0  f_p=9.0  rate=0.05  phase=0.0  n_ref=3  coupling=inductive
+  sweep: center 4.5 span 3.0 points 801
+  natural units: Z0/Ztx = 0.769231, omega_p = 6.000 pi, delta = 3 pi^2 rate / FSR = 19.739209 * rate
+
+GATE 2: two-sector oracle {0,-1} vs the app (TL_3 as shipped)
+  tail closure on : app peak 0.074 dB @ f=5.2500; oracle 0.083 dB @ f=3.7425; max|d|S_ss|^2|/max = 2.03e-03
+  tail closure off: app peak 0.061 dB @ f=5.5050; oracle 0.083 dB @ f=3.7425; max|d|S_ss|^2|/max = 6.79e-03
+
+TABLE: peak |S_ss|^2 over f in [3,6] (3001 pts), dB @ f, vs sector window
+  (mirror-symmetric windows m <-> -1-m).  'app' = shipped macro, tail closure on.
+  eps_33 = 2 rate / f_3 = delta L/L_tot at the anchor pair.
+  rate   eps33           {-1..0}          {-2..1}          {-3..2}          {-4..3}          {-6..5}              app
+   0.05  0.022    0.08 @ 5.256    0.06 @ 5.266    0.06 @ 5.266    0.06 @ 5.266    0.06 @ 5.266    0.07 @ 5.251
+   0.10  0.044    0.33 @ 5.256    0.24 @ 5.266    0.24 @ 5.266    0.24 @ 5.266    0.24 @ 5.266    0.30 @ 3.748
+   0.20  0.089    1.33 @ 5.256    0.94 @ 5.266    0.94 @ 5.266    0.94 @ 5.266    0.94 @ 5.266    1.19 @ 3.747
+   0.40  0.178    5.47 @ 5.255    3.36 @ 5.266    3.40 @ 5.266    3.40 @ 5.266    3.40 @ 5.266    4.92 @ 5.256
+   0.80  0.356   20.09 @ 5.245    9.35 @ 5.279   10.38 @ 5.263   10.35 @ 5.264   10.35 @ 5.264   25.25 @ 5.231
+   1.60  0.711   12.10 @ 4.500   14.01 @ 5.659   34.36 @ 5.251   25.40 @ 5.263   25.76 @ 5.259   11.60 @ 4.500
+   3.20  1.422    2.63 @ 4.500    1.44 @ 6.000   27.67 @ 4.501   41.16 @ 5.719   57.25 @ 5.405    2.52 @ 4.500
+
+  excess gain (G_peak - 1): two-sector and app relative to widest window
+  rate  0.05: G-1 converged 1.4131e-02;  two-sector/conv = 1.362;  app/conv = 1.217;  {-4..3}/{-6..5} = 1.000000
+  rate  0.10: G-1 converged 5.7286e-02;  two-sector/conv = 1.384;  app/conv = 1.233;  {-4..3}/{-6..5} = 1.000000
+  rate  0.20: G-1 converged 2.4160e-01;  two-sector/conv = 1.480;  app/conv = 1.305;  {-4..3}/{-6..5} = 1.000000
+  rate  0.40: G-1 converged 1.1854e+00;  two-sector/conv = 2.131;  app/conv = 1.773;  {-4..3}/{-6..5} = 0.999999
+  rate  0.80: G-1 converged 9.8334e+00;  two-sector/conv = 10.273;  app/conv = 33.938;  {-4..3}/{-6..5} = 0.999853
+  rate  1.60: G-1 converged 3.7561e+02;  two-sector/conv = 0.040;  app/conv = 0.036;  {-4..3}/{-6..5} = 0.921025
+  rate  3.20: G-1 converged 5.3059e+05;  two-sector/conv = 0.000;  app/conv = 0.000;  {-4..3}/{-6..5} = 0.024635
+
+FINE SCAN, rate 0.70..1.60 (f in [3,6], 3001 pts): peak dB @ f
+  converged gain should grow monotonically; a peak that rises and then
+  FALLS with rate is a pole crossing the real axis (instability) [inferred
+  from the lineshape, not from an argument-principle count].
+   rate          {-1..0}          {-6..5}          {-8..7}
+   0.70   29.35 @ 3.749    8.49 @ 5.264    8.49 @ 5.264
+   0.80   20.09 @ 5.245   10.35 @ 5.264   10.35 @ 5.264
+   0.90   13.42 @ 5.214   12.23 @ 5.263   12.23 @ 5.263
+   1.00   16.13 @ 6.000   14.14 @ 5.262   14.14 @ 5.262
+   1.10   24.16 @ 6.000   16.06 @ 5.262   16.06 @ 5.262
+   1.20   32.07 @ 5.998   17.98 @ 5.261   17.98 @ 5.261
+   1.30   26.73 @ 4.500   19.92 @ 5.261   19.92 @ 5.261
+   1.40   18.44 @ 4.500   21.86 @ 5.260   21.86 @ 5.260
+   1.50   14.56 @ 4.500   23.80 @ 5.260   23.80 @ 5.260
+   1.60   12.10 @ 4.500   25.76 @ 5.259   25.76 @ 5.259
+
+AUDIT: sum_m sgn(w_m)|S^ph_m0|^2 - 1 (lossless => 0) per window, at rate0
+  -1..0: 2.4e-15
+  -2..1: 2.7e-15
+  -3..2: 2.4e-15
+  -4..3: 2.7e-15
+  -6..5: 2.7e-15
+
+  rate 0.0500 @f=5.2660, photon-flux |S_m0|^2: m=-6:6.64e-21  m=-5:1.37e-16  m=-4:1.79e-12  m=-3:1.27e-08  m=-2:3.76e-05  m=-1:1.91e-02  m=0:1.01e+00  m=1:5.02e-03  m=2:1.42e-06  m=3:1.77e-10  m=4:1.24e-14  m=5:5.62e-19
+  rate 0.1000 @f=5.2660, photon-flux |S_m0|^2: m=-6:2.73e-17  m=-5:1.41e-13  m=-4:4.60e-10  m=-3:8.21e-07  m=-2:6.07e-04  m=-1:7.72e-02  m=0:1.06e+00  m=1:2.05e-02  m=2:2.31e-05  m=3:1.15e-08  m=4:3.24e-12  m=5:5.86e-16
+  rate 0.2000 @f=5.2660, photon-flux |S_m0|^2: m=-6:1.15e-13  m=-5:1.48e-10  m=-4:1.21e-07  m=-3:5.39e-05  m=-2:9.99e-03  m=-1:3.20e-01  m=0:1.24e+00  m=1:8.84e-02  m=2:3.98e-04  m=3:7.92e-07  m=4:8.91e-10  m=5:6.44e-13
+  rate 0.4000 @f=5.2660, photon-flux |S_m0|^2: m=-6:5.13e-10  m=-5:1.66e-07  m=-4:3.39e-05  m=-3:3.82e-03  m=-2:1.79e-01  m=-1:1.48e+00  m=0:2.19e+00  m=1:4.73e-01  m=2:8.41e-03  m=3:6.66e-05  m=4:2.98e-07  m=5:8.62e-10
+  rate 0.8000 @f=5.2640, photon-flux |S_m0|^2: m=-6:2.98e-06  m=-5:2.41e-04  m=-4:1.26e-02  m=-3:3.63e-01  m=-2:4.49e+00  m=-1:1.05e+01  m=0:1.08e+01  m=1:5.14e+00  m=2:3.49e-01  m=3:1.08e-02  m=4:1.90e-04  m=5:2.20e-06
+  rate 1.6000 @f=5.2590, photon-flux |S_m0|^2: m=-6:4.41e-02  m=-5:8.89e-01  m=-4:1.25e+01  m=-3:1.00e+02  m=-2:3.71e+02  m=-1:3.14e+02  m=0:3.77e+02  m=1:3.37e+02  m=2:7.78e+01  m=3:8.71e+00  m=4:5.74e-01  m=5:2.66e-02
+  rate 3.2000 @f=5.4050, photon-flux |S_m0|^2: m=-6:6.44e+03  m=-5:3.60e+04  m=-4:1.74e+05  m=-3:5.09e+05  m=-2:8.01e+05  m=-1:3.74e+05  m=0:5.31e+05  m=1:7.80e+05  m=2:4.28e+05  m=3:1.32e+05  m=4:2.52e+04  m=5:4.16e+03

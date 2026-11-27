@@ -62,6 +62,7 @@ def fan_scene(w):
 def rebuilt_circuit(w, compact=False):
     """The GraphCircuit the exported script builds, without drawing it."""
     import matplotlib.pyplot as plt
+
     from graphulator import code_export
 
     code = code_export.build_code(w, compact=compact)

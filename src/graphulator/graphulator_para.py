@@ -62,6 +62,7 @@ from sympy.functions.elementary.complexes import conjugate as Conjugate
 from . import graph_primitives as gp
 from . import graphulator_para_config as config
 from . import code_export
+from . import model
 from .common_window import (REFERENCE_POINTS_PER_DATA_UNIT,
                             GraphWindowCommonMixin,
                             auto_increment_label,
@@ -97,6 +98,8 @@ from .para_core.interaction_state import InteractionMode, PlacementMode
 from .para_core.graph_state import capture_graph_state
 from .autograph import (GraphExtractor, GraphScatteringMatrix,
                         compute_hub_bridge_links)
+from .model import export_script
+from .model.legacy_job import compile_jobs, compute_job
 
 logger = logging.getLogger(__name__)
 
@@ -1240,6 +1243,19 @@ class PropertiesPanel(QWidget):
             "Unchecked, you see the raw truncated comb.")
         self.tail_closure_check.toggled.connect(self._on_tail_closure_toggled)
         ports_title_row.addWidget(self.tail_closure_check)
+        # M_super engine: keep each mode's -f image pole (exact tank) or
+        # delete it (the RWA). Document setting solve.images; default on
+        # for physical documents.
+        self.images_check = QCheckBox("keep image poles (no RWA)")
+        self.images_check.setChecked(True)
+        self._images_tooltip = (
+            "M_super engine: keep each mode's -f partner pole, which makes a "
+            "parallel tank exact. Unchecked = the rotating-wave approximation "
+            "(the image node deleted). After each Show S the engine also "
+            "solves the other way and reports what the RWA costs here.")
+        self.images_check.setToolTip(self._images_tooltip)
+        self.images_check.toggled.connect(self._on_images_toggled)
+        ports_title_row.addWidget(self.images_check)
         self.truncation_check_button = QPushButton("Check truncation (2\u00d7 f_max)")
         self.truncation_check_button.setToolTip(
             "Re-solve every component with all lines' f_max doubled and "
@@ -5141,6 +5157,18 @@ class PropertiesPanel(QWidget):
             bext_header.setStyleSheet("font-weight: bold;")
             self.nodes_param_layout.addWidget(bext_header, row, 3, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        # Z_d: only for modes tapped onto a line through a coupling
+        # capacitor with nothing else fixing their LC impedance (model/taps.py)
+        tapped = self.graphulator._modes_needing_z_d()
+        if tapped:
+            zd_header = QLabel("Z_d [\u03a9]")
+            zd_header.setStyleSheet("font-weight: bold;")
+            zd_header.setToolTip(
+                "LC impedance sqrt(L/C) of a tapped mode as drawn. With the tap "
+                "rate it fixes the coupling capacitor; the M_super engine needs "
+                "it to solve the tap exactly.")
+            self.nodes_param_layout.addWidget(zd_header, row, 4, alignment=Qt.AlignmentFlag.AlignCenter)
+
         # Add node parameter rows
         for i, node in enumerate(node_list):
             row = i + 1
@@ -5257,11 +5285,35 @@ class PropertiesPanel(QWidget):
                 # Empty cell for nodes without self-loop
                 self.nodes_param_layout.addWidget(QLabel("—"), row, 3, alignment=Qt.AlignmentFlag.AlignCenter)
 
+            if node_id in tapped:
+                zd_spin = FineControlSpinBox()
+                zd_spin.setRange(0.01, 1.0e6)
+                zd_spin.setDecimals(2)
+                zd_spin.setSingleStep(1.0)
+                zd_spin.setMaximumWidth(config.FREQ_SPINBOX_WIDTH)
+                zd_spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+                zd_spin.setProperty('node_id', node_id)
+                zd_spin.setProperty('param_name', 'Z_d')
+                zd_spin.setProperty('obj_type', 'node')
+                zd_spin.setProperty('obj_label', node['label'])
+                if assignments.get('Z_d') is not None:
+                    zd_spin.setValue(assignments['Z_d'])
+                    zd_spin.setProperty('user_assigned', True)
+                else:
+                    zd_spin.setValue(50.0)
+                    zd_spin.setStyleSheet("color: lightgray;")
+                    zd_spin.setProperty('user_assigned', False)
+                zd_spin.setToolTip("ohms: sqrt(L/C) of this mode as drawn (required for its tap)")
+                zd_spin.valueChanged.connect(lambda val, nid=node_id, widget=zd_spin: self._on_node_param_changed(nid, 'Z_d', val, widget))
+                zd_spin.editingFinished.connect(lambda nid=node_id, widget=zd_spin: self._on_node_param_changed(nid, 'Z_d', widget.value(), widget))
+                self.nodes_param_layout.addWidget(zd_spin, row, 4)
+
         # Set column stretch factors to prevent label column from expanding
         self.nodes_param_layout.setColumnStretch(0, 0)  # Node labels: no stretch (stay narrow)
         self.nodes_param_layout.setColumnStretch(1, 1)  # freq spinbox: can stretch
         self.nodes_param_layout.setColumnStretch(2, 1)  # B_int spinbox: can stretch
         self.nodes_param_layout.setColumnStretch(3, 1)  # B_ext spinbox: can stretch
+        self.nodes_param_layout.setColumnStretch(4, 1 if tapped else 0)  # Z_d spinbox
 
         # Add stretch at the bottom
         self.nodes_param_layout.setRowStretch(row + 1, 1)
@@ -5310,6 +5362,10 @@ class PropertiesPanel(QWidget):
             self.tail_closure_check.setChecked(
                 bool(getattr(g, 'line_tail_closure', True)))
             self.tail_closure_check.blockSignals(False)
+        if hasattr(self, 'images_check'):
+            self.images_check.blockSignals(True)
+            self.images_check.setChecked(g._model_solve('images') is not False)
+            self.images_check.blockSignals(False)
 
         node_by_id = {n['node_id']: n for n in g.nodes}
         row = 0
@@ -5538,13 +5594,43 @@ class PropertiesPanel(QWidget):
         box.setDecimals(decimals)
         box.setSingleStep(step)
         box.setValue(float(value))
-        box.setMaximumWidth(width)
         box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         box.setToolTip(tooltip)
         if prefix:
             box.setPrefix(prefix)
+        box.setFixedWidth(self._spin_width_for(box, value, decimals, prefix))
         box.valueChanged.connect(on_change)
         return box
+
+    @staticmethod
+    def _spin_width_for(box, value, decimals, prefix=''):
+        """Width that shows the value in full under the running style.
+
+        A fixed pixel width clips on styles with wider buttons or frames
+        (Windows 11 puts the arrows side by side). Size the text the way
+        QAbstractSpinBox.sizeHint does, but for the digits this value
+        needs plus one of headroom rather than for the whole range (1e9
+        here), and let the style add its own buttons and frame."""
+        from PySide6.QtCore import QSize
+        from PySide6.QtWidgets import QStyle, QStyleOptionSpinBox
+        whole = len(str(int(abs(float(value))))) + 1
+        sample = prefix + "-" * (float(value) < 0) + "8" * whole
+        if decimals > 0:
+            sample += "." + "8" * decimals
+        fm = box.fontMetrics()
+        text_w = fm.horizontalAdvance(sample) + 2          # + cursor
+        h = box.lineEdit().sizeHint().height()
+        opt = QStyleOptionSpinBox()
+        opt.initFrom(box)
+        opt.buttonSymbols = box.buttonSymbols()
+        opt.frame = box.hasFrame()
+        opt.subControls = (QStyle.SubControl.SC_SpinBoxFrame
+                           | QStyle.SubControl.SC_SpinBoxEditField
+                           | QStyle.SubControl.SC_SpinBoxUp
+                           | QStyle.SubControl.SC_SpinBoxDown)
+        size = box.style().sizeFromContents(
+            QStyle.ContentsType.CT_SpinBox, opt, QSize(text_w, h), box)
+        return size.width()
 
     def _line_param_changed(self, line, key, value):
         g = self.graphulator
@@ -5565,10 +5651,16 @@ class PropertiesPanel(QWidget):
             self._refresh_comb_notes()      # also re-ranges the n spinboxes
 
     def _add_line_physics_row(self, line, row):
+        """Two rows: the line itself (FSR, Ztx, loss), then the modelling
+        and termination choices (f_max, port Z0). One wide strip did not
+        fit a half-window pane on Windows."""
         from .para_features.explicit_ports import ALPHA_TOOLTIP
         g = self.graphulator
-        hbox = QHBoxLayout()
-        hbox.setSpacing(6)
+        line_row = QHBoxLayout()
+        line_row.setSpacing(6)
+        model_row = QHBoxLayout()
+        model_row.setSpacing(6)
+        hbox = line_row
 
         def add(label, key, lo, hi, decimals, step, tip, width=78):
             lab = QLabel(label)
@@ -5579,11 +5671,11 @@ class PropertiesPanel(QWidget):
                 lambda v, l=line, k=key: self._line_param_changed(l, k, v),
                 width=width))
 
-        add("FSR", 'FSR', 1e-9, 1e9, 9, 0.1,
+        add("FSR", 'FSR', 1e-9, 1e9, 4, 0.1,
             "Free spectral range [a.u.]. With an end load or impedance "
             "steps this is the geometric parameter v/2\u2113, not the mode "
             "spacing \u2014 and it is the scale every mode frequency "
-            "derives from, so it carries more decimals than the rest.",
+            "derives from. Shown to 1e-4 (100 kHz when a.u. = GHz).",
             width=104)
         add("Ztx", 'Ztx', 1e-6, 1e6, 1, 1.0,
             ("Reference impedance: with sections below it no longer sets the "
@@ -5591,27 +5683,35 @@ class PropertiesPanel(QWidget):
              "against (L = Ztx/2\u03c0f_Z)."
              if line.get('sections') else "Line characteristic impedance"),
             width=64)
-        add("f_max", 'f_max', 1e-9, 1e12, 3, 1.0,
-            "Comb extent: the modes kept explicitly (N pairs). The modes "
-            "beyond are closed into the port analytically when the tail "
-            "closure is on, so N need only span the couplings that matter.")
-        add("Z0", 'Z0_port', 1e-6, 1e6, 1, 1.0, "Port termination impedance",
-            width=64)
         # Internal loss as a RATE, like every other rate in the app, rather
         # than as the attenuation alpha*l it is stored as -- which also
         # retires the alpha that collided with the pump's alpha below. The
         # map B_int = (2/pi) alpha FSR is exact and linear, so this is a
         # change of units and not of model; note it therefore TRACKS FSR.
-        self._add_line_loss_spin(hbox, line)
-        hbox.addStretch()
+        self._add_line_loss_spin(line_row, line)
+        line_row.addStretch()
         edit_btn = QPushButton("Edit\N{HORIZONTAL ELLIPSIS}")
         edit_btn.setMaximumWidth(60)
         edit_btn.setToolTip("Label, tap coupling types, end load, impedance "
                             "steps, target resonance and appearance")
         edit_btn.clicked.connect(lambda _=False, l=line: g._edit_line(l))
-        hbox.addWidget(edit_btn)
+        line_row.addWidget(edit_btn)
+
+        hbox = model_row
+        add("Z0", 'Z0_port', 1e-6, 1e6, 1, 1.0, "Port termination impedance",
+            width=64)
+        add("f_max", 'f_max', 1e-9, 1e12, 3, 1.0,
+            "Comb extent: the modes kept explicitly (N pairs). The modes "
+            "beyond are closed into the port analytically when the tail "
+            "closure is on, so N need only span the couplings that matter.")
+        model_row.addStretch()
+
+        rows = QVBoxLayout()
+        rows.setSpacing(4)
+        rows.addLayout(line_row)
+        rows.addLayout(model_row)
         holder = QWidget()
-        holder.setLayout(hbox)
+        holder.setLayout(rows)
         self.ports_param_layout.addWidget(holder, row, 0, 1, 4)
         return row + 1
 
@@ -6033,6 +6133,25 @@ class PropertiesPanel(QWidget):
                     row += 1
         return row
 
+    def _on_images_toggled(self, checked):
+        """solve.images: True keeps the image poles, False is the RWA."""
+        self.graphulator._set_model_solve('images', bool(checked))
+        self._schedule_scattering_update()
+
+    def _show_rwa_report(self, rwa):
+        """Put the last RWA check on the checkbox (tooltip, and a warning
+        sign when the RWA is in use and costs more than the tolerance)."""
+        if not hasattr(self, 'images_check'):
+            return
+        text = "keep image poles (no RWA)"
+        tip = self._images_tooltip
+        if rwa is not None:
+            tip += "\n\nLast Show S: " + rwa.summary()
+            if rwa.matters and not rwa.images:
+                text = "\u26a0 " + text
+        self.images_check.setText(text)
+        self.images_check.setToolTip(tip)
+
     def _on_tail_closure_toggled(self, checked):
         g = self.graphulator
         g.line_tail_closure = bool(checked)
@@ -6059,16 +6178,10 @@ class PropertiesPanel(QWidget):
         n_pts = int(self.freq_points_spin.value())
         f_start, f_stop = f_center - f_span / 2, f_center + f_span / 2
         f = np.linspace(f_start, f_stop, n_pts)
-        comps = (g.scattering_components if len(g.scattering_components) > 1
-                 else [None])
 
         def solve():
             out = []
-            for comp in comps:
-                job = g._build_sparams_job(comp, f, f_start, f_stop, n_pts,
-                                           multi_component=len(comps) > 1)
-                if job is None:
-                    continue
+            for job in g._sparams_jobs(f):
                 res = _compute_sparams_job(job)      # module-level worker fn
                 if res is not None:
                     out.append(res)
@@ -7094,596 +7207,33 @@ class PropertiesPanel(QWidget):
                                "Code copied to clipboard!")
 
     def _generate_scattering_calculation_code(self):
-        """Generate Python code for scattering calculation"""
-        if not self.graphulator.scattering_mode:
+        """The exported scattering script for the live state.
+
+        Rendered from the model (model.export_script, Layer 0 step 3 slice
+        3) out of the same jobs Show S solves, so the script reproduces the
+        plotted S exactly. The sweep is the spin boxes', the traces are the
+        checked S-parameter boxes (every S_jk of the first component when
+        there are none). Returns None outside scattering mode or when
+        nothing compiles.
+        """
+        g = self.graphulator
+        if not g.scattering_mode:
             return None
-
-        # Get frequency settings
-        center = self.freq_center_spin.value()
-        span = self.freq_span_spin.value()
-        points = self.freq_points_spin.value()
-
-        # Get injection node
-        injection_node_id = self.graphulator._get_selected_injection_node_id()
-        if injection_node_id is None:
-            injection_node_id = self.graphulator._get_default_root_node_id()
-
-        # Get pre-computed tree and chord edges
-        tree_edges_list = [[from_id, to_id] for from_id, to_id in self.graphulator.scattering_tree_edges]
-        chord_edges_list = [[from_id, to_id] for from_id, to_id in self.graphulator.scattering_chord_edges]
-
-        # Check for duplicate node labels
-        label_counts = {}
-        for node in self.graphulator.nodes:
-            label = node['label']
-            if label not in label_counts:
-                label_counts[label] = []
-            label_counts[label].append(node['node_id'])
-
-        duplicate_labels = {label: node_ids for label, node_ids in label_counts.items() if len(node_ids) > 1}
-
-        # Generate duplicate labels warning comment if needed
-        if duplicate_labels:
-            dup_entries = []
-            for label, node_ids in sorted(duplicate_labels.items()):
-                dup_entries.append(f"'{label}' (node_ids: {node_ids})")
-            duplicate_labels_comment = f"# DUPLICATE LABELS: {', '.join(dup_entries)}\n# "
-        else:
-            duplicate_labels_comment = "# "
-
-        # Get port channel labels in K-column order: explicit monitored hubs
-        # first (hub label), then legacy B_ext nodes (node label + conj mark)
-        port_node_labels = []
-        for hub in self.graphulator._gui_hubs_payload():
-            if hub['monitored']:
-                port_node_labels.append(hub['label'])
-        for node in self.graphulator.nodes:
-            node_id = _node_key(node)
-            params = self.graphulator.scattering_assignments.get(node_id, {})
-            B_ext = params.get('B_ext', None)
-            if B_ext is not None and B_ext > 0:
-                label = node['label']
-                if node.get('conj', False):
-                    label += '*'
-                port_node_labels.append(label)
-        port_labels_str = ', '.join(port_node_labels)
-
-        # Lines payload (used below to decide whether the exported script may
-        # reuse the GUI's precomputed spanning tree)
-        gui_lines = self.graphulator._gui_lines_payload()
-
-        # Build constraint group variable mappings
-        # Maps (obj_type, obj_label, param_name) -> variable_name
-        constraint_var_map = {}
-        constraint_var_definitions = []
-
-        # Generate variable names for each constraint group
-        param_name_to_var_prefix = {
-            'freq': 'omega0',
-            'B_int': 'gamma_int',
-            'B_ext': 'gamma_ext',
-            'f_p': 'omegaP',
-            'rate': 'gP',
-            'phase': 'phiP',
-        }
-
-        for group_id, group_data in self.graphulator.scattering_constraint_groups.items():
-            param_name = group_data['param_name']
-            obj_type = group_data['obj_type']
-            members = group_data['members']
-            value = group_data['value']
-
-            # Only generate if group has 2+ members
-            if len(members) >= 2:
-                var_prefix = param_name_to_var_prefix.get(param_name, param_name)
-                var_name = f"{var_prefix}_group{group_id}"
-
-                # Convert value if needed (B_int, B_ext, rate are stored in milliunits in GUI)
-                if param_name in ('B_int', 'B_ext', 'rate'):
-                    # Value from GUI is in milliunits, but stored value is in arb. units
-                    # Actually, constraint groups store the display value, need to convert
-                    stored_value = value / 1000 if param_name in ('B_int', 'B_ext', 'rate') else value
-                else:
-                    stored_value = value
-
-                # Generate variable definition with member list in comment
-                members_str = ", ".join(members[:5])
-                if len(members) > 5:
-                    members_str += f", ... (+{len(members) - 5} more)"
-                constraint_var_definitions.append(
-                    f"{var_name} = {round(stored_value, 9)}  # Constrained {param_name}: {members_str}"
-                )
-
-                # Map each member to this variable
-                for member_label in members:
-                    constraint_var_map[(obj_type, member_label, param_name)] = var_name
-
-        # ---- literal-emission helpers, shared by the single- and
-        # multi-component templates (a multi-component export emits each
-        # component's data literally, mirroring _build_sparams_job) ----
-        node_id_to_label_map = {node['node_id']: node['label'] for node in self.graphulator.nodes}
-
-        def _join_list(entries):
-            return "[\n" + ",\n".join(entries) + "\n]" if entries else "[]"
-
-        def _join_dict(entries):
-            return "{\n" + "\n".join(entries) + "\n}" if entries else "{}"
-
-        def _emit_nodes(node_list, var='nodes'):
-            n_code, a_code = [], []
-            for idx, node in enumerate(node_list):
-                node_id = _node_key(node)
-                params = self.graphulator.scattering_assignments.get(node_id, {})
-
-                freq = params.get('freq', None)
-                B_int = params.get('B_int', None)
-                B_ext = params.get('B_ext', None)
-                conj = node.get('conj', False)
-
-                # Round numeric values to 9 decimal places
-                pos_str = f"[{round(node['pos'][0], 9)}, {round(node['pos'][1], 9)}]"
-
-                n_code.append(f"    {{'node_id': {node['node_id']}, 'label': '{node['label']}', " +
-                              f"'pos': {pos_str}, 'conj': {conj}}}")
-
-                # Build scattering assignment for this node
-                # Check if parameters are in constraint groups
-                freq_var = constraint_var_map.get(('node', node['label'], 'freq'))
-                B_int_var = constraint_var_map.get(('node', node['label'], 'B_int'))
-                B_ext_var = constraint_var_map.get(('node', node['label'], 'B_ext'))
-
-                freq_str = freq_var if freq_var else (f"{round(freq, 9)}" if freq is not None else "None")
-                B_int_str = B_int_var if B_int_var else (f"{round(B_int, 9)}" if B_int is not None else "None")
-                B_ext_str = B_ext_var if B_ext_var else (f"{round(B_ext, 9)}" if B_ext is not None else "None")
-
-                a_code.append(
-                    f"    id({var}[{idx}]): {{'freq': {freq_str}, 'B_int': {B_int_str}, 'B_ext': {B_ext_str}}},  # node {node['label']}"
-                )
-            return n_code, a_code
-
-        def _emit_edges(edge_list, var='edges'):
-            e_code, a_code = [], []
-            for idx, edge in enumerate(edge_list):
-                edge_id = _edge_key(edge)
-                params = self.graphulator.scattering_assignments.get(edge_id, {})
-
-                f_p = params.get('f_p', None)
-                rate = params.get('rate', None)
-                phase = params.get('phase', 0.0)
-                is_self_loop = edge.get('is_self_loop', False)
-
-                e_code.append(f"    {{'from_node_id': {edge['from_node_id']}, 'to_node_id': {edge['to_node_id']}, " +
-                              f"'is_self_loop': {is_self_loop}}}")
-
-                # Get node labels for comment and constraint lookup
-                from_label = node_id_to_label_map[edge['from_node_id']]
-                to_label = node_id_to_label_map[edge['to_node_id']]
-
-                # Add asterisks for conjugated nodes (must match how spinbox obj_label is set)
-                from_node = next((n for n in self.graphulator.nodes if n['node_id'] == edge['from_node_id']), None)
-                to_node = next((n for n in self.graphulator.nodes if n['node_id'] == edge['to_node_id']), None)
-                if from_node and from_node.get('conj', False):
-                    from_label += '*'
-                if to_node and to_node.get('conj', False):
-                    to_label += '*'
-                edge_label = f"{from_label}\u2192{to_label}"
-
-                # Build scattering assignment for this edge
-                # Check if parameters are in constraint groups
-                f_p_var = constraint_var_map.get(('edge', edge_label, 'f_p'))
-                rate_var = constraint_var_map.get(('edge', edge_label, 'rate'))
-                phase_var = constraint_var_map.get(('edge', edge_label, 'phase'))
-
-                f_p_str = f_p_var if f_p_var else (f"{round(f_p, 9)}" if f_p is not None else "None")
-                rate_str = rate_var if rate_var else (f"{round(rate, 9)}" if rate is not None else "None")
-                phase_str = phase_var if phase_var else f"{round(phase, 9)}"
-
-                a_code.append(
-                    f"    id({var}[{idx}]): {{'f_p': {f_p_str}, 'rate': {rate_str}, 'phase': {phase_str}}},  # {from_label}\u2192{to_label}"
-                )
-            return e_code, a_code
-
-        def _emit_taps(edge_var, n_existing, line_ids=None, node_ids=None):
-            # One drawn node-tap fans out into per-comb-mode conservative
-            # couplings; emit them as ordinary static edges so the exported
-            # script reproduces the live model
-            e_code, a_code = [], []
-            for k, (tap_edge, tap_params) in enumerate(
-                    self.graphulator._gui_synth_edges(line_ids=line_ids,
-                                                    node_ids=node_ids)):
-                idx = n_existing + k
-                e_code.append(
-                    f"    {{'from_node_id': {tap_edge['from_node_id']!r}, "
-                    f"'to_node_id': {tap_edge['to_node_id']!r}, "
-                    f"'is_self_loop': False}}")
-                extra = (f", 'frame_rule': {tap_params['frame_rule']!r}"
-                         if tap_params.get('frame_rule') else "")
-                a_code.append(
-                    f"    id({edge_var}[{idx}]): {{'f_p': {tap_params['f_p']!r}, "
-                    f"'rate': {tap_params['rate']!r}, "
-                    f"'phase': {tap_params['phase']!r}{extra}}},"
-                    "  # line tap / pump bus")
-            return e_code, a_code
-
-        def _emit_hubs(node_ids=None, line_ids=None):
-            entries = []
-            for hub in self.graphulator._gui_hubs_payload(node_ids=node_ids,
-                                                          line_ids=line_ids):
-                atts = ', '.join(
-                    f"({node_id!r}, {mag!r}, {phase!r})"
-                    for node_id, mag, phase in hub['attachments'])
-                # a terminated line end also closes its comb tail into the
-                # channel (autograph "comb tail closure"); emit it so the
-                # exported script reproduces the GUI's S exactly
-                tails = hub.get('tails') or []
-                tails_code = (
-                    ", 'tails': [" + ', '.join(
-                        f"{{'line': {t['line']!r}, 'end': {t['end']!r}}}"
-                        for t in tails) + "]") if tails else ""
-                entries.append(
-                    f"    {{'hub_id': {hub['hub_id']!r}, 'label': {hub['label']!r}, "
-                    f"'monitored': {hub['monitored']}, 'attachments': [{atts}]"
-                    f"{tails_code}}}")
-            return _join_list(entries)
-
-        def _emit_lines(line_ids=None):
-            entries = []
-            for line in self.graphulator._gui_lines_payload(line_ids=line_ids):
-                entries.append(
-                    f"    LineResonator(line_id={line['line_id']!r}, "
-                    f"label={line['label']!r}, FSR={line['FSR']!r}, "
-                    f"Ztx={line['Ztx']!r}, f_max={line['f_max']!r}, "
-                    f"port_end={line['port_end']!r}, Z0_port={line['Z0_port']!r}, "
-                    f"alpha_uniform={line['alpha_uniform']!r}, "
-                    f"conj={line.get('conj', False)!r}, "
-                    f"load={line.get('load')!r}, "
-                    f"sections={line.get('sections')!r})")
-            return _join_list(entries)
-
-        # Full-graph literals for the single-component template
-        nodes_code, node_assignments_code = _emit_nodes(self.graphulator.nodes)
-        edges_code, edge_assignments_code = _emit_edges(self.graphulator.edges)
-        tap_edges_code, tap_assignments_code = _emit_taps(
-            'edges', len(self.graphulator.edges))
-        hubs_code = _emit_hubs()
-        lines_code = _emit_lines()
-
-        # Add source file information if available
-        if self.graphulator.current_filepath:
-            source_comment = f"\nExported from: {self.graphulator.current_filepath}"
-        else:
-            source_comment = ""
-
-        # Check for multiple components
-        num_components = 1
-        components_data = []
-        component_port_labels = {}  # comp_idx -> list of port labels
-        if hasattr(self.graphulator, 'sparams_data') and self.graphulator.sparams_data:
-            components_data = self.graphulator.sparams_data.get('components', [])
-            num_components = len(components_data) if components_data else 1
-            for comp_data in components_data:
-                comp_idx = comp_data.get('component_index', 0)
-                port_dict = comp_data.get('port_dict', {})
-                port_labels = []
-                for pid in _component_port_ids(comp_data):
-                    info = port_dict.get(pid, {})
-                    label = info.get('label', str(pid))
-                    if info.get('conj', False):
-                        label += '*'
-                    port_labels.append(label)
-                component_port_labels[comp_idx] = port_labels
-
-        # Prepare note for multi-component graphs
-        multi_component_warning = ""
-        if num_components > 1:
-            multi_component_warning = f"\n\nNOTE: Graph contains {num_components} disconnected components. " \
-                "Each component has its own GSM with local port indices."
-
-        # Default colors for auto-cycling
-        default_colors = [
-            'indianred', 'cornflowerblue', 'darkseagreen', 'sandybrown',
-            'mediumpurple', 'mediumaquamarine', 'gray'
-        ]
-
-        # Get port info for comments (single component case)
-        port_info_parts = []
-        for idx, label in enumerate(port_node_labels):
-            port_info_parts.append(f"{idx}: {label}")
-        port_indices_comment = ", ".join(port_info_parts)
-
-        # Collect checked traces grouped by component
-        traces_by_component = {}  # comp_idx -> list of (j_idx, k_idx, color, j_label, k_label)
-        color_idx = 0
-
-        if hasattr(self.graphulator, 'sparams_checkboxes') and self.graphulator.sparams_checkboxes:
-            for key, checkbox in self.graphulator.sparams_checkboxes.items():
-                if len(key) == 3:
-                    comp_idx, j_idx, k_idx = key
-                else:
-                    comp_idx = 0
-                    j_idx, k_idx = key
-                if checkbox.isChecked():
-                    color = default_colors[color_idx % len(default_colors)]
-                    comp_labels = component_port_labels.get(comp_idx, port_node_labels)
-                    if j_idx < len(comp_labels) and k_idx < len(comp_labels):
-                        j_label = comp_labels[j_idx]
-                        k_label = comp_labels[k_idx]
-                    else:
-                        j_label = str(j_idx)
-                        k_label = str(k_idx)
-                    if comp_idx not in traces_by_component:
-                        traces_by_component[comp_idx] = []
-                    traces_by_component[comp_idx].append((j_idx, k_idx, color, j_label, k_label))
-                    color_idx += 1
-        else:
-            # No checkbox data - add all S-parameters for component 0
-            num_ports = len(port_node_labels)
-            traces_by_component[0] = []
-            for k_idx in range(num_ports):
-                for j_idx in range(num_ports):
-                    color = default_colors[color_idx % len(default_colors)]
-                    j_label = port_node_labels[j_idx]
-                    k_label = port_node_labels[k_idx]
-                    traces_by_component[0].append((j_idx, k_idx, color, j_label, k_label))
-                    color_idx += 1
-
-        # Generate add_trace lines - different format for single vs multi-component
-        if num_components == 1:
-            # Single component - use gsm directly
-            add_trace_calls = []
-            for j_idx, k_idx, color, j_label, k_label in traces_by_component.get(0, []):
-                add_trace_calls.append(
-                    f"gsm.add_trace({j_idx}, {k_idx}, color='{color}', linestyle='-', linewidth=2.0)  # S_{j_label}{k_label}"
-                )
-            add_trace_lines = "\n".join(add_trace_calls) if add_trace_calls else "# No traces selected - use gsm.add_trace(j, k) to add S-parameters"
-        else:
-            # Multi-component - use gsm_components[comp_idx]
-            add_trace_calls = []
-            for comp_idx in sorted(traces_by_component.keys()):
-                for j_idx, k_idx, color, j_label, k_label in traces_by_component[comp_idx]:
-                    add_trace_calls.append(
-                        f"gsm_components[{comp_idx}].add_trace({j_idx}, {k_idx}, color='{color}', linestyle='-', linewidth=2.0)  # C{comp_idx+1}: S_{j_label}{k_label}"
-                    )
-            add_trace_lines = "\n".join(add_trace_calls) if add_trace_calls else "# No traces selected"
-
-        # Generate constraint variables section
-        if constraint_var_definitions:
-            constraint_vars_section = "\n# Constrained parameters (shared variables)\n" + "\n".join(constraint_var_definitions) + "\n"
-        else:
-            constraint_vars_section = ""
-
-        # Per-component literal blocks for multi-component graphs. Each
-        # block mirrors _build_sparams_job for that component: its own
-        # nodes/edges/assignments, pre-expanded tap edges, hub payloads
-        # (whose attachments may reference comb-mode ids like 'line:0:n2'),
-        # its line macros, and a GUI-node root — so the exported script
-        # computes exactly what the live sweep computes.
-        component_blocks_code = ""
-        if num_components > 1 and getattr(self.graphulator, 'scattering_components', None):
-            nl = chr(10)
-            blocks = []
-            for comp in self.graphulator.scattering_components:
-                ci = comp['index']
-                var_n = f"comp{ci}_nodes"
-                var_e = f"comp{ci}_edges"
-                comp_line_ids = comp.get('line_ids', [])
-                n_code, na_code = _emit_nodes(comp['nodes'], var=var_n)
-                e_code, ea_code = _emit_edges(comp['edges'], var=var_e)
-                t_code, ta_code = _emit_taps(var_e, len(comp['edges']),
-                                             line_ids=comp_line_ids,
-                                             node_ids=comp['node_ids'])
-                hubs_c = _emit_hubs(node_ids=comp['node_ids'],
-                                    line_ids=comp_line_ids)
-                lines_c = _emit_lines(line_ids=comp_line_ids)
-
-                # Root mirrors the live job: first monitored-hub attachment
-                # that is a GUI node, then a legacy port node, then the
-                # first node. A line-only component has no GUI node — the
-                # extractor roots itself inside the comb.
-                gui_node_ids = {n['node_id'] for n in comp['nodes']}
-                root_id = next(
-                    (a[0] for h in self.graphulator._gui_hubs_payload(
-                        node_ids=comp['node_ids'], line_ids=comp_line_ids)
-                     if h['monitored']
-                     for a in h['attachments'] if a[0] in gui_node_ids),
-                    None)
-                if root_id is None and comp['port_node_ids']:
-                    root_id = next(iter(comp['port_node_ids']))
-                if root_id is None and comp['nodes']:
-                    root_id = comp['nodes'][0]['node_id']
-
-                labels = [n['label'] for n in comp['nodes']]
-                labels += [l['label']
-                           for l in self.graphulator.line_resonators
-                           if l['line_id'] in comp_line_ids]
-
-                block = f"""# ----------------------------------------------------------------------
-# Component {ci}: {', '.join(labels)}
-# ----------------------------------------------------------------------
-{var_n} = {_join_list(n_code)}
-
-{var_e} = {_join_list(e_code + t_code)}
-
-comp{ci}_assignments = {_join_dict(na_code + ea_code + ta_code)}
-
-comp{ci}_hubs = {hubs_c}
-
-comp{ci}_line_resonators = {lines_c}
-
-extractor = GraphExtractor()
-extractor.extract_graph_data(
-    nodes={var_n},
-    edges={var_e},
-    scattering_assignments=comp{ci}_assignments,
-    frequency_settings=frequency_settings,
-    root_node_id={root_id!r},
-    hubs=comp{ci}_hubs,
-    line_resonators=comp{ci}_line_resonators
-)
-gsm_components[{ci}] = GraphScatteringMatrix(extractor, frequencies)
-print(f"Component {ci}: {{gsm_components[{ci}].num_ports}} port(s)")
-"""
-                blocks.append(block)
-            component_blocks_code = nl.join(blocks)
-
-        # With line macros in the graph the comb-mode ids (and any tap
-        # edges onto them) exist only after the extractor's expansion
-        # pre-pass, so the exported script lets the extractor compute the
-        # spanning tree itself; the root may still be a GUI node.
-        if self.graphulator.nodes and not gui_lines:
-            root_id_repr = injection_node_id
-            tree_repr = tree_edges_list
-            chord_repr = chord_edges_list
-        elif self.graphulator.nodes:
-            root_id_repr = injection_node_id
-            tree_repr = None
-            chord_repr = None
-        else:
-            root_id_repr = None
-            tree_repr = None
-            chord_repr = None
-
-        # Generate code - different templates for single vs multi-component
-        if num_components == 1:
-            # Single component code (original template + hubs/line macros)
-            code = f'''"""
-Scattering calculation code exported from Graphulator{source_comment}
-"""
-
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from graphulator.autograph import GraphExtractor, GraphScatteringMatrix, LineResonator
-
-# Set plot style (uncomment/modify to customize appearance)
-# sns.set_theme(style='whitegrid', context='talk', font_scale=1.0)
-{constraint_vars_section}
-# Graph structure
-nodes = [
-{(',' + chr(10)).join(nodes_code)}
-]
-
-edges = [
-{(',' + chr(10)).join(edges_code + tap_edges_code)}
-]
-
-# Scattering assignments keyed by object id
-scattering_assignments = {{
-{(',' + chr(10)).join(node_assignments_code + edge_assignments_code + tap_assignments_code)}
-}}
-
-# Explicit dissipation hubs (ports / loss hubs): attachments are
-# (node_id, weight_mag, weight_phase_deg) with weight in sqrt(rate) units
-hubs = {hubs_code}
-
-# Transmission-line macros (expand to standing-wave combs at extraction)
-line_resonators = {lines_code}
-
-# Frequency settings
-frequency_settings = {{
-    'start': {round(center - span/2, 9)},
-    'stop': {round(center + span/2, 9)},
-    'points': {int(points)}
-}}
-
-# Root node for spanning tree
-root_node_id = {root_id_repr}
-
-# Pre-computed spanning tree decomposition
-tree_edges = {tree_repr}
-chord_edges = {chord_repr}
-
-# Extract graph data
-extractor = GraphExtractor()
-graph_data = extractor.extract_graph_data(
-    nodes=nodes,
-    edges=edges,
-    scattering_assignments=scattering_assignments,
-    frequency_settings=frequency_settings,
-    root_node_id=root_node_id,
-    precomputed_tree_edges=tree_edges,
-    precomputed_chord_edges=chord_edges,
-    hubs=hubs,
-    line_resonators=line_resonators
-)
-
-# Generate frequency array
-f_center = {round(center, 9)}
-f_span = {round(span, 9)}
-frequencies = np.linspace(f_center - f_span/2, f_center + f_span/2, {int(points)})
-
-# Compute S-matrix
-scattering_matrix = GraphScatteringMatrix(extractor, frequencies)
-
-print(f"Computed S-matrix: {{len(scattering_matrix.port_dict)}} ports, {{len(frequencies)}} frequency points")
-
-# ============================================================================
-# Plot S-parameters
-# ============================================================================
-gsm = scattering_matrix
-gsm.clear_traces()
-{add_trace_lines}
-
-fig, ax = gsm.plot_SdB()
-plt.show()
-'''
-        else:
-            # Multi-component code: per-component literal blocks (mirrors
-            # the live per-component jobs, including line macros and taps)
-            code = f'''"""
-Scattering calculation code exported from Graphulator{source_comment}{multi_component_warning}
-"""
-
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from graphulator.autograph import GraphExtractor, GraphScatteringMatrix, LineResonator
-
-# Set plot style (uncomment/modify to customize appearance)
-# sns.set_theme(style='whitegrid', context='talk', font_scale=1.0)
-{constraint_vars_section}
-# Frequency settings
-f_center = {round(center, 9)}
-f_span = {round(span, 9)}
-frequencies = np.linspace(f_center - f_span/2, f_center + f_span/2, {int(points)})
-frequency_settings = {{
-    'start': {round(center - span/2, 9)},
-    'stop': {round(center + span/2, 9)},
-    'points': {int(points)}
-}}
-
-# ============================================================================
-# One GSM per connected component
-# ============================================================================
-gsm_components = {{}}
-
-{component_blocks_code}
-# ============================================================================
-# Add traces to each component's GSM
-# ============================================================================
-for gsm in gsm_components.values():
-    gsm.clear_traces()
-
-{add_trace_lines}
-
-# ============================================================================
-# Plot all components together
-# ============================================================================
-fig, ax = plt.subplots(figsize=(10, 6))
-
-for comp_idx, gsm in gsm_components.items():
-    if gsm._plot_traces:  # Only plot if component has traces
-        gsm.plot_SdB(ax=ax)
-
-ax.set_xlabel('Frequency')
-ax.set_ylabel('|S| (dB)')
-ax.legend()
-ax.grid(True, alpha=0.3)
-plt.tight_layout()
-plt.show()
-'''
-
-        return code
+        c, s = self.freq_center_spin.value(), self.freq_span_spin.value()
+        f = np.linspace(c - s / 2, c + s / 2, int(self.freq_points_spin.value()))
+        traces = None
+        boxes = getattr(g, 'sparams_checkboxes', None)
+        if boxes:
+            traces = [(key if len(key) == 3 else (0, *key))
+                      for key, box in boxes.items() if box.isChecked()]
+        try:
+            return export_script.scattering_script(
+                g._model_document(), f_root_s=f,
+                tail_closure=bool(getattr(g, 'line_tail_closure', True)),
+                traces=traces, source=g.current_filepath)
+        except Exception:
+            logger.exception("Could not render the scattering script from the model")
+            return None
 
 
 class LabelPatternAnalyzer:
@@ -7845,133 +7395,37 @@ class LabelPatternAnalyzer:
         return f"Node{number}"
 
 
-def _compute_sparams_job(job):
-    """Compute S-parameters for one self-contained component job.
+# The worker is Qt-free and lives with the model's legacy compiler (Layer 0
+# step 2); this name is kept for the worker thread and for tests/scripts.
+_compute_sparams_job = compute_job
 
-    Pure computation over the plain data packaged by
-    Graphulator._build_sparams_job — no GUI access, safe to run on a
-    worker thread.
 
-    Returns:
-        dict with S-parameter results, or None if the component is invalid
-        (e.g. missing parameter assignments).
+def _compute_engine_job(job):
+    """Show S through the M_super engine (Qt-free, worker thread).
+
+    job: {'kind': 'engine', 'doc': Document, 'f_root_s', 'tail_closure'}.
+    Returns {'results': [...], 'issues': [...], 'engine': 'msuper'|'legacy',
+    'fallback': reason or None}. A document the engine cannot represent
+    (NotSupportedError, TapError) is solved by the legacy engine instead,
+    and the reason is passed on for the status bar.
     """
-    comp_name = job['comp_name']
-    nodes = job['nodes']
-    edges = job['edges']
-    root_node_id = job['root_node_id']
-    f_root_s = job['f_root_s']
-    hubs = job.get('hubs') or []
-    line_resonators = job.get('line_resonators') or []
-
-    extractor = GraphExtractor()
-
-    if nodes and not line_resonators:
-        # Compute spanning tree for this component. (With line macros in
-        # the job the comb-mode ids exist only after the extractor's
-        # expansion pre-pass — tap edges reference them — so the extractor
-        # computes the tree itself over the expanded graph.)
-        gui_nodes = [{'node_id': node['node_id']} for node in nodes]
-        gui_edges = [
-            {
-                'from_node_id': edge['from_node_id'],
-                'to_node_id': edge['to_node_id'],
-                'is_self_loop': edge['is_self_loop']
-            }
-            for edge in edges
-        ]
-
-        # Zero-offset bridge links across shared hubs (see
-        # autograph.compute_hub_bridge_links): the tree must reach
-        # hub-bridged subgraphs so their pump-frame accumulation survives
-        link_pairs = compute_hub_bridge_links(
-            [n['node_id'] for n in nodes],
-            [(e['from_node_id'], e['to_node_id'])
-             for e in gui_edges if not e['is_self_loop']],
-            [[a[0] for a in h['attachments']] for h in hubs])
-        gui_edges = gui_edges + [
-            {'from_node_id': a, 'to_node_id': b, 'is_self_loop': False}
-            for a, b in link_pairs]
-
-        tree_edges_nested, chord_edges_list, is_connected = extractor.compute_spanning_tree(
-            gui_nodes, gui_edges, root_node_id
-        )
-
-        # Convert to list format for extractor
-        tree_edges_list = []
-        for branch in tree_edges_nested:
-            for from_id, to_id in branch:
-                tree_edges_list.append([from_id, to_id])
-    else:
-        # Line-macro-only job: no GUI nodes; the extractor's expansion
-        # pre-pass supplies the comb nodes and its root rule picks the root
-        tree_edges_list = None
-        chord_edges_list = None
-        root_node_id = None
-
-    extractor.extract_graph_data(
-        nodes=nodes,
-        edges=edges,
-        scattering_assignments=job['scattering_assignments'],
-        frequency_settings={'start': job['freq_start'], 'stop': job['freq_stop'],
-                            'points': job['freq_points']},
-        root_node_id=root_node_id,
-        precomputed_tree_edges=tree_edges_list,
-        precomputed_chord_edges=chord_edges_list,
-        hubs=hubs,
-        line_resonators=line_resonators
-    )
-
-    # Validate all required parameters are assigned before computing
-    missing = extractor.validate_scattering_assignments()
-    missing_items = (missing.get('missing_nodes', [])
-                     + missing.get('missing_edges', [])
-                     + missing.get('missing_hubs', []))
-    if missing_items:
-        detail = "\n".join(f"  - {item}" for item in missing_items)
-        logger.info(f"  {comp_name}: Missing scattering parameters:\n{detail}")
-        return None
-
-    # Check if injection node is conjugated
-    root_node = next((n for n in nodes if n['node_id'] == root_node_id), None)
-    f_calc = f_root_s
-    if root_node and root_node.get('conj', False):
-        f_calc = -f_root_s
-        logger.info(f"  {comp_name}: Injection node is conjugated - using negative frequencies")
-
-    # Compute S-matrix (the comb tail closure is on unless the job says
-    # otherwise -- see autograph.GraphScatteringMatrix._build_tail_closure)
-    scattering_calc = GraphScatteringMatrix(
-        extractor, f_calc, tail_closure=job.get('tail_closure', True))
-
-    logger.info(f"  {comp_name}: {scattering_calc.num_ports} ports computed")
-
-    # Build enriched port_dict with labels for checkbox/plot code, keyed by
-    # the channel refs in port_ids (hub_id for explicit hubs, node_id for
-    # legacy auto-wrapped ports). Port label = hub label (legacy: node label).
-    conj_by_node = {n['node_id']: n.get('conj', False) for n in nodes}
-    enriched_port_dict = {}
-    for hub, ref in zip(scattering_calc.port_hubs, scattering_calc.port_ids):
-        if 'legacy_node_id' in hub:
-            B_ext = hub['legacy_B_ext']
-            conj = conj_by_node.get(hub['legacy_node_id'], False)
-        else:
-            B_ext = sum(mag ** 2 for _, mag, _ in hub['attachments'])
-            # all attachments share one sector (Phase-1 gate)
-            first = hub['attachments'][0][0] if hub['attachments'] else None
-            conj = conj_by_node.get(first, False)
-        enriched_port_dict[ref] = {'B_ext': B_ext, 'label': hub['label'],
-                                   'conj': conj}
-
-    return {
-        'S': scattering_calc.S,
-        'SdB': scattering_calc.SdB,
-        'port_dict': enriched_port_dict,
-        'drive_signals': scattering_calc.drive_signals,
-        'port_ids': list(scattering_calc.port_ids),
-        'component_index': job['component_index'],
-        'component_label': job['component_label'],
-    }
+    from .engine import NotSupportedError
+    from .engine.gui_payload import solve_for_gui
+    from .model.taps import TapError
+    doc, f = job['doc'], job['f_root_s']
+    try:
+        out = solve_for_gui(doc, f)
+        out.update(engine='msuper', fallback=None)
+        return out
+    except (NotSupportedError, TapError) as e:
+        logger.info("M_super engine cannot solve this document (%s); using legacy", e)
+        reason = str(e)
+    results = []
+    for j in compile_jobs(doc, f_root_s=f, tail_closure=job.get('tail_closure', True)):
+        r = compute_job(j)
+        if r is not None:
+            results.append(r)
+    return {'results': results, 'issues': [], 'engine': 'legacy', 'fallback': reason}
 
 
 class SParamsWorker(QThread):
@@ -7994,10 +7448,16 @@ class SParamsWorker(QThread):
     def run(self):
         try:
             results = []
+            extra = {'engine': 'legacy', 'fallback': None, 'issues': []}
             last_error = None
             for job in self.jobs:
                 logger.info(f"=== Computing S-parameters for {job['comp_name']} ===")
                 try:
+                    if job.get('kind') == 'engine':
+                        out = _compute_engine_job(job)
+                        results.extend(out.pop('results'))
+                        extra.update(out)
+                        continue
                     result = _compute_sparams_job(job)
                 except Exception as e:
                     logger.exception(f"  {job['comp_name']}: Error computing S-parameters")
@@ -8010,7 +7470,8 @@ class SParamsWorker(QThread):
                 self.failed.emit(self.generation, last_error)
             else:
                 self.finished_ok.emit(self.generation,
-                                      {'results': results, 'f_root_s': self.f_root_s})
+                                      {'results': results, 'f_root_s': self.f_root_s,
+                                       **extra})
         except Exception as e:
             logger.exception("S-parameter worker failed")
             self.failed.emit(self.generation, str(e))
@@ -8993,6 +8454,14 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         save_as_action.triggered.connect(self._save_graph_as)
         file_menu.addAction(save_as_action)
 
+        # A copy in the pre-model format, for builds that cannot read 4.0
+        save_legacy_action = QAction("Save Legacy 3.0 Copy...", self)
+        save_legacy_action.setToolTip(
+            "Write a copy in the pgraph 2.0/3.0 format older builds read. "
+            "The open file and its name are unchanged.")
+        save_legacy_action.triggered.connect(self._save_legacy_copy)
+        file_menu.addAction(save_legacy_action)
+
         file_menu.addSeparator()
 
         # Export submenu
@@ -9118,6 +8587,17 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         clear_kron_action = QAction("Clear Kron Reduct&ion", self)
         clear_kron_action.triggered.connect(self._clear_kron_reduction)
         action_menu.addAction(clear_kron_action)
+
+        action_menu.addSeparator()
+
+        # Show S engine: M_super by default; legacy kept for comparison
+        self.sparams_legacy_engine_action = QAction("Solve S with the &Legacy Engine", self)
+        self.sparams_legacy_engine_action.setCheckable(True)
+        self.sparams_legacy_engine_action.setToolTip(
+            "Show S uses the M_super engine (exact lines, taps, sectors). "
+            "Check to solve with the legacy comb engine instead, for comparison.")
+        self.sparams_legacy_engine_action.toggled.connect(self._toggle_sparams_legacy_engine)
+        action_menu.addAction(self.sparams_legacy_engine_action)
 
         # Insert menu (Explicit Ports mode: ports, loss hubs, lines)
         self._ports_menu = menubar.addMenu("&Insert")
@@ -9281,29 +8761,47 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         return None
 
     def _populate_test_menu(self):
-        """Populate File -> Test with the bundled test scenes."""
+        """Populate File -> Test with the bundled test scenes.
+
+        Scenes directly in examples/test_scenes are listed first; each
+        subfolder (one validation campaign, e.g. MSUPER_1_SHOW_S) becomes a
+        submenu, recursively. Each scene's notes say what to try."""
         self.test_menu.clear()
-        scene_files = []
         scenes_dir = self._get_test_scenes_dir()
+        added = 0
         if scenes_dir:
             try:
-                scene_files = sorted(
-                    f for f in Path(scenes_dir).iterdir()
-                    if f.name.endswith('.pgraph'))
+                added = self._add_scene_menu_entries(self.test_menu, Path(scenes_dir))
             except (FileNotFoundError, OSError) as exc:
                 logger.warning("Could not list test scenes from %s: %s",
                                scenes_dir, exc)
-        if not scene_files:
+        if not added:
             empty = QAction("(No test scenes available)", self)
             empty.setEnabled(False)
             self.test_menu.addAction(empty)
-            return
-        for scene_file in scene_files:
+
+    def _add_scene_menu_entries(self, menu, folder):
+        """Add folder's .pgraph files, then a submenu per subfolder that has
+        any. Returns the number of scenes added."""
+        entries = sorted(folder.iterdir(), key=lambda p: p.name)
+        n = 0
+        for scene_file in (p for p in entries if p.is_file() and p.name.endswith('.pgraph')):
             action = QAction(scene_file.stem, self)
             action.setToolTip(f"Load test scene: {scene_file.name}")
             action.triggered.connect(
                 lambda checked, f=scene_file: self._load_example(f))
-            self.test_menu.addAction(action)
+            menu.addAction(action)
+            n += 1
+        subdirs = [p for p in entries if p.is_dir() and not p.name.startswith(('.', '_'))]
+        if subdirs and n:
+            menu.addSeparator()
+        for sub in subdirs:
+            submenu = QMenu(sub.name, menu)
+            k = self._add_scene_menu_entries(submenu, sub)
+            if k:
+                menu.addMenu(submenu)
+                n += k
+        return n
 
     def _populate_examples_menu(self):
         """Populate the Examples submenu with example graphs from package resources"""
@@ -9329,6 +8827,98 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 action.triggered.connect(lambda checked, f=example_file: self._load_example(f))
                 self.examples_menu.addAction(action)
 
+    # -- files go through the Layer-0 document model (design note, step 3) --
+    # Document fields the GUI's legacy state has no slot for. They are kept
+    # from the file that was opened and put back on save, so Open -> Save
+    # does not reset them (4.0 files written by scripts may set them).
+    _MODEL_ONLY_SOLVE = ("sectors", "sector_tol", "sector_max", "images")
+
+    def _model_document(self, render=False):
+        """The live GUI state as a model Document (what a save would hold,
+        plus the 4.0-only settings carried from the opened file)."""
+        return self._apply_model_carry(model.from_legacy(self._serialize_graph(render=render)))
+
+    def _set_model_solve(self, key, value):
+        """Set a 4.0-only solve option (one of _MODEL_ONLY_SOLVE) from the
+        GUI: it lives in the carry, so Show S and the next save both see it."""
+        if getattr(self, '_model_carry', None) is None:
+            doc = model.from_legacy(self._serialize_graph())
+            self._model_carry = {
+                "units": dict(doc.units),
+                "solve": {k: copy.deepcopy(getattr(doc.solve, k)) for k in self._MODEL_ONLY_SOLVE},
+            }
+        self._model_carry["solve"][key] = value
+
+    def _model_solve(self, key, default=None):
+        carry = getattr(self, '_model_carry', None)
+        if carry is None:
+            return default
+        return carry["solve"].get(key, default)
+
+    def _apply_model_carry(self, doc):
+        carry = getattr(self, '_model_carry', None)
+        if carry:
+            doc.units = dict(carry["units"])
+            for k in self._MODEL_ONLY_SOLVE:
+                setattr(doc.solve, k, copy.deepcopy(carry["solve"][k]))
+        return doc
+
+    def _file_dict_from_state(self, data):
+        """GUI state dict (pgraph 2.0/3.0 layout) -> a pgraph 4.0 file dict.
+
+        If the model cannot represent the state, the legacy dict is written
+        instead (with a warning), so a save never loses the user's work."""
+        if data.get("format") != "pgraph":
+            return data
+        try:
+            doc = model.from_legacy(data)
+            self._apply_model_carry(doc)
+            return model.to_file_dict(doc)
+        except Exception:
+            logger.exception("4.0 conversion failed; writing the legacy format")
+            return data
+
+    def _state_dict_from_file(self, data):
+        """Any pgraph file dict (2.0 / 3.0 / 4.0) -> the 2.0/3.0 layout the
+        GUI loader reads, via the model (one migration path for every
+        version). Other files (.graph, pgraph versions the model does not
+        read) go to the GUI loader unchanged."""
+        self._model_carry = None
+        if data.get("format") != "pgraph":
+            return data
+        try:
+            doc = model.from_dict(data)
+        except model.MigrationError:
+            logger.warning("Not a model-readable pgraph; loading it directly", exc_info=True)
+            return data
+        self._model_carry = {
+            "units": dict(doc.units),
+            "solve": {k: copy.deepcopy(getattr(doc.solve, k)) for k in self._MODEL_ONLY_SOLVE},
+        }
+        return model.to_legacy(doc)
+
+    def _save_legacy_copy(self):
+        """Write the current graph in the pre-model 2.0/3.0 layout to a new
+        file. current_filepath and the modified flag are left alone."""
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "Save Legacy 3.0 Copy", self._get_default_directory(),
+            self.FILE_DIALOG_FILTER)
+        if not filepath:
+            return False
+        if not filepath.endswith(self.FILE_EXTENSION):
+            filepath += self.FILE_EXTENSION
+        try:
+            # through the model and back, so the copy is what a 4.0 save
+            # holds (quantized sweep, canonical ends), in the old layout
+            data = model.to_legacy(model.from_legacy(self._serialize_graph()))
+            with open(filepath, 'w') as f:
+                json.dump(data, f, indent=2)
+            logger.info(f"Saved legacy {data.get('version')} copy to {filepath}")
+            return True
+        except Exception as e:
+            QMessageBox.critical(self, "Error Saving File", f"Could not save file:\n{e}")
+            return False
+
     def _load_example(self, example_path):
         """Load an example graph file"""
         try:
@@ -9343,7 +8933,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
             # Parse and load the example
             data = json.loads(content)
-            self._deserialize_graph(data)
+            self._deserialize_graph(self._state_dict_from_file(data))
 
             # Mark as not saved (it's from examples, not a file)
             self.current_filepath = None
@@ -9354,8 +8944,12 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             print(f"Error loading example: {e}")
             QMessageBox.warning(self, "Load Error", f"Could not load example:\n{e}")
 
-    def _serialize_graph(self):
-        """Serialize graph to dictionary for saving as .pgraph format"""
+    def _serialize_graph(self, render=True):
+        """Serialize graph to dictionary for saving as .pgraph format.
+
+        render=False skips the embedded SVG thumbnails: the physics snapshot
+        Show S compiles from (_model_document) does not need them, and
+        rendering is the slow part."""
         data = {
             "version": "2.0",  # New version for .pgraph format
             "format": "pgraph",
@@ -9417,6 +9011,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     node_data['freq'] = scattering_params['freq']
                 if 'B_int' in scattering_params:
                     node_data['B_int'] = scattering_params['B_int']
+                if scattering_params.get('Z_d') is not None:
+                    node_data['Z_d'] = scattering_params['Z_d']
                 if 'B_ext' in scattering_params:
                     # Only save B_ext if node has a self-loop; otherwise set to None
                     if has_self_loop:
@@ -9541,6 +9137,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                 "tree_edges": tree_edges_list,
                 "chord_edges": chord_edges_list,
                 "injection_node_id": injection_node_id,
+                "tail_closure": bool(getattr(self, 'line_tail_closure', True)),
                 "frequency": {
                     "center": self.properties_panel.freq_center_spin.value(),
                     "span": self.properties_panel.freq_span_spin.value(),
@@ -9599,7 +9196,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             data["notes_attachments"] = notes_attachments
 
         # Generate and embed SVG representation of the graph
-        svg_string = self._generate_svg_string(use_kron_canvas=False)
+        svg_string = self._generate_svg_string(use_kron_canvas=False) if render else None
         if svg_string:
             data["svg"] = svg_string
 
@@ -9685,7 +9282,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             max_node_id = max(max_node_id, node_data["node_id"])
 
             # Load scattering parameters if present
-            if 'freq' in node_data or 'B_int' in node_data or 'B_ext' in node_data:
+            if ('freq' in node_data or 'B_int' in node_data or 'B_ext' in node_data
+                    or node_data.get('Z_d') is not None):
                 node_obj_id = _node_key(node)
                 if node_obj_id not in self.scattering_assignments:
                     self.scattering_assignments[node_obj_id] = {}
@@ -9695,6 +9293,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     self.scattering_assignments[node_obj_id]['B_int'] = node_data['B_int']
                 if 'B_ext' in node_data:
                     self.scattering_assignments[node_obj_id]['B_ext'] = node_data['B_ext']
+                if node_data.get('Z_d') is not None:
+                    self.scattering_assignments[node_obj_id]['Z_d'] = float(node_data['Z_d'])
 
         # Update counters
         self.node_counter = len(self.nodes)
@@ -9896,6 +9496,17 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                     self.properties_panel.sympy_code_display.setPlainText(new_code)
                     self.properties_panel._sympy_code_manual = new_code
 
+        # Per-document scattering settings start from the app defaults; a
+        # previous file's injection choice or tail closure must not leak in
+        # (the combo used to keep the last file's selection).
+        self._pending_injection_node_id = None
+        self.line_tail_closure = True
+        if hasattr(self, 'properties_panel') and hasattr(self.properties_panel, 'injection_node_combo'):
+            combo = self.properties_panel.injection_node_combo
+            combo.blockSignals(True)
+            combo.clear()
+            combo.blockSignals(False)
+
         # Load scattering data if present
         if "scattering" in data:
             scattering_data = data["scattering"]
@@ -9924,18 +9535,13 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
                         self.properties_panel.freq_span_spin.setValue(span)
                     self.properties_panel.freq_points_spin.setValue(freq_settings.get("points", config.FREQ_POINTS_DEFAULT))
 
-            # Load injection node selection
-            if "injection_node_id" in scattering_data and scattering_data["injection_node_id"] is not None:
-                injection_node_id = scattering_data["injection_node_id"]
-                # Set injection node after updating the combo box (deferred via QTimer)
-                if hasattr(self, 'properties_panel') and hasattr(self.properties_panel, 'injection_node_combo'):
-                    combo = self.properties_panel.injection_node_combo
-                    # Find index with matching node_id
-                    for i in range(combo.count()):
-                        if combo.itemData(i) == injection_node_id:
-                            combo.setCurrentIndex(i)
-                            print(f"Restored injection node: {combo.itemText(i)} (node_id={injection_node_id})")
-                            break
+            # Injection root (decision Q1): the combo is empty here, so the
+            # saved id is applied when _enter_scattering_mode fills it.
+            self._pending_injection_node_id = scattering_data.get("injection_node_id")
+
+            # Legacy-comb tail closure travels with the file (decision Q3)
+            if scattering_data.get("tail_closure") is not None:
+                self.line_tail_closure = bool(scattering_data["tail_closure"])
 
             # Load S-parameter plot settings if present
             if "sparams_plot" in scattering_data:
@@ -10069,6 +9675,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
         # Clear scattering data (exit mode and reset all state)
         self._clear_scattering_data()
+        self.line_tail_closure = True       # per-document setting (decision Q3)
+        self._model_carry = None
 
         # Reset view
         self.grid_type = config.DEFAULT_GRID_TYPE
@@ -10506,7 +10114,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         if self._check_unsaved_changes():
             # Save last graph automatically (for session restore)
             try:
-                data = self._serialize_graph()
+                data = self._file_dict_from_state(self._serialize_graph())
                 with open(self.last_graph_path, 'w') as f:
                     json.dump(data, f, indent=2)
             except Exception:
@@ -11359,6 +10967,28 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
         combo.blockSignals(False)
 
+    def _apply_pending_injection_node(self):
+        """Select the injection root a loaded file saved (decision Q1), once
+        the combo holds the shown component's port nodes. If the saved id is
+        not among them the combo keeps its first port node (today's rule).
+        Signals stay blocked: the file's spanning tree was built for that
+        root, so nothing is recomputed."""
+        pending = getattr(self, '_pending_injection_node_id', None)
+        self._pending_injection_node_id = None
+        if pending is None or not hasattr(self, 'properties_panel') \
+                or not hasattr(self.properties_panel, 'injection_node_combo'):
+            return
+        combo = self.properties_panel.injection_node_combo
+        index = combo.findData(pending)
+        if index >= 0:
+            combo.blockSignals(True)
+            combo.setCurrentIndex(index)
+            combo.blockSignals(False)
+            print(f"Restored injection node: {combo.itemText(index)} (node_id={pending})")
+        else:
+            print(f"Saved injection node {pending} is not a port node of the shown "
+                  f"component; using {combo.currentText() or 'the default root'}")
+
     def _on_injection_node_changed(self):
         """Handle injection node selection change - recompute spanning tree"""
         if not self.scattering_mode:
@@ -11790,6 +11420,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
         # Update injection node dropdown with current nodes (filtered by component)
         self._update_injection_node_dropdown()
+        self._apply_pending_injection_node()
 
         # Connect injection node dropdown to recompute spanning tree when changed
         if hasattr(self, 'properties_panel') and hasattr(self.properties_panel, 'injection_node_combo'):
@@ -11931,6 +11562,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
 
         # Clear all scattering state
         self.scattering_mode = False
+        self._pending_injection_node_id = None
         self.scattering_graph = None
         self.scattering_tree_edges = set()
         self.scattering_chord_edges = set()
@@ -12321,23 +11953,8 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             freq_stop = freq_center + freq_span / 2
             f_root_s = np.linspace(freq_start, freq_stop, freq_points)
 
-            # Determine which components to compute
-            if len(self.scattering_components) > 1:
-                # Multiple components - compute for each
-                components_to_compute = self.scattering_components
-            else:
-                # Single component - use full graph
-                components_to_compute = [None]  # None means use full graph
-
             # Snapshot everything the worker needs (plain data, no GUI access)
-            jobs = []
-            for component in components_to_compute:
-                job = self._build_sparams_job(
-                    component, f_root_s, freq_start, freq_stop, freq_points,
-                    multi_component=len(components_to_compute) > 1
-                )
-                if job is not None:
-                    jobs.append(job)
+            jobs = self._sparams_show_s_jobs(f_root_s)
 
             if not jobs:
                 logger.info("No components with nodes to compute")
@@ -12357,9 +11974,93 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             logger.exception("Error preparing S-parameter computation")
             self._show_sparams_error(str(e))
 
+    def _modes_needing_z_d(self):
+        """Node ids of modes tapped onto a line through a coupling capacitor
+        and not attached directly to a plane: the M_super engine needs their
+        LC impedance Z_d (model/taps.py, decision Q5)."""
+        try:
+            from .model.taps import _direct, tap_groups
+            doc = self._model_document()
+        except Exception:
+            logger.debug("Z_d check: model snapshot failed", exc_info=True)
+            return set()
+        nid = {mid: st.get('node_id') for mid, st in doc.drawing.nodes.items()}
+        return {nid.get(m) for m in tap_groups(doc) if not _direct(doc, m)} - {None}
+
+    def _sparams_use_engine(self):
+        """Show S solves with the M_super engine unless the user switched to
+        legacy (Action > Solve S with the Legacy Engine) or the environment
+        says GRAPHULATOR_S_ENGINE=legacy."""
+        if os.environ.get('GRAPHULATOR_S_ENGINE', '').lower() == 'legacy':
+            return False
+        return not bool(getattr(self, 'sparams_legacy_engine', False))
+
+    def _sparams_show_s_jobs(self, f_root_s):
+        """The Show S work list: one M_super engine job for the whole
+        document (it splits components itself), or the legacy per-component
+        jobs (_sparams_jobs) when the engine is switched off or the live
+        state cannot be snapshotted as a Document."""
+        if self._sparams_use_engine():
+            try:
+                doc = self._model_document()
+            except Exception:
+                logger.exception("Model snapshot failed; Show S uses the legacy engine")
+            else:
+                return [{'kind': 'engine', 'comp_name': 'document (M_super engine)',
+                         'doc': doc, 'f_root_s': np.asarray(f_root_s),
+                         'tail_closure': bool(getattr(self, 'line_tail_closure', True))}]
+        return self._sparams_jobs(f_root_s)
+
+    def _toggle_sparams_legacy_engine(self, checked):
+        self.sparams_legacy_engine = bool(checked)
+        self._status_message("Show S: legacy engine" if checked
+                             else "Show S: M_super engine", 4000)
+        if getattr(self, 'sparams_data', None) is not None or self._sparams_visible():
+            self._compute_and_plot_sparams()
+
+    def _sparams_visible(self):
+        try:
+            idx = self.graph_subtabs.indexOf(self.sparams_tab)
+            return self.graph_subtabs.isTabVisible(idx)
+        except Exception:
+            return False
+
+    def _sparams_jobs(self, f_root_s):
+        """The Show S job list for the live state, compiled from the model.
+
+        Layer 0 step 3 (design note): the GUI state is snapshotted as a
+        Document (what a save would write) and compiled by
+        model.legacy_job.compile_jobs, the same compiler scripts use (and
+        the planned MCP will), so the GUI cannot compute something its file
+        does not say. The connected components and the injection root are recomputed from the
+        snapshot, not read from cached GUI state.
+
+        If the model cannot represent the state, the jobs are built from the
+        live widgets instead (_build_sparams_job) and the failure is logged,
+        so Show S keeps working.
+        """
+        f_root_s = np.asarray(f_root_s)
+        tail = bool(getattr(self, 'line_tail_closure', True))
+        try:
+            return compile_jobs(self._model_document(), f_root_s=f_root_s,
+                                tail_closure=tail)
+        except Exception:
+            logger.exception("Model compile failed; building S jobs from the live state")
+        comps = self.scattering_components if len(self.scattering_components) > 1 else [None]
+        jobs = [self._build_sparams_job(c, f_root_s, f_root_s[0], f_root_s[-1], len(f_root_s),
+                                        multi_component=len(comps) > 1)
+                for c in comps]
+        return [j for j in jobs if j is not None]
+
     def _build_sparams_job(self, component, f_root_s, freq_start, freq_stop, freq_points,
                            multi_component=False):
-        """Build a self-contained computation job for one component.
+        """Build a self-contained computation job for one component from the
+        live widgets.
+
+        No longer the Show S path (that is _sparams_jobs, via the model). It
+        is kept as the fallback when the model cannot represent the state,
+        and as the oracle tests/test_gui_show_s_model.py compares the model
+        path against after live edits.
 
         Runs on the UI thread: reads the live graph, scattering assignments,
         and injection dropdown, and packages plain data for the worker.
@@ -12527,9 +12228,14 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         self.statusBar().clearMessage()
         all_sparams_data = payload['results']
         f_root_s = payload['f_root_s']
+        self.sparams_engine_used = payload.get('engine', 'legacy')
+        self.sparams_engine_issues = payload.get('issues', [])
+        errors = [msg for level, _, msg in self.sparams_engine_issues if level == 'error']
 
         if not all_sparams_data:
             logger.info("No valid S-parameter data computed")
+            if errors:
+                self._show_sparams_error("\n".join(errors[:4]))
             self._status_message("No valid S-parameter data computed")
             return
 
@@ -12555,6 +12261,20 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         self._plot_sparams()
 
         logger.info(f"S-matrix computed successfully for {len(all_sparams_data)} component(s)")
+        if payload.get('fallback'):
+            self._status_message("M_super engine cannot solve this document ("
+                                 + payload['fallback'].split(':')[0]
+                                 + "); showing the legacy engine", 8000)
+        else:
+            warns = [msg for level, path, msg in self.sparams_engine_issues
+                     if level in ('warning', 'error') or path == 'solve.images']
+            if warns:
+                self._status_message("; ".join(warns[:2]), 15000)
+        rwa = payload.get('rwa')
+        self.sparams_rwa_report = rwa
+        panel = getattr(self, 'properties_panel', None)
+        if panel is not None and hasattr(panel, '_show_rwa_report'):
+            panel._show_rwa_report(rwa)
 
     def _update_sparams_checkboxes(self):
         """Update checkboxes for S-parameter selection.

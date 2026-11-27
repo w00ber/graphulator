@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 
 from graphulator import autograph
-from tests.capture_golden import build_all, FREQ_GRID
+from tests.capture_golden import FREQ_GRID, build_all
 
 GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 

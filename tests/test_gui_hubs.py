@@ -9,9 +9,12 @@ saved-then-loaded migration reproducing the golden S.
 import json
 import os
 import pickle
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
+
+from graphulator import model as M
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if hasattr(os, "geteuid") and os.geteuid() == 0:
@@ -223,8 +226,10 @@ def test_legacy_pgraph_saved_then_loaded_is_golden_equal(para, tmp_path):
     out = tmp_path / "resaved.pgraph"
     assert win._save_graph_to_file(str(out))
     saved = json.load(open(out))
-    assert saved['version'] == '2.0'
-    assert 'ports' not in saved
+    assert saved['version'] == '4.0'            # the GUI writes 4.0 (Layer 0 step 3)
+    # still a legacy (no explicit ports) graph in the old layout
+    legacy = M.to_legacy(M.from_dict(saved))
+    assert legacy['version'] == '2.0' and 'ports' not in legacy
 
     from graphulator import autograph
     with open(GOLDEN_PKL, 'rb') as fh:
@@ -300,8 +305,6 @@ def test_mixed_sector_attachment_rejected_end_to_end(para):
 # click orders, drag-to-move, rotation, and angle persistence.
 # ---------------------------------------------------------------------------
 
-from types import SimpleNamespace
-
 
 def canvas_event(win, x, y, button=1):
     return SimpleNamespace(xdata=x, ydata=y, inaxes=win.canvas.ax,
@@ -371,8 +374,8 @@ def test_line_termination_matches_implicit_port_physics(para):
     config.EXPLICIT_PORTS_MODE = True
     win.add_line_resonator(label='TL1', pos=(0.0, 0.0), FSR=1.5, Ztx=65.0,
                            f_max=6.0, port_end='xL', Z0_port=50.0)
-    from graphulator.graphulator_para import _compute_sparams_job
     from graphulator import autograph
+    from graphulator.graphulator_para import _compute_sparams_job
 
     f = np.linspace(0.5, 4.0, 31)
     comps = win._find_connected_components()
@@ -933,7 +936,7 @@ def test_wire_leaves_lead_colinear_and_enters_node_radially(para):
     wire out of the port), entry normal to the node circle."""
     gp, win, config = para
     config.EXPLICIT_PORTS_MODE = True
-    a = add_node(win, 0, 'A', 0.0)
+    add_node(win, 0, 'A', 0.0)
     b = add_node(win, 1, 'B', 1.0)
     b['pos'] = (0.0, 5.0)
     port = win.add_port(label='P1', pos=(4.0, 0.0))
@@ -1078,11 +1081,9 @@ def test_canvas_click_releases_input_focus(para):
     focus (so typing numbers doesn't zoom). Clicking the canvas must hand
     the keyboard back, or the shortcuts stay dead with no visible cue."""
     gp, win, config = para
-    from PySide6.QtWidgets import QDoubleSpinBox
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
-
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QDoubleSpinBox
     build_shared_port_scene(win, config)
     win._enter_scattering_mode()
     win.show()
@@ -1286,6 +1287,7 @@ def test_wires_are_solid(para):
     BODY outline, which is a transient interaction cue, not a wire.)
     """
     import inspect
+
     from graphulator.para_features import explicit_ports as ep
     source = inspect.getsource(ep.ExplicitPortsMixin._draw_ports_and_lines)
     assert '(0, (4, 3))' not in source          # the old wire dash pattern
@@ -1296,9 +1298,7 @@ def test_wires_are_solid(para):
 
 def test_wire_style_overrides(para):
     gp, win, config = para
-    from graphulator.para_features.explicit_ports import (
-        WIRE_COLOR, WIRE_COLOR_INVERTED, WIRE_COLOR_TAP, WIRE_LINEWIDTH)
-    ExplicitPortsMixin = type(win).__mro__[1]
+    from graphulator.para_features.explicit_ports import WIRE_COLOR, WIRE_COLOR_INVERTED, WIRE_COLOR_TAP, WIRE_LINEWIDTH
 
     # defaults follow the wire's role and sign
     color, lw = win.wire_style({'sign': 1}, WIRE_COLOR)

@@ -46,6 +46,10 @@ def add_node(win, node_id, label, pos, freq, B_int=0.0):
 
 def save(win, name):
     path = os.path.join(OUT_DIR, f"{name}.pgraph")
+    # Shipped examples stay in the legacy 2.0/3.0 layout: they are the
+    # fixtures the migration and compiler gates run on (tests/test_model_*).
+    # The GUI's own Save writes 4.0.
+    win._file_dict_from_state = lambda data: data
     assert win._save_graph_to_file(path), name
     print(f"  wrote {os.path.relpath(path, ROOT)}")
 

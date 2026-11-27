@@ -1399,6 +1399,12 @@ def load_pgraph(filepath: Optional[Union[str, Path]] = None, use_dialog: bool = 
     with open(filepath, 'r') as f:
         data = json.load(f)
 
+    # 4.0 files (what the GUI saves since Layer 0 step 3) are converted to
+    # the 2.0/3.0 layout this module's extractors read, via the model
+    if data.get("format") == "pgraph" and str(data.get("version")) == "4.0":
+        from . import model
+        data = model.to_legacy(model.from_dict(data))
+
     # Validate basic pgraph structure
     if "nodes" not in data or "edges" not in data:
         raise KeyError(

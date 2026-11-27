@@ -376,6 +376,16 @@ class GraphWindowCommonMixin:
         box.setStandardButtons(QMessageBox.Ok)
         box.exec()
 
+    # File <-> in-memory state. Identity here; Paragraphulator overrides both
+    # to read and write files through the Layer-0 document model.
+    def _file_dict_from_state(self, data):
+        """The dict to write to disk for _serialize_graph()'s `data`."""
+        return data
+
+    def _state_dict_from_file(self, data):
+        """The dict _deserialize_graph() should load for a file's `data`."""
+        return data
+
     def _save_graph_as(self):
         """Save the graph to a new file"""
         filepath, _ = QFileDialog.getSaveFileName(
@@ -393,7 +403,7 @@ class GraphWindowCommonMixin:
     def _save_graph_to_file(self, filepath):
         """Save graph to specified file"""
         try:
-            data = self._serialize_graph()
+            data = self._file_dict_from_state(self._serialize_graph())
 
             with open(filepath, 'w') as f:
                 json.dump(data, f, indent=2)
@@ -427,7 +437,7 @@ class GraphWindowCommonMixin:
             with open(filepath, 'r') as f:
                 data = json.load(f)
 
-            self._deserialize_graph(data)
+            self._deserialize_graph(self._state_dict_from_file(data))
             self.current_filepath = filepath
             self._set_modified(False)
             self._add_to_recent_files(filepath)
@@ -1774,7 +1784,7 @@ class GraphWindowCommonMixin:
             with open(self.last_graph_path, 'r') as f:
                 data = json.load(f)
 
-            self._deserialize_graph(data)
+            self._deserialize_graph(self._state_dict_from_file(data))
             self.current_filepath = None  # Don't set filepath for reloaded last graph
             self._set_modified(False)
             logger.info("Reloaded last graph")

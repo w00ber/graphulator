@@ -1,0 +1,11 @@
+gamma (leak rate into Z_ref = 50 ohm) = 2.013841e-03 GHz  (legacy rate 0.05 at n_ref 3)
+tap effect max|S_exact - S_no_tap|, and model errors max|S_model - S_exact|, over 3..6 GHz [and within 50 MHz of f1]
+ Z_d [ohm]   Cc [nF]  Cs w1 Zr           effect          A (RWA)         B (pair)      C (pair+Cs)  z (M2b)
+         5  4.90e-05  6.73e-02 2.0e+00 [2.0e+00] 2.7e-01 [1.4e-01] 2.7e-01 [1.4e-01] 9.2e-13 [9.2e-13]     2.00   f_res exact 4.4001
+        25  2.20e-05  2.99e-02 2.0e+00 [2.0e+00] 1.2e-01 [6.1e-02] 1.2e-01 [6.1e-02] 1.9e-12 [1.9e-12]     2.00   f_res exact 4.4001
+       125  9.87e-06  1.32e-02 2.0e+00 [2.0e+00] 5.3e-02 [2.7e-02] 5.3e-02 [2.7e-02] 9.8e-13 [9.8e-13]     2.00   f_res exact 4.4001
+       625  4.46e-06  5.71e-03 2.0e+00 [2.0e+00] 2.3e-02 [1.1e-02] 2.3e-02 [1.2e-02] 7.7e-13 [7.7e-13]     2.00   f_res exact 4.4001
+      3125  2.05e-06  2.37e-03 2.0e+00 [2.0e+00] 9.2e-03 [4.6e-03] 9.6e-03 [4.9e-03] 1.9e-12 [1.9e-12]     2.00   f_res exact 4.4001
+legacy f_max x1: max|S_legacy - S_B| = 1.96e+00, f_res legacy 4.3985 (B: 4.4001, A: 4.4001)
+legacy f_max x4: max|S_legacy - S_B| = 2.00e+00, f_res legacy 4.3933 (B: 4.4001, A: 4.4001)
+reference: max|S_B - S_A| = 4.18e-04 (the counter-rotating partner)
