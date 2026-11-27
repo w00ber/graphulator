@@ -5541,13 +5541,43 @@ class PropertiesPanel(QWidget):
         box.setDecimals(decimals)
         box.setSingleStep(step)
         box.setValue(float(value))
-        box.setMaximumWidth(width)
         box.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         box.setToolTip(tooltip)
         if prefix:
             box.setPrefix(prefix)
+        box.setFixedWidth(self._spin_width_for(box, value, decimals, prefix))
         box.valueChanged.connect(on_change)
         return box
+
+    @staticmethod
+    def _spin_width_for(box, value, decimals, prefix=''):
+        """Width that shows the value in full under the running style.
+
+        A fixed pixel width clips on styles with wider buttons or frames
+        (Windows 11 puts the arrows side by side). Size the text the way
+        QAbstractSpinBox.sizeHint does, but for the digits this value
+        needs plus one of headroom rather than for the whole range (1e9
+        here), and let the style add its own buttons and frame."""
+        from PySide6.QtCore import QSize
+        from PySide6.QtWidgets import QStyle, QStyleOptionSpinBox
+        whole = len(str(int(abs(float(value))))) + 1
+        sample = prefix + "-" * (float(value) < 0) + "8" * whole
+        if decimals > 0:
+            sample += "." + "8" * decimals
+        fm = box.fontMetrics()
+        text_w = fm.horizontalAdvance(sample) + 2          # + cursor
+        h = box.lineEdit().sizeHint().height()
+        opt = QStyleOptionSpinBox()
+        opt.initFrom(box)
+        opt.buttonSymbols = box.buttonSymbols()
+        opt.frame = box.hasFrame()
+        opt.subControls = (QStyle.SubControl.SC_SpinBoxFrame
+                           | QStyle.SubControl.SC_SpinBoxEditField
+                           | QStyle.SubControl.SC_SpinBoxUp
+                           | QStyle.SubControl.SC_SpinBoxDown)
+        size = box.style().sizeFromContents(
+            QStyle.ContentsType.CT_SpinBox, opt, QSize(text_w, h), box)
+        return size.width()
 
     def _line_param_changed(self, line, key, value):
         g = self.graphulator
@@ -5588,11 +5618,11 @@ class PropertiesPanel(QWidget):
                 lambda v, l=line, k=key: self._line_param_changed(l, k, v),
                 width=width))
 
-        add("FSR", 'FSR', 1e-9, 1e9, 9, 0.1,
+        add("FSR", 'FSR', 1e-9, 1e9, 4, 0.1,
             "Free spectral range [a.u.]. With an end load or impedance "
             "steps this is the geometric parameter v/2\u2113, not the mode "
             "spacing \u2014 and it is the scale every mode frequency "
-            "derives from, so it carries more decimals than the rest.",
+            "derives from. Shown to 1e-4 (100 kHz when a.u. = GHz).",
             width=104)
         add("Ztx", 'Ztx', 1e-6, 1e6, 1, 1.0,
             ("Reference impedance: with sections below it no longer sets the "
