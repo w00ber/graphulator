@@ -40,9 +40,18 @@ def _norm(job):
     return j
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+def _file_version(path):
+    import json as _json
+    with open(path, encoding="utf-8") as fh:
+        return str(_json.load(fh).get("version"))
+
+
 FILES = sorted(glob.glob(os.path.join(ROOT, "examples", "**", "*.pgraph"), recursive=True)
                + glob.glob(os.path.join(ROOT, "src", "graphulator", "examples", "**", "*.pgraph"),
                            recursive=True))
+# 2.0/3.0 files only: the gate compares opening through the model with the
+# pre-model loader, which reads only those (4.0 scenes: test_gui_show_s_engine).
+FILES = [f for f in FILES if _file_version(f) in ("2.0", "3.0")]
 IDS = [os.path.relpath(f, ROOT) for f in FILES]
 PG = os.path.join(ROOT, "examples", "pgraphs")
 
