@@ -639,7 +639,7 @@ def _assemble(net: Network, f: np.ndarray, sectors: Sequence[int],
     P = len(net.ports)
     A = np.zeros((nf, n, n), dtype=complex)
     rhs = np.zeros((nf, n, len(inputs) * P), dtype=complex)
-    col = {m: i * P for i, m in enumerate(inputs)}
+    in_col = {m: i * P for i, m in enumerate(inputs)}
     sidx = {m: s for s, m in enumerate(sectors)}
     f_p = net.f_p or 0.0
 
@@ -654,8 +654,8 @@ def _assemble(net: Network, f: np.ndarray, sectors: Sequence[int],
         # ports
         for q, pt in enumerate(net.ports):
             A[:, V(pt.plane), V(pt.plane)] += 1.0 / pt.Z0
-            if m in col:
-                rhs[:, V(pt.plane), col[m] + q] = 2.0 / np.sqrt(pt.Z0)
+            if m in in_col:
+                rhs[:, V(pt.plane), in_col[m] + q] = 2.0 / np.sqrt(pt.Z0)
         # lines: KCL takes +I1 at x0 and -I2 at xL (I2 flows out at xL)
         for k, ln in enumerate(net.lines):
             if ln.x0 is not None:
