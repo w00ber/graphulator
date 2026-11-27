@@ -30,7 +30,6 @@ tests/test_pumped_line.py::test_conversion_band_matches_oracle.
 import os
 
 import numpy as np
-import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if hasattr(os, "geteuid") and os.geteuid() == 0:

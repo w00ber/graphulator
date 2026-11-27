@@ -27,8 +27,8 @@ if hasattr(os, "geteuid") and os.geteuid() == 0:
     os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
 
 from graphulator import model as M  # noqa: E402
-from tests.snap_helpers import snap_legacy  # noqa: E402
 from graphulator.model.legacy_job import compile_jobs, compute_job, sweep_grid  # noqa: E402
+from tests.snap_helpers import snap_legacy  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FILES = sorted(glob.glob(os.path.join(ROOT, "examples", "**", "*.pgraph"), recursive=True)

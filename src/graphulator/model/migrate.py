@@ -32,9 +32,20 @@ from typing import Any, Dict, List
 
 from .pump_depth import fill_depths, legacy_rate
 from .quantize import quantize_sweep
+from .schema import (
+    Attachment,
+    Block,
+    Coupling,
+    Document,
+    Drawing,
+    Mode,
+    Plane,
+    Pumped,
+    SectorView,
+    Sweep,
+    Tone,
+)
 from .snap import snap_document
-from .schema import (Attachment, Block, Coupling, Document, Drawing, Mode,
-                     Plane, Pumped, SectorView, SolveSettings, Sweep, Tone)
 
 
 class MigrationError(ValueError):

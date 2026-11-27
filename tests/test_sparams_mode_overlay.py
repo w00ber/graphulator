@@ -11,19 +11,19 @@ rather than re-deriving it per topology.
 import os
 
 import numpy as np
-import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if hasattr(os, "geteuid") and os.geteuid() == 0:
     os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
 
-from tests.test_gui_hubs import para                            # noqa: E402,F401
+from tests.test_gui_hubs import para  # noqa: E402,F401
 
 
 def _plot(win, f_start, f_stop, points=201):
     """Compute S through the worker's job route and draw the plot."""
-    from graphulator.graphulator_para import _compute_sparams_job
     from PySide6.QtWidgets import QApplication
+
+    from graphulator.graphulator_para import _compute_sparams_job
     f = np.linspace(f_start, f_stop, points)
     if not win.scattering_mode:
         win._enter_scattering_mode()
@@ -146,7 +146,6 @@ def test_overlay_survives_an_invalid_line(para):
 
 
 def test_toggle_persists_through_save_and_load(para, tmp_path):
-    import json
     win, line = _terminated_line(para)
     win.sparams_mark_modes.setChecked(True)
     _plot(win, 0.5, 10.0)

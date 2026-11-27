@@ -170,8 +170,8 @@ def test_the_scale_persists_in_para(para, quiet_dialogs):
 
 def test_update_merges_rather_than_replacing():
     """The sticky write must not wipe settings saved earlier."""
-    from graphulator.para_core.settings_manager import SettingsManager
     from graphulator import graphulator_config
+    from graphulator.para_core.settings_manager import SettingsManager
 
     manager = SettingsManager('graphulator', config_module=graphulator_config)
     manager.save({'DEFAULT_NODE_RADIUS': 0.8})

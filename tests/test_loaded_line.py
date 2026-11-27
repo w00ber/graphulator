@@ -334,13 +334,13 @@ def test_ignoring_the_load_is_much_worse_than_the_truncation(loaded_errors):
 # the GUI path: setting, serializing and pumping a loaded line
 # --------------------------------------------------------------------------
 
-import os                                                       # noqa: E402
+import os  # noqa: E402
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if hasattr(os, "geteuid") and os.geteuid() == 0:
     os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
 
-from tests.test_gui_hubs import para                            # noqa: E402,F401
+from tests.test_gui_hubs import para  # noqa: E402,F401
 
 LOAD = {'end': 'xL', 'type': 'inductive', 'f_Z': 3.0}
 
@@ -450,7 +450,7 @@ def test_stale_reference_mode_is_clamped_not_fatal(para):
 
 
 def test_line_properties_page_exposes_the_load(para):
-    from PySide6.QtWidgets import QLabel, QComboBox
+    from PySide6.QtWidgets import QComboBox, QLabel
     win, line = _scene(para, load=LOAD)
     panel = win.properties_panel
     panel.show_line_properties(line)
@@ -476,7 +476,7 @@ def test_line_properties_page_exposes_the_load(para):
 def test_line_properties_solver_sets_fsr_from_a_target(para):
     """The ergonomic point of sec. 7.3: name the loaded resonance, get the
     line, instead of guessing FSR and re-checking where the mode landed."""
-    from PySide6.QtWidgets import QPushButton, QDoubleSpinBox, QSpinBox
+    from PySide6.QtWidgets import QDoubleSpinBox, QPushButton, QSpinBox
     win, line = _scene(para, load=LOAD)
     panel = win.properties_panel
     panel.show_line_properties(line)

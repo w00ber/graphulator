@@ -16,8 +16,12 @@ class Issue:
 
 def validate(doc: Document) -> List[Issue]:
     out: List[Issue] = []
-    err = lambda p, m: out.append(Issue("error", p, m))
-    warn = lambda p, m: out.append(Issue("warning", p, m))
+
+    def err(p, m):
+        out.append(Issue("error", p, m))
+
+    def warn(p, m):
+        out.append(Issue("warning", p, m))
 
     for kind in ("tones", "planes", "blocks", "modes", "couplings", "attachments", "pumped"):
         seen = set()

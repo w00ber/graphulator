@@ -17,7 +17,6 @@ omega - f_p frame reaches only at -omega.
 
 import json
 import os
-import sys
 
 import numpy as np
 import pytest

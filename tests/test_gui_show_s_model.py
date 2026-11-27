@@ -115,7 +115,10 @@ def test_edited_mode_frequency_and_rate(win):
     sa[nid]["freq"] = sa[nid]["freq"] + 0.0123
     edge = next(e for e in win.edges if not e["is_self_loop"])
     key = (edge["from_node_id"], edge["to_node_id"])
-    sa[key]["rate"] = sa[key]["rate"] * 1.37
+    # a value the rate widget can hold (5 decimals): 0.12 * 1.37 is
+    # 0.16440000000000002, which the model snaps to 0.1644 by design
+    # (model/snap.py, decision Q2) while the in-memory legacy job keeps it
+    sa[key]["rate"] = round(sa[key]["rate"] * 1.37, 5)
     (job,) = _assert_same(win)
     node = next(n for n in job["nodes"] if n["node_id"] == nid)
     assert node["freq"] == sa[nid]["freq"]

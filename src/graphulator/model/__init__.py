@@ -19,7 +19,6 @@ from typing import Any, Dict, Union
 from .migrate import MigrationError, from_legacy, to_legacy
 from .pump_depth import fill_depths
 from .quantize import quantize_sweep
-from .snap import PRECISION, snap_document
 from .schema import (
     VERSION,
     Attachment,
@@ -35,6 +34,7 @@ from .schema import (
     Sweep,
     Tone,
 )
+from .snap import PRECISION, snap_document
 from .validate import Issue, validate
 
 __all__ = ["Attachment", "Block", "Coupling", "Document", "Drawing", "Issue",

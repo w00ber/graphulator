@@ -7,8 +7,7 @@ This module contains the MplCanvas class for embedding matplotlib in Qt.
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QLineEdit,
-                               QPlainTextEdit, QTextEdit)
+from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QLineEdit, QPlainTextEdit, QTextEdit
 
 
 class MplCanvas(FigureCanvas):

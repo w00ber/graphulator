@@ -67,24 +67,39 @@ treat the hatched pentagon as permanent.
 import copy
 import logging
 
-import numpy as np
-import matplotlib.patches as mpatches
 import matplotlib.lines as mlines
+import matplotlib.patches as mpatches
 import matplotlib.transforms as mtransforms
+import numpy as np
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QSpinBox,
+    QVBoxLayout,
+)
 
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QVBoxLayout,
-                               QFormLayout, QLabel, QLineEdit, QCheckBox,
-                               QComboBox, QMessageBox, QDoubleSpinBox,
-                               QSpinBox, QHBoxLayout)
+from ..autograph import LineResonator, line_fsr_for_target, line_fsr_for_target_general
 
-from ..autograph import (LineResonator, LINE_LOAD_TYPES,
-                        line_fsr_for_target, line_fsr_for_target_general)
 # Pure leaves shared with the Qt-free legacy compiler (Layer 0 step 2), so
 # the GUI and model paths cannot drift in the physics they hand the extractor
-from ..model.legacy_job import (TWIN_MIRRORED_KEYS, clamp_mode,  # noqa: F401
-                                end_conns, line_extractor_id as _line_extractor_id,
-                                line_payload, port_hub_payload, pump_anchor,
-                                pump_frame_rule, pump_partners)
+from ..model.legacy_job import (  # noqa: F401
+    TWIN_MIRRORED_KEYS,
+    clamp_mode,
+    end_conns,
+    line_payload,
+    port_hub_payload,
+    pump_anchor,
+    pump_frame_rule,
+    pump_partners,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -402,8 +417,8 @@ class PortInputDialog(QDialog):
 
 def _color_button(initial, parent=None):
     """Small swatch button opening a QColorDialog; .color() reads it."""
-    from PySide6.QtWidgets import QPushButton, QColorDialog
     from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QColorDialog, QPushButton
     btn = QPushButton(parent)
     btn.setFixedSize(46, 22)
 
@@ -2341,8 +2356,8 @@ class ExplicitPortsMixin:
         Delete / line: Explode). Returns True when consumed."""
         if not (self.ports or self.line_resonators):
             return False
-        from PySide6.QtWidgets import QMenu
         from PySide6.QtGui import QCursor
+        from PySide6.QtWidgets import QMenu
 
         step = self._glyph_rotation_step()
         port = self._find_port_at_position(event.xdata, event.ydata)
@@ -3770,7 +3785,6 @@ class ExplicitPortsMixin:
                   + [{'Z': sec['Z'], 'frac': sec['frac'] * l_b / total}
                      for sec in secs_b])
         # the ends that survive, and what was attached to them
-        keep_a = 'xL' if end_a == 'x0' else 'x0'
         keep_b = 'x0' if end_b == 'xL' else 'xL'
         b_conns = [dict(c) for c in self._end_conns(b, keep_b)]
         b_load = dict(b['load']) if b.get('load') else None

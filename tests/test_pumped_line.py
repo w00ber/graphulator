@@ -391,6 +391,7 @@ def test_pump_rate_normalization_matches_oracle(para):
     import sys
     sys.path.insert(0, os.path.join(HERE))
     import cmtline_core as core
+
     from graphulator.graphulator_para import _compute_sparams_job
     gp, win, config = para
 
@@ -445,6 +446,7 @@ def test_conversion_band_matches_oracle(para):
     import sys
     sys.path.insert(0, os.path.join(HERE))
     import cmtline_core as core
+
     from graphulator.graphulator_para import _compute_sparams_job
     gp, win, config = para
 
@@ -629,8 +631,7 @@ def test_modulation_fraction_is_the_device_behind_the_rate(para):
     it worth displaying: it is INVARIANT when the rate is re-anchored to a
     different pair at fixed physical device.
     """
-    from graphulator.para_features.explicit_ports import (
-        pump_modulation_fraction)
+    from graphulator.para_features.explicit_ports import pump_modulation_fraction
     gp, win, config = para
 
     # --- against the circuit, in the oracle's own units (FSR = 1) ---
@@ -679,8 +680,7 @@ def test_modulation_fraction_is_the_device_behind_the_rate(para):
 
 
 def test_capacitive_pump_reports_a_capacitance_ratio(para):
-    from graphulator.para_features.explicit_ports import (
-        PUMP_MODULATION_SYMBOL)
+    from graphulator.para_features.explicit_ports import PUMP_MODULATION_SYMBOL
     gp, win, config = para
     line = win.add_line_resonator(label='TL', pos=(0, 0), FSR=0.5, Ztx=65.0,
                                   f_max=9.0, port_end='xL')

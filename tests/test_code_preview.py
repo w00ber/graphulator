@@ -123,6 +123,7 @@ def test_the_figure_it_returns_is_detached_from_pyplot():
     """Detached before it is adopted by a Qt canvas -- closing it later
     would otherwise take the canvas with it."""
     import matplotlib.pyplot as plt
+
     from graphulator.code_preview import render_code
 
     figure, error = render_code(
@@ -135,6 +136,7 @@ def test_the_figure_it_returns_is_detached_from_pyplot():
 
 def test_it_can_still_be_adopted_by_a_qt_canvas():
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+
     from graphulator.code_preview import render_code
 
     figure, _error = render_code(
@@ -198,6 +200,7 @@ def test_extra_figures_a_script_makes_are_not_kept():
 def test_it_never_pops_a_window_of_its_own():
     """plt.show() is neutralized: the point is to render in-app."""
     import matplotlib.pyplot as plt
+
     from graphulator.code_preview import render_code
 
     figure, _error = render_code(

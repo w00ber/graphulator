@@ -32,7 +32,7 @@ import pytest
 
 from graphulator import autograph
 from tests import cmtline_core
-from tests.test_line_macro_vs_abcd import macro_s11, W_NAT, FSR, Z0_NAT
+from tests.test_line_macro_vs_abcd import FSR, W_NAT, Z0_NAT, macro_s11
 
 ALPHA = 0.02  # one-way attenuation alpha*ell in nepers
 

@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if hasattr(os, "geteuid") and os.geteuid() == 0:
     os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
 
-from tests.test_gui_hubs import para                            # noqa: E402,F401
+from tests.test_gui_hubs import para  # noqa: E402,F401
 
 SCENES = Path(__file__).resolve().parent.parent / "examples" / "test_scenes"
 
@@ -91,8 +91,8 @@ def test_load_fz_is_live_in_the_panel(para):
 
 
 def test_placeholder_points_at_ports_and_lines(para):
-    from PySide6.QtWidgets import QLabel
     from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QLabel
     win, line = _pumped_scene(para)
     panel = win.properties_panel
     panel._update_scattering_node_table()
@@ -115,8 +115,8 @@ def test_tail_closure_toggle_reaches_the_job(para):
     assert win._build_sparams_job(None, f, 3.0, 9.0, 11)['tail_closure'] is False
     # and the comb note says so (flush deleteLater()'d labels from table
     # rebuilds first, so only the live notes are inspected)
-    from PySide6.QtWidgets import QLabel
     from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QLabel
 
     def live_notes():
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
@@ -170,7 +170,6 @@ def test_glyph_only_graph_saves_its_sweep_window(para, tmp_path):
     """A pumped line has no GUI edges, so its spanning tree is empty; the
     scattering section (sweep window, injection choice) must still be saved
     -- it used to be gated on a non-empty tree and was silently dropped."""
-    import json
     win, line = _pumped_scene(para)
     panel = win.properties_panel
     panel.freq_center_spin.setValue(4.25)
@@ -274,7 +273,7 @@ def test_pump_section_fits_without_horizontal_scrolling(para):
 
 
 def test_alpha_is_reported_and_flagged_past_its_limit(para):
-    from PySide6.QtWidgets import QLabel
+
     from graphulator.para_features.explicit_ports import PUMP_ALPHA_LIMIT
     win, line = _pumped_scene(para)
     panel = win.properties_panel
@@ -317,7 +316,6 @@ def test_mode_index_range_follows_f_max(para):
     """Raise f_max and the n spinbox must follow. It used to keep whatever
     N it was BORN with -- a line at f_max = 20 (N = 40) still refused to
     let n past 6, because the row is not rebuilt on every keystroke."""
-    from PySide6.QtWidgets import QDoubleSpinBox
     win, line = _pumped_scene(para)
     panel = win.properties_panel
     nref = next(s for s, l in panel._mode_index_spins if l is line)

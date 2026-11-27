@@ -40,9 +40,12 @@ test = [
     # undefined-name sweep, run from inside the suite
     # (tests/test_gui_dialogs.py::test_no_undefined_names_in_the_package)
     "pyflakes>=3.0",
+    # tests/cmtline_core.py (the reference circuit solver) uses scipy
+    "scipy>=1.9",
 ]
 dev = [
     "pytest>=7.0",
+    "scipy>=1.9",
     "pyflakes>=3.0",
     "ruff>=0.4",
 ]

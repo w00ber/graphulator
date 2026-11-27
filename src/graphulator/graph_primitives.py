@@ -58,8 +58,7 @@ import matplotlib.path as mpath
 import matplotlib.pyplot as plt
 import matplotlib.transforms as mtransforms
 from matplotlib import rcParams
-from numpy import (abs, angle, arctan2, asarray, concatenate, cos, diff,
-                   linspace, pi, real, sin, sqrt)
+from numpy import abs, angle, arctan2, asarray, concatenate, cos, diff, linspace, pi, real, sin, sqrt
 
 logger = logging.getLogger(__name__)
 
