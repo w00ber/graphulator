@@ -625,8 +625,11 @@ def z_rem(ln: LineEl, f) -> np.ndarray:
     return out
 
 
-def _assemble(net: Network, f: np.ndarray, sectors: Sequence[int]):
-    """(A, rhs): A (n_f, n, n), rhs (n_f, n, P) for one block of frequencies."""
+def _assemble(net: Network, f: np.ndarray, sectors: Sequence[int],
+              inputs: Sequence[int] = (0,)):
+    """(A, rhs): A (n_f, n, n), rhs (n_f, n, len(inputs) * P) for one block of
+    frequencies. Column i * P + q is an incident wave at port q in sector
+    inputs[i]."""
     nf = len(f)
     lay = net.layout()
     fidx = {p: i for i, p in enumerate(net.flux)}
@@ -635,7 +638,8 @@ def _assemble(net: Network, f: np.ndarray, sectors: Sequence[int]):
     n = K * n1
     P = len(net.ports)
     A = np.zeros((nf, n, n), dtype=complex)
-    rhs = np.zeros((nf, n, P), dtype=complex)
+    rhs = np.zeros((nf, n, len(inputs) * P), dtype=complex)
+    col = {m: i * P for i, m in enumerate(inputs)}
     sidx = {m: s for s, m in enumerate(sectors)}
     f_p = net.f_p or 0.0
 
@@ -650,8 +654,8 @@ def _assemble(net: Network, f: np.ndarray, sectors: Sequence[int]):
         # ports
         for q, pt in enumerate(net.ports):
             A[:, V(pt.plane), V(pt.plane)] += 1.0 / pt.Z0
-            if m == 0:
-                rhs[:, V(pt.plane), q] = 2.0 / np.sqrt(pt.Z0)
+            if m in col:
+                rhs[:, V(pt.plane), col[m] + q] = 2.0 / np.sqrt(pt.Z0)
         # lines: KCL takes +I1 at x0 and -I2 at xL (I2 flows out at xL)
         for k, ln in enumerate(net.lines):
             if ln.x0 is not None:
@@ -778,16 +782,28 @@ def solve_window(net: Network, f, sectors: Sequence[int]):
     """S over one window: dict m -> (n_f, P, P), out at (p, m), in at (q, 0),
     power waves normalized to each port's Z0. NaN where the circuit itself
     is singular (e.g. a lossless DC zero mode hit exactly)."""
+    out, singular = solve_window_inputs(net, f, sectors, (0,))
+    return {m: out[(m, 0)] for m in sectors}, singular
+
+
+def solve_window_inputs(net: Network, f, sectors: Sequence[int], inputs: Sequence[int]):
+    """As solve_window, with incident waves in every sector of `inputs`:
+    dict (m, n) -> (n_f, P, P), out at (p, m), in at (q, n). One LU per
+    frequency serves all inputs (they are extra right-hand sides)."""
     f = np.asarray(f, dtype=float)
     sectors = list(sectors)
+    inputs = list(inputs)
     if 0 not in sectors:
         raise ValueError("the sector window must contain 0")
+    if not set(inputs) <= set(sectors):
+        raise ValueError(f"input sectors {inputs} outside the window {sectors}")
     n1 = net.n_sector
     P = len(net.ports)
-    out = {m: np.empty((len(f), P, P), dtype=complex) for m in sectors}
+    out = {(m, k): np.empty((len(f), P, P), dtype=complex)
+           for m in sectors for k in inputs}
     singular = 0
     for lo, hi in _blocks(len(f), len(sectors) * n1):
-        A, rhs = _assemble(net, f[lo:hi], sectors)
+        A, rhs = _assemble(net, f[lo:hi], sectors, inputs)
         try:
             X = np.linalg.solve(A, rhs)
         except np.linalg.LinAlgError:
@@ -801,9 +817,11 @@ def solve_window(net: Network, f, sectors: Sequence[int]):
         for s, m in enumerate(sectors):
             for p, pt in enumerate(net.ports):
                 b = X[:, s * n1 + pt.plane, :] / np.sqrt(pt.Z0)
-                if m == 0:
-                    b[:, p] -= 1.0
-                out[m][lo:hi, p, :] = b
+                for i, k in enumerate(inputs):
+                    bk = b[:, i * P:(i + 1) * P].copy()
+                    if m == k:
+                        bk[:, p] -= 1.0
+                    out[(m, k)][lo:hi, p, :] = bk
     return out, singular
 
 
@@ -845,6 +863,12 @@ class NetworkResult:
     converged: bool = True
     history: List[Tuple[List[int], float]] = field(default_factory=list)
     issues: List[Issue] = field(default_factory=list)
+    # The channels the document draws: (port index, sector, label), every
+    # port in sector 0 and then each sector view of a port plane (a twin's
+    # port, e.g. TL* in sector -1). S_channels is S over them, out x in, in
+    # photon-flux normalization (see photon()), (n_f, C, C).
+    channels: List[Tuple[int, int, str]] = field(default_factory=list)
+    S_channels: Optional[np.ndarray] = None
 
     def f_sector(self, m: int) -> np.ndarray:
         return self.f + m * (self.f_p or 0.0)
@@ -916,9 +940,81 @@ def solve_network(doc: Document, f=None, promote: bool = False) -> List[NetworkR
             issues.append(Issue("warning", f"component{net.index}",
                                 f"{sing} frequency points are singular (a lossless "
                                 "pole hit exactly); S is NaN there"))
+        channels, S_ch = _channel_S(doc, net, f, list(window), S, issues)
         out.append(NetworkResult(
             index=net.index, S=S[0], S_sectors=S, sectors=list(window), f=f,
             f_p=net.f_p, ports=[p.id for p in net.ports],
             port_labels=[p.label for p in net.ports], network=net,
-            converged=converged, history=history, issues=issues))
+            converged=converged, history=history, issues=issues,
+            channels=channels, S_channels=S_ch))
     return out
+
+
+def sector_channels(doc: Document, net: Network) -> List[Tuple[int, int, str]]:
+    """(port index, sector, label): each port in sector 0, then each sector
+    view the drawing has of a port plane, in drawing order."""
+    pidx = {p.id: i for i, p in enumerate(net.ports)}
+    ch = [(i, 0, p.label) for i, p in enumerate(net.ports)]
+    twin = _twin_sectors(doc)
+    for v in doc.drawing.sector_views:
+        if v.of in pidx and v.sector != 0:
+            g = v.glyph or {}
+            m = twin.get(g.get("port_id"), int(v.sector))
+            label = g.get("label") or f"{net.ports[pidx[v.of]].label}:{m}"
+            ch.append((pidx[v.of], m, label))
+    return ch
+
+
+def _twin_sectors(doc: Document) -> Dict[object, int]:
+    """Legacy twin port_id -> the sector its pump puts the twin in.
+
+    A legacy twin TL* is "the partner sector of the pump's anchor", not a
+    fixed sector: legacy reads it at f - f_p for amplification and
+    down-conversion and at f + f_p for an up-conversion anchor
+    (legacy_job.pump_frame_rule). Migration stores sector -1 for every twin,
+    so the anchor decides here."""
+    from ..model.pump_depth import anchor_factor
+    fam = {}
+    for p in doc.pumped:
+        if p.kind == "element" and (p.legacy_anchor or {}).get("line"):
+            try:
+                fam[p.legacy_anchor["line"]] = anchor_factor(doc, p)[1]["family"]
+            except (ValueError, KeyError):
+                continue
+    out = {}
+    for v in doc.drawing.sector_views:
+        g = v.glyph or {}
+        if "twin_of" not in g or v.of not in fam:
+            continue
+        m = 1 if fam[v.of] == "up-conversion" else -1
+        for conns in (g.get("ends") or {}).values():
+            for c in conns:
+                if c.get("kind") == "port":
+                    out[c.get("port_id")] = m
+    return out
+
+
+def _channel_S(doc, net, f, window, S, issues):
+    """The channels and S over them (photon normalized). Sector views outside
+    the window are dropped with a warning."""
+    channels = sector_channels(doc, net)
+    keep = [c for c in channels if c[1] in window]
+    for c in channels:
+        if c[1] not in window:
+            issues.append(Issue("warning", f"component{net.index}",
+                                f"channel {c[2]!r} is in sector {c[1]}, outside the "
+                                f"window {window}: not shown"))
+    inputs = sorted({c[1] for c in keep})
+    if inputs == [0]:
+        full = {(m, 0): S[m] for m in window}
+    else:
+        full, _ = solve_window_inputs(net, f, window, inputs)
+    f_p = net.f_p or 0.0
+    n_f, C = len(f), len(keep)
+    out = np.empty((n_f, C, C), dtype=complex)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        for a, (p, m, _) in enumerate(keep):
+            for b, (q, k, _) in enumerate(keep):
+                r = np.sqrt(np.abs(f + k * f_p) / np.abs(f + m * f_p))
+                out[:, a, b] = full[(m, k)][:, p, q] * r
+    return keep, out

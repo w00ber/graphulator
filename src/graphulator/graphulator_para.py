@@ -7328,6 +7328,34 @@ class LabelPatternAnalyzer:
 _compute_sparams_job = compute_job
 
 
+def _compute_engine_job(job):
+    """Show S through the M_super engine (Qt-free, worker thread).
+
+    job: {'kind': 'engine', 'doc': Document, 'f_root_s', 'tail_closure'}.
+    Returns {'results': [...], 'issues': [...], 'engine': 'msuper'|'legacy',
+    'fallback': reason or None}. A document the engine cannot represent
+    (NotSupportedError, TapError) is solved by the legacy engine instead,
+    and the reason is passed on for the status bar.
+    """
+    from .engine import NotSupportedError
+    from .engine.gui_payload import solve_for_gui
+    from .model.taps import TapError
+    doc, f = job['doc'], job['f_root_s']
+    try:
+        out = solve_for_gui(doc, f)
+        out.update(engine='msuper', fallback=None)
+        return out
+    except (NotSupportedError, TapError) as e:
+        logger.info("M_super engine cannot solve this document (%s); using legacy", e)
+        reason = str(e)
+    results = []
+    for j in compile_jobs(doc, f_root_s=f, tail_closure=job.get('tail_closure', True)):
+        r = compute_job(j)
+        if r is not None:
+            results.append(r)
+    return {'results': results, 'issues': [], 'engine': 'legacy', 'fallback': reason}
+
+
 class SParamsWorker(QThread):
     """Background worker for the S-parameter frequency sweep.
 
@@ -7348,10 +7376,16 @@ class SParamsWorker(QThread):
     def run(self):
         try:
             results = []
+            extra = {'engine': 'legacy', 'fallback': None, 'issues': []}
             last_error = None
             for job in self.jobs:
                 logger.info(f"=== Computing S-parameters for {job['comp_name']} ===")
                 try:
+                    if job.get('kind') == 'engine':
+                        out = _compute_engine_job(job)
+                        results.extend(out.pop('results'))
+                        extra.update(out)
+                        continue
                     result = _compute_sparams_job(job)
                 except Exception as e:
                     logger.exception(f"  {job['comp_name']}: Error computing S-parameters")
@@ -7364,7 +7398,8 @@ class SParamsWorker(QThread):
                 self.failed.emit(self.generation, last_error)
             else:
                 self.finished_ok.emit(self.generation,
-                                      {'results': results, 'f_root_s': self.f_root_s})
+                                      {'results': results, 'f_root_s': self.f_root_s,
+                                       **extra})
         except Exception as e:
             logger.exception("S-parameter worker failed")
             self.failed.emit(self.generation, str(e))
@@ -8480,6 +8515,17 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         clear_kron_action = QAction("Clear Kron Reduct&ion", self)
         clear_kron_action.triggered.connect(self._clear_kron_reduction)
         action_menu.addAction(clear_kron_action)
+
+        action_menu.addSeparator()
+
+        # Show S engine: M_super by default; legacy kept for comparison
+        self.sparams_legacy_engine_action = QAction("Solve S with the &Legacy Engine", self)
+        self.sparams_legacy_engine_action.setCheckable(True)
+        self.sparams_legacy_engine_action.setToolTip(
+            "Show S uses the M_super engine (exact lines, taps, sectors). "
+            "Check to solve with the legacy comb engine instead, for comparison.")
+        self.sparams_legacy_engine_action.toggled.connect(self._toggle_sparams_legacy_engine)
+        action_menu.addAction(self.sparams_legacy_engine_action)
 
         # Insert menu (Explicit Ports mode: ports, loss hubs, lines)
         self._ports_menu = menubar.addMenu("&Insert")
@@ -11796,7 +11842,7 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
             f_root_s = np.linspace(freq_start, freq_stop, freq_points)
 
             # Snapshot everything the worker needs (plain data, no GUI access)
-            jobs = self._sparams_jobs(f_root_s)
+            jobs = self._sparams_show_s_jobs(f_root_s)
 
             if not jobs:
                 logger.info("No components with nodes to compute")
@@ -11815,6 +11861,44 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         except Exception as e:
             logger.exception("Error preparing S-parameter computation")
             self._show_sparams_error(str(e))
+
+    def _sparams_use_engine(self):
+        """Show S solves with the M_super engine unless the user switched to
+        legacy (Action > Solve S with the Legacy Engine) or the environment
+        says GRAPHULATOR_S_ENGINE=legacy."""
+        if os.environ.get('GRAPHULATOR_S_ENGINE', '').lower() == 'legacy':
+            return False
+        return not bool(getattr(self, 'sparams_legacy_engine', False))
+
+    def _sparams_show_s_jobs(self, f_root_s):
+        """The Show S work list: one M_super engine job for the whole
+        document (it splits components itself), or the legacy per-component
+        jobs (_sparams_jobs) when the engine is switched off or the live
+        state cannot be snapshotted as a Document."""
+        if self._sparams_use_engine():
+            try:
+                doc = self._model_document()
+            except Exception:
+                logger.exception("Model snapshot failed; Show S uses the legacy engine")
+            else:
+                return [{'kind': 'engine', 'comp_name': 'document (M_super engine)',
+                         'doc': doc, 'f_root_s': np.asarray(f_root_s),
+                         'tail_closure': bool(getattr(self, 'line_tail_closure', True))}]
+        return self._sparams_jobs(f_root_s)
+
+    def _toggle_sparams_legacy_engine(self, checked):
+        self.sparams_legacy_engine = bool(checked)
+        self._status_message("Show S: legacy engine" if checked
+                             else "Show S: M_super engine", 4000)
+        if getattr(self, 'sparams_data', None) is not None or self._sparams_visible():
+            self._compute_and_plot_sparams()
+
+    def _sparams_visible(self):
+        try:
+            idx = self.graph_subtabs.indexOf(self.sparams_tab)
+            return self.graph_subtabs.isTabVisible(idx)
+        except Exception:
+            return False
 
     def _sparams_jobs(self, f_root_s):
         """The Show S job list for the live state, compiled from the model.
@@ -12019,9 +12103,14 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         self.statusBar().clearMessage()
         all_sparams_data = payload['results']
         f_root_s = payload['f_root_s']
+        self.sparams_engine_used = payload.get('engine', 'legacy')
+        self.sparams_engine_issues = payload.get('issues', [])
+        errors = [msg for level, _, msg in self.sparams_engine_issues if level == 'error']
 
         if not all_sparams_data:
             logger.info("No valid S-parameter data computed")
+            if errors:
+                self._show_sparams_error("\n".join(errors[:4]))
             self._status_message("No valid S-parameter data computed")
             return
 
@@ -12047,6 +12136,15 @@ class Graphulator(ExplicitPortsMixin, GraphWindowCommonMixin, QMainWindow):
         self._plot_sparams()
 
         logger.info(f"S-matrix computed successfully for {len(all_sparams_data)} component(s)")
+        if payload.get('fallback'):
+            self._status_message("M_super engine cannot solve this document ("
+                                 + payload['fallback'].split('.')[0]
+                                 + "); showing the legacy engine", 8000)
+        else:
+            warns = [msg for level, _, msg in self.sparams_engine_issues
+                     if level in ('warning', 'error')]
+            if warns:
+                self._status_message("; ".join(warns[:2]), 8000)
 
     def _update_sparams_checkboxes(self):
         """Update checkboxes for S-parameter selection.

@@ -12,6 +12,8 @@
 - Milestone 2c: capacitive taps as a coupling capacitor in Sigma_0 plus the
   tank on its own node (model/taps.py), and each mode's -f image pole on
   physical documents (solve.images), so a tapped tank is solved exactly.
+- Show S (27 Nov 2026): the GUI solves with engine.solve; engine/gui_payload.py
+  turns results into the plot's per-channel dicts, legacy is the fallback.
 
     from graphulator import engine
     results = engine.solve(doc)          # one result per component

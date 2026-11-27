@@ -652,3 +652,57 @@ rewritten document.
 **Shipped files.** TL_2 solves (its direct port fixes C_d). LINE_TAP_2NODES
 and NODE_2LINES_TAP report the missing-Z_d error until Z_d is set;
 `tests/test_model_roundtrip.py` expects that error for those two files.
+
+## Show S through the engine (27 Nov 2026)
+
+Show S now solves with `engine.solve` (JA, 27 Nov: wire the engine first).
+`engine/gui_payload.py` puts each result in the dict the plot code was
+written against (`legacy_job.compute_job`'s): `S`, `SdB`, `port_ids`,
+`port_dict`, `drive_signals`, component index and label. Only the
+bookkeeping is legacy's.
+
+- **The GUI hook.** `Graphulator._sparams_show_s_jobs` snapshots the live
+  state as a Document and hands the worker one engine job for the whole
+  document. The worker (`_compute_engine_job`) falls back to the legacy jobs
+  when the engine refuses the document (NotSupportedError, TapError) and the
+  status bar says so. Action > *Solve S with the Legacy Engine* (or
+  `GRAPHULATOR_S_ENGINE=legacy`) switches Show S back to legacy, for
+  comparison. The tail-closure check in the Ports panel still runs legacy:
+  it is a legacy diagnostic.
+- **Channels of a physical document.** Each port in sector 0, then each
+  sector view the drawing has of a port (a twin's port). Inputs in a
+  nonzero sector are extra right-hand sides of the same solve
+  (`solve_window_inputs`), so S over the channels is exact, not a symmetry
+  reconstruction.
+- **Normalization: photon flux.** `NetworkResult.S_channels` is
+  S sqrt(|f_in| / |f_out|), the normalization legacy's CMT S has and the one
+  Manley-Rowe conserves. Sector-0 entries are unchanged.
+- **The twin's sector is the pump's partner sector, not -1.** Legacy reads
+  TL* at f - f_p for an amplification or down-conversion anchor and at
+  f + f_p for up-conversion (`legacy_job.pump_frame_rule`). Migration
+  stores every twin as sector -1, so `network._twin_sectors` takes the
+  sector from the anchor family. *Open (model):* store a twin as "the
+  partner sector of pump X" rather than an integer, or fix migration.
+- **Gate** (`tests/test_gui_show_s_engine.py`, every shipped file opened in
+  the GUI): port refs, labels, conj flags, drive frames and component labels
+  equal legacy's wherever both split the same components; lumped S is bit
+  for bit; physical S is finite where legacy's is. Plus: the missing-Z_d
+  scenes show the error instead of a plot, the legacy switch, the fallback,
+  and the worker end to end.
+
+**What moves on screen (physical documents only), against legacy:**
+
+| file | max abs dS | why |
+|---|---|---|
+| TL_1 | 2e-14 | legacy exact here |
+| TL_3, LINE_PUMPED_TERMINATION, TL_4, LINE_PUMPED_LOADED | 1e-3 to 1e-2 | DC mode / dropped pump-tail couplings (gate 5 above) |
+| LINE_PUMPED_AMP_AND_CONV | 0.22 | idler 0.5 GHz at the sweep edge, the DC-mode region; engine conserves photons to 5e-15 |
+| Lee degenerate / nondegenerate amp | 0.12 / 12 | truncated comb; the nondegenerate gain is 22.3 dB, not 20.9 |
+| Lee conversion | 2 | magnitude within 0.1; the off-diagonal sign is opposite (a gauge of the idler amplitude, see below) |
+| TL_2 | 0.55 | exact tap (M2c) vs legacy's rate model |
+| PORT_SHARED_2LINES, TL_5 | O(1) | one shared port (D1) vs legacy's split |
+
+The conversion off-diagonals (non-conjugate partner sector) come out with
+the opposite sign to legacy's; |S| and every diagonal agree. Flipping the
+sign of the idler channel's amplitude flips both off-diagonals and nothing
+else, so it is a convention, not physics. Left as the engine has it.
